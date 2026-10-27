@@ -38,7 +38,7 @@ os.environ.setdefault("ARTEMIS_TRACES_DIR", str(PROJECT_DIR / "traces"))
 if (PROJECT_DIR / "artemis.jsonc").is_file():
     os.environ.setdefault("ARTEMIS_ARTEMIS_JSONC", str(PROJECT_DIR / "artemis.jsonc"))
 
-from artemis import Agent  # noqa: E402
+from artemis import Agent
 
 LLM_KEY_NAMES = (
     "GEMINI_API_KEY",
@@ -105,6 +105,7 @@ class ArtemisRunner:
             raise RuntimeError("ArtemisRunner is closed; create a new one.")
         if self.agent is None:
             self.start()
+        assert self.agent is not None
         task = self.agent.run_task(goal=goal, profile=profile or self.profile, output=output)
         limit = timeout if timeout is not None else self.timeout
         return self._loop.run_until_complete(asyncio.wait_for(task, limit))

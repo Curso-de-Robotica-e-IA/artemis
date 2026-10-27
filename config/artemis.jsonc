@@ -7,12 +7,14 @@
   // 1. Global Default Model (Applied to all sub-agents unless overridden below)
   // ------------------------------------------------------------------------------
   "default": {
-    "provider": "google",
-    "model": "gemini-3.8-flash",
+    "provider": "openai",
+    "model": "ornith-1.5:35b",
+    "timeout": 900.0,
     "thinking_level": "medium",
     "fallback": {
-      "provider": "google",
-      "model": "gemini-3.7-flash",
+      "provider": "openai",
+      "model": "ornith-1.5:35b",
+      "timeout": 900.0,
       "thinking_level": "medium"
     }
   },
@@ -21,30 +23,12 @@
   // 2. Ready-to-Use Presets (Switch easily in code or CLI)
   // ------------------------------------------------------------------------------
   "presets": {
-    "gemini-flagship": {
-      "provider": "google",
-      "model": "gemini-3.8-flash",
-      "fallback": { "provider": "google", "model": "gemini-3.7-flash" }
-    },
-    "gemini-flash": {
-      "provider": "google",
-      "model": "gemini-2.5-flash",
-      "fallback": { "provider": "google", "model": "gemini-2.0-flash" }
-    },
-    "openai-gpt4o": {
-      "provider": "openai",
-      "model": "gpt-4o",
-      "fallback": { "provider": "openai", "model": "gpt-4o-mini" }
-    },
-    "cost-saving": {
-      "provider": "google",
-      "model": "gemini-3.5-flash-lite",
-      "fallback": { "provider": "google", "model": "gemini-3.1-flash-lite" }
-    },
     "local-ollama": {
       "provider": "openai",
-      "model": "llama3.2-vision",
-      "fallback": { "provider": "openai", "model": "llama3.2-vision" }
+      "model": "ornith-1.5:35b",
+      "timeout": 900.0,
+      "fallback": { "provider": "openai", "model": "ornith-1.5:35b",
+    "timeout": 900.0}
     }
   },
 
@@ -75,11 +59,12 @@
     // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
     // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
     "object_detector": {
-      "model": "gemini-robotics-er-2-preview",
+      "model": "ornith-1.5:35b",
+      "timeout": 900.0,
       "fallback": {
-        "provider": "google",
-        "model": "gemini-robotics-er-2-preview"
-      }
+        "provider": "openai",
+        "model": "ornith-1.5:35b",
+"timeout": 900.0      }
     },
 
     // 🔍 Explorer: Deep element grounding and multi-candidate visual search
@@ -95,11 +80,12 @@
 
     // 🔽 Hopper: Fast lightweight package name locator
     "hopper": {
-      "model": "gemini-3.5-flash-lite",
+      "model": "ornith-1.5:35b",
+      "timeout": 900.0,
       "fallback": {
-        "provider": "google",
-        "model": "gemini-3.1-flash-lite"
-      }
+        "provider": "openai",
+        "model": "ornith-1.5:35b",
+"timeout": 900.0      }
     },
 
     // 📝 Outputter: Synthesizes execution trace into final output report
@@ -145,7 +131,8 @@
       // replacing images only after strictly objective, high-density summaries are ready.
       "step_summarizer": {
         "enabled": true, // Whether background step summarization is active
-        "model": "gemini-3.5-flash-lite", // Lightweight model for fast background inference
+        "model": "ornith-1.5:35b",
+        "timeout": 900.0, // Lightweight model for fast background inference
         "prune_history_xml": true // Prune outdated heavy XML trees from historical steps
       }
     },
@@ -246,7 +233,8 @@
         // call each); milestone closes are exempt, the hard line waives it.
         "min_steps": 3,
         "target_source_tokens": 2000,
-        "model": "gemini-3.8-flash",
+        "model": "ornith-1.5:35b",
+        "timeout": 900.0,
         "max_chunks": 8
         // "max_eras": 8 // independent era cap; omitted = follows max_chunks
       },
