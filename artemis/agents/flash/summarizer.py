@@ -27,6 +27,7 @@ frame, the ``flash_summarizer.md`` neutral-wording contract, and versioned
 
 import asyncio
 import base64
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -34,6 +35,7 @@ from uuid import UUID
 from jinja2 import Template
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from artemis.config import settings
 from artemis.context import ArtemisContext
 from artemis.memory.step_memory import JobKey, StepMemoryService
 from artemis.services.llm import RobustChatModelWrapper, get_google_llm, get_llm
@@ -161,16 +163,35 @@ class VisualStepSummarizer(StepMemoryService):
             flush_timeout_s=flush_timeout_s,
         )
 
-        # Initialize lightweight VLM: prioritize explicit model_name
+        # Initialize lightweight VLM: prioritize configured summarizer node
         target_model = model_name or "gemini-2.5-flash-lite"
         self._model_name = target_model
         try:
-            if model_name:
-                self._llm = get_google_llm(model_name=target_model, temperature=0.0)
-            else:
-                self._llm = get_llm(ctx, name="summarizer", is_utils=True)
-        except Exception:
-            self._llm = get_google_llm(model_name=target_model, temperature=0.0)
+            self._llm = get_llm(
+                ctx,
+                name="summarizer",
+                is_utils=False,
+                temperature=0.0,
+                model_name=model_name,
+            )
+        except Exception as exc:
+            logger.debug(
+                f"Could not initialize primary summarizer LLM ({model_name}); attempting fallback: {exc}"
+            )
+            try:
+                self._llm = get_llm(
+                    ctx,
+                    name="summarizer",
+                    is_utils=False,
+                    use_fallback=True,
+                    temperature=0.0,
+                )
+            except Exception:
+                target_model = model_name or "gemini-2.5-flash-lite"
+                try:
+                    self._llm = get_google_llm(model_name=target_model, temperature=0.0)
+                except Exception:
+                    raise exc
         try:
             configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
             if isinstance(configured, str) and configured:

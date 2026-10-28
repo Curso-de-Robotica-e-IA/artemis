@@ -3,74 +3,38 @@
 </p>
 
 <p align="center">
-  <strong>Let AI assistants and test suites use real phones like a human.</strong>
+  <strong>Autonomous Multimodal Mobile AI Engine — Direct Python Library & In-Process CLI</strong>
 </p>
 
 <p align="center">
   <a href="./README.md"><b>English</b></a> •
   <a href="./docs/README_PT.md">Português</a> •
-  <a href="#workflow-showcase">Workflow Showcase</a> •
+  <a href="#key-highlights">Highlights</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#mcp-setup">MCP for IDEs</a> •
-  <a href="#benchmarks">Benchmarks</a> •
-  <a href="https://discord.gg/wF2FN4WHGY">Discord Community</a>
+  <a href="#python-sdk">Python SDK</a> •
+  <a href="#cli-usage">CLI Usage</a> •
+  <a href="#execution-profiles">Flash vs. Pro</a> •
+  <a href="#benchmarks">Benchmarks</a>
 </p>
 
 <p align="center">
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
-  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-Native%20Server-8A2BE2.svg" alt="MCP Native"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/Multimodal-Gemini%20%7C%20Claude%20%7C%20GPT--4o%20%7C%20Qwen--VL-4285F4.svg" alt="Multi-Model"></a>
   <a href="https://github.com/google-research/android_world"><img src="https://img.shields.io/badge/AndroidWorld-99%25%2B%20SOTA-success.svg" alt="AndroidWorld SOTA"></a>
-</p>
-
-<!-- Demo Showcase -->
-<p align="center">
-  <img src="./docs/assets/demo.gif" alt="Artemis in Action" width="100%" />
-  <br>
-  <em>Live Demo: Setup driving routes and calculate total durations in Google Maps, then open YouTube to play a Coldplay song.</em>
+  <img src="https://img.shields.io/badge/Architecture-Direct%20In--Process-00C853.svg" alt="Direct In-Process">
 </p>
 
 ## Key Highlights
 
-* **Cross-App Automation**: Executes testing workflows and everyday tasks on Android from natural language instructions.
-* **Multimodal Targeting**: Uses element indices when available, with coordinate and visual locating fallbacks for custom interfaces.
-* **IDE Diagnostics**: **Model Context Protocol (MCP)** integration lets **Antigravity, Claude Code, and Windsurf** drive test devices and collect **Logcat** output and screenshots.
-* **Flash Execution**: A reactive observe-and-act loop with asynchronous history summaries, typically **3–5s per step**.
-* **Pro Exploration**: Checks targets before individual actions and returns blocked actions to the Operator for recovery. Supports long-running exploratory and stability tests.
-* **AndroidWorld Results**: **99%+ task completion** on Google Research's **AndroidWorld** benchmark (100+ multi-step tasks).
+* **Direct Python-First Architecture**: Pure Python library with zero background daemons, zero open network ports, and zero JavaScript/Node dependencies. Runs directly in-process in your scripts, test runners (`pytest`), or terminal.
+* **Cross-App Mobile Automation**: Executes end-to-end testing scenarios and user journeys across real Android devices and emulators using natural language goals.
+* **First-Class Python SDK**: Synchronous context manager (`ArtemisRunner`) for rapid automation scripts and async `Agent` for full pipeline control with structured Pydantic assertion support.
+* **Multimodal Visual Grounding**: Combines element hierarchy analysis (XML-first) with OCR and coordinate fallbacks for custom Canvas, Compose, and Flutter interfaces.
+* **Dual Execution Modes**: **Flash** profile (ultra-fast observe-and-act loop at **3–5s per step**) or **Pro** profile (dynamic planning graph with milestones, safety nets, and checkpoint self-recovery).
+* **AndroidWorld SOTA**: **99%+ task completion rate** on Google Research's **AndroidWorld** benchmark (100+ multi-step tasks across 20+ apps).
 
-<a id="workflow-showcase"></a>
-## Antigravity × ARTEMIS: Autonomous Testing Workflow
-
-**Antigravity** uses **ARTEMIS** through MCP to turn a test request into a plan, device execution, and a diagnostic report:
-
-<table width="100%">
-  <tr>
-    <td width="50%" align="center">
-      <b>1. Prompt Input (Task Dispatch)</b><br>
-      <sub>Describe your test scenario and target metrics in Antigravity</sub><br><br>
-      <img src="./docs/assets/workflow-1-prompt.png" width="100%" alt="Step 1: Prompt Input in Antigravity" />
-    </td>
-    <td width="50%" align="center">
-      <b>2. Test Plan Generation</b><br>
-      <sub>Formulates a step-by-step test plan & architecture for review</sub><br><br>
-      <img src="./docs/assets/workflow-2-plan.png" width="100%" alt="Step 2: Test Plan Generation" />
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <b>3. Autonomous Test Execution</b><br>
-      <sub>Drives real device, navigates UI, and profiles performance</sub><br><br>
-      <img src="./docs/assets/workflow-3-exec.png" width="100%" alt="Step 3: Autonomous Test Execution" />
-    </td>
-    <td width="50%" align="center">
-      <b>4. Final Report</b><br>
-      <sub>Delivers structured audit findings, metric tables, and raw datasets</sub><br><br>
-      <img src="./docs/assets/workflow-4-report.png" width="100%" alt="Step 4: Final Report" />
-    </td>
-  </tr>
-</table>
+---
 
 <a id="quick-start"></a>
 ## Quick Start
@@ -78,159 +42,141 @@
 Ensure an Android device (with **USB Debugging** enabled) or emulator is connected:
 
 ```bash
-# 1. Clone repo & navigate to directory
-git clone https://github.com/google/artemis.git && cd artemis
-
-# 2. Sync Python dependencies
+# 1. Sync Python dependencies
 uv sync
 
-# 3. Configure API keys & device (interactive wizard)
+# 2. Configure API keys & device (interactive quickstart wizard)
 uv run artemis init
 
-# 4. Run an autonomous task directly in-process
+# 3. Run an autonomous task directly in-process
 uv run artemis run "Open Settings, find Battery and tell me current level" --profile flash
 ```
 
-<a id="mcp-setup"></a>
-<a id="mcp"></a>
-<details>
-<summary><b>MCP Setup for Codex / Antigravity / Claude Code / Windsurf (Click to expand)</b></summary>
-
-<br>
-
-ARTEMIS includes a native **Model Context Protocol (MCP)** server. Connect your real phone directly into AI IDEs:
-
-### 1. One-Click Auto Install (Recommended)
-
-Configure global MCP and testing rules for detected IDEs using the commands below:
-
-```bash
-# Auto-install MCP server & global rules for Antigravity / Jetski:
-uv run artemis mcp --install antigravity
-
-# Or install for all supported AI IDEs (including Codex):
-uv run artemis mcp --install all
-```
-
-> **Tip**: You can also configure MCP interactively during first-time setup via `uv run artemis init`.
-> **Pro Tip**: If you want to use the `artemis` command globally without `uv run` in any directory, run `uv tool install -e .` once in the project root.
-
-### 2. Manual Configuration (Optional)
-
-If you prefer to configure manually, run `uv run artemis mcp --generate-config <client>` (for example, `codex` or `antigravity`) to output the appropriate TOML or JSON snippet. Replace `/path/to/artemis` with your actual repo path and point `command` to your `.venv` Python executable:
-
-* **Codex** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.artemis]
-command = "/path/to/artemis/.venv/bin/python"
-args = ["-m", "mcp_server"]
-cwd = "/path/to/artemis"
-
-[mcp_servers.artemis.env]
-PYTHONUNBUFFERED = "1"
-PYTHONPATH = "/path/to/artemis"
-```
-
-* **Antigravity** (`~/.gemini/jetski/mcp_config.json`):
-```json
-{
-  "mcpServers": {
-    "artemis": {
-      "command": "/path/to/artemis/.venv/bin/python",
-      "args": ["-m", "mcp_server"],
-      "cwd": "/path/to/artemis",
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "tools": {
-        "mobile_run_task": { "eager": true },
-        "mobile_manage_task": { "eager": true },
-        "mobile_get_device_state": { "eager": true },
-        "mobile_inspect_trace": { "eager": true },
-        "mobile_diagnose": { "eager": true }
-      }
-    }
-  }
-}
-```
-
-* **Claude Desktop** (`claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "artemis": {
-      "command": "/path/to/artemis/.venv/bin/python",
-      "args": ["-m", "mcp_server"],
-      "cwd": "/path/to/artemis"
-    }
-  }
-}
-```
-
-### 3. Mount Behavioral Rules for AI Agents (Highly Recommended)
-
-To ensure your AI coding assistant acts with the rigor of a senior mobile test engineer and never hallucinates UI interactions, we provide a dedicated testing mindset rules file at [`mcp_server/rules.md`](./mcp_server/rules.md) (covering **Active Exploration before coding**, **Flash vs. Pro routing strategy**, **Latency & Timing compensation**, and the **"Dynamic-First, Coordinate-Fallback" locator pattern**).
-
-You can mount or copy [`mcp_server/rules.md`](./mcp_server/rules.md) into your AI IDE's rule configuration:
-* **Antigravity**: Add the contents of `rules.md` to your Workspace Rules, Global Rules settings, or agent instructions.
-* **Claude Code**: Run `artemis mcp --install claude` to install the rules to `~/.claude/rules/artemis.md` (install to exactly one location — Claude Code loads both `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md`, so duplicating the rules wastes context).
-* **Cursor**: Copy the contents into `.cursorrules` or create a rule file at `.cursor/rules/artemis.mdc`.
-* **Codex**: Add the contents to `~/.codex/AGENTS.md` (or the active `AGENTS.override.md`).
-* **Windsurf / OpenClaw**: Add the rules to your workspace rules or global system prompts.
-
-> For more details on the testing mindset and MCP architecture, see the [MCP Server README](./mcp_server/README.md).
-
-### 4. Prompt Your Phone in the IDE Chat
-In Codex, Antigravity, or Claude Code, simply prompt:
-> *"Build the latest changes into an APK, install it on the connected device, open the login screen with a test account, verify if there are any unexpected popups after login, and return screenshots of the final page."*
-
-</details>
+---
 
 <a id="python-sdk"></a>
-<details>
-<summary><b>Python SDK Integration (Click to expand)</b></summary>
+## Python SDK Integration
 
-<br>
+ARTEMIS can be imported directly into any Python codebase, testing suite (e.g. `pytest`), or CI/CD workflow.
 
-Run ARTEMIS directly in-process as a pure Python library:
+### 1. Synchronous Automation (`ArtemisRunner`)
+
+The recommended entrypoint for scripts and automation suites is `ArtemisRunner`:
 
 ```python
 from artemis import ArtemisRunner
 
+# Target a specific device or omit device_serial to use the first attached device
 with ArtemisRunner(device_serial="emulator-5554", profile="flash") as bot:
-    result = bot.run(
-        "Open System Settings, go to 'Battery', verify battery percentage is displayed, and check for any crash dialogs."
-    )
+    # Basic task execution
+    result = bot.run("Open Settings and check Wi-Fi connection status")
     print(result)
+
+    # Task with custom timeout (seconds)
+    bot.run("Turn on Airplane Mode", timeout=120)
 ```
 
-</details>
+### 2. Structured Pydantic Output Extraction
 
-## Usage Modes
+Extract strongly typed data directly from mobile screens using Pydantic models:
 
-* **Python SDK (`from artemis import ArtemisRunner, Agent`)**: Integrates directly in-process as a standard Python library into automated testing frameworks (e.g., pytest) or CI/CD pipelines with strongly typed Pydantic structured outputs and assertion support;
-* **Developer CLI (`uv run artemis run`)**: Direct in-process terminal execution for automated test cases, batch runs (`artemis batch`), trace inspection (`artemis trace list` / `artemis trace view`), and diagnostics (`artemis doctor`);
-* **MCP Server (`uv run artemis mcp`)**: Connects **Antigravity, Claude Code, Windsurf**, and other MCP clients to real devices for bug reproduction and test execution.
+```python
+from pydantic import BaseModel, Field
+from artemis import ArtemisRunner
+
+class BatteryInfo(BaseModel):
+    percentage: int = Field(description="Battery level as an integer between 0 and 100")
+    is_charging: bool = Field(description="True if device is plugged into a charger")
+
+with ArtemisRunner(profile="pro") as bot:
+    info = bot.run(
+        "Open Settings, navigate to Battery, and extract current status",
+        output=BatteryInfo,
+    )
+    print(f"Battery: {info.percentage}% | Charging: {info.is_charging}")
+    assert info.percentage > 10, "Battery too low for test run!"
+```
+
+### 3. Asynchronous Pipeline Integration (`Agent`)
+
+For native `asyncio` workflows and custom event streams:
+
+```python
+import asyncio
+from artemis import Agent
+
+async def main():
+    agent = Agent(device_serial="emulator-5554")
+    await agent.init()
+    try:
+        result = await agent.run_task(
+            goal="Open YouTube and search for Lo-Fi Hip Hop",
+            profile="flash",
+        )
+        print(f"Status: {result.status} | Steps: {result.steps_taken}")
+    finally:
+        await agent.clean()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 4. Use Inside Another Project
+
+To use ARTEMIS in another project as an editable dependency, add this to your project's `pyproject.toml`:
+
+```toml
+[project]
+requires-python = ">=3.12"
+dependencies = [
+    "artemis",
+]
+
+[tool.uv.sources]
+artemis = { path = "../artemis", editable = true }
+```
+
+Then run `uv sync`.
+
+---
+
+<a id="cli-usage"></a>
+## CLI Usage
+
+ARTEMIS provides a direct terminal CLI for interactive runs, batch testing, and diagnostics:
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `artemis run` | Execute an autonomous task in-process on an attached device. | `uv run artemis run "Open Chrome and search Google" --profile flash` |
+| `artemis batch` | Execute a sequence of automation tasks sequentially. | `uv run artemis batch --file tasks.txt --profile pro` |
+| `artemis doctor` | Verify ADB connectivity, toolchains (scrcpy, FFmpeg), and API keys. | `uv run artemis doctor` (or `uv run artemis doctor --fix`) |
+| `artemis trace` | Inspect local session traces, turn logs, and video recordings. | `uv run artemis trace list` / `uv run artemis trace view <session_id>` |
+| `artemis helper` | Manage the on-device accessibility helper APK. | `uv run artemis helper install` / `uv run artemis helper status` |
+| `artemis init` | Interactive setup wizard to configure API keys and default device. | `uv run artemis init` |
+
+---
 
 <a id="on-device-helper"></a>
 ## What ARTEMIS Installs on Your Phone
 
-The first task on a device installs the **Artemis Accessibility Helper**, a small
-accessibility service that reads the screen layout without taking the
-UiAutomation connection. Tools using UiAutomation can suppress the helper unless
-they enable `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`. You will see
-a collapsed "Artemis test helper is running" notification and a new entry under
-Settings > Accessibility; both are that helper. It listens only on the phone
-itself and sends nothing elsewhere.
+The first task on a device automatically provisions the **Artemis Accessibility Helper**, a lightweight Android accessibility service that reads screen hierarchies instantly without conflicting with `UiAutomation`.
 
-* Pre-install it (avoids the ~3 s delay on the first task): `uv run artemis helper install`
-* Inspect it: `uv run artemis helper status` / `uv run artemis doctor`
-* Remove it any time: `uv run artemis helper uninstall`
-* Use UIAutomator2 instead: `ARTEMIS_HIERARCHY_BACKEND=uiautomator` in `.env`
-* Prevent automatic installation: `ARTEMIS_HELPER_AUTO_INSTALL=false` in `.env`
+* **Pre-install helper**: `uv run artemis helper install` (avoids first-run setup delay)
+* **Check status**: `uv run artemis helper status`
+* **Uninstall**: `uv run artemis helper uninstall`
+* **Use UIAutomator2 fallback**: Set `ARTEMIS_HIERARCHY_BACKEND=uiautomator` in your `.env`
 
-If the helper ever fails mid-task, ARTEMIS falls back to UIAutomator2 and says
-so in the task timeline, in `mobile_manage_task` status, and in the final report.
+---
+
+<a id="execution-profiles"></a>
+## Execution Profiles: Flash vs. Pro
+
+ARTEMIS supports two execution profiles tailored for different automation requirements:
+
+* **Flash Profile (`--profile flash`)**: Fast and token-efficient reactive loop (~3–5s per step). One model observes the live screen, reasons, and executes actions immediately. Ideal for routine, deterministic UI tasks and automated regression flows.
+* **Pro Profile (`--profile pro`)**: Deep planning and verification workflow (~15–40s per step) powered by a LangGraph multi-agent state machine. A **Planner** maintains a living Markdown task plan; the **Operator** executes actions protected by pre-execution **Safety Nets**; and a read-only **Checker** audits checkpoints and validates task completion against the original goal.
+
+---
 
 <a id="benchmarks"></a>
 ## Benchmarks: AndroidWorld (SOTA 99%+)
@@ -241,36 +187,11 @@ Artemis achieved a **99%+ completion rate** on [AndroidWorld](https://github.com
   <img src="./docs/assets/androidworld_leaderboard.png?v=2" alt="AndroidWorld Benchmark Comparison" width="100%" />
 </p>
 
-## How ARTEMIS is Architected
+---
 
-* **Pre-Execution Checks and Action Bursts**: Pro checks the target against the live UI tree and pixels before dispatching an individual action. Action bursts handle transient controls without waiting for another model turn.
-* **Element Locating**: Combines accessibility hierarchies and OCR with visual models for custom Canvas, Compose, and Flutter interfaces.
-* **Shared History Compression**: Flash and Pro replace older screenshots with visual summaries and compress completed steps into searchable history chunks. Context thresholds control when raw turns are replaced.
+## Contributing
 
-<p align="center">
-  <img src="./docs/assets/artemis_architecture_diagram.png" alt="ARTEMIS System Architecture Diagram" width="100%" />
-</p>
-
-## Execution Profiles: Flash vs. Pro
-
-ARTEMIS supports two execution profiles tailored for different automation requirements:
-
-* **Flash Profile (`--profile flash`)**: Fast and token-efficient reactive loop (~3–5s per step): one model observes the live screen, thinks, and acts, with no graph orchestration. Ideal for routine, deterministic UI tasks. The loop is unbounded by default (`agent.flash.max_turns`, 0 = unlimited) because history is compressed rather than capped: Flash shares the Pro session transcript ledger (session-relative `T+mm:ss` clock, screenshots folded into visual summaries, older steps chunked into eras and recallable on demand via `search_history` / `replay_steps`) and can query the session recording through `video_analyzer`. Transient UI (auto-fading control bars, toasts) is handled by chaining taps into one `click_sequence`. *Limitations*: No task plan or notes, no pre-execution safety net, no checkpoint verification or final report, and no ADB shell.
-* **Pro Profile (`--profile pro`)**: A planning and verification workflow (~15–40s per step), built as a multi-agent graph. A **Planner** maintains a living Markdown task plan with milestones and `verify` / `assert` check items; the **Operator** executes it with the full toolset (Explorer grounding whose `flash` / `pro` / `ultra` tier is a user setting per profile — `pro.explorer.mode` / `flash.explorer_mode` in `config/artemis.jsonc` or `--explorer-pro-mode` — never chosen by the agent; notes, history recall, video analysis, ADB diagnostics). Every single action passes a pre-execution **Safety Net** (XML-first, pixel fallback), while multi-action **fast-action bursts** fire back to back to beat turn latency on transient UI. A blocked or failed action opens an **execution incident** that stays in the Operator's context until a later action succeeds, so recovery is handled by the Operator itself with no separate repair agent. A read-only **Checker** verifies plan checkpoints and runs an exit final review against the original goal (`--verification-level`: `off` / `final` (default) / `checkpoints` / `strict`), and plan milestone edits get an advisory review. Handles 100+ step long-horizon workflows, `[Loop:continuous]` monitoring, and an optional written report.
-
-## Roadmap
-
-- [ ] **Android Studio Integration**: Native IDE plugin and workflow integration to enable in-editor debugging, test recording, and automated device control directly within Android Studio.
-- [ ] **iOS Platform Expansion**: Extending multimodal perception and mobile automation to iOS devices and simulators.
-- [ ] **On-Device Lightweight VLMs**: Local execution with lightweight edge vision models for low-latency, privacy-first automation.
-- [ ] **Real-time Duplex Voice Interaction**: Voice-driven task dispatch with real-time conversational control and interruption handling.
-
-## Community & Contributing
-
-Contributions are warmly welcomed!
-* **Star the repo** to follow updates and releases
-* Join the [Discord Community](https://discord.gg/wF2FN4WHGY) for technical discussions
-* Open an [Issue](https://github.com/google/artemis/issues) or submit a [Pull Request](https://github.com/google/artemis/pulls)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on code style, tests, and development workflows.
 
 ## License
 
@@ -279,5 +200,4 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 ### Third-party code
 
 Code not owned by Google lives under [`third_party/`](third_party/), one directory per upstream project, each with its own `LICENSE` and `METADATA`.
-
 - [`third_party/mobile_use`](third_party/mobile_use/) – portions of [mobile-use](https://github.com/minitap-ai/mobile-use) by Minitap, Inc., Apache License 2.0.

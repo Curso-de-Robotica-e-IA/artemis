@@ -41,8 +41,8 @@ This document provides an in-depth analysis of the internal architecture of the 
 
 The system integrates:
 - **Comprehensive Multimodal Support**: Models such as Gemini (Google GenAI / Vertex AI), GPT-4o (OpenAI), Claude 3.5/3.7 (Anthropic), Grok (xAI), and local providers like Ollama and vLLM.
-- **Native MCP Protocol**: An integrated Model Context Protocol server enabling bidirectional communication with developer tools and coding assistants (Antigravity, Claude Code, Cursor, Windsurf).
-- **Integrated Web Console (Showcase)**: A FastAPI + Angular dashboard for live control, low-latency screen mirroring (via WebRTC/scrcpy), and interactive execution replays.
+- **Direct In-Process Architecture**: Pure Python library with zero background daemons, zero open network ports, and zero JavaScript/Node dependencies.
+- **First-Class Python SDK & CLI**: Synchronous context manager (`ArtemisRunner`), async `Agent`, and interactive terminal CLI (`artemis run`, `artemis batch`, `artemis doctor`, `artemis trace`, `artemis helper`).
 - **Dual Operational Modes**: **Flash** Profile (ultra-fast reactive loop running at 3–5s per step) and **Pro** Profile (agent graph featuring dynamic planning, checkpoints, and failure recovery).
 
 ---
@@ -52,10 +52,9 @@ The system integrates:
 ```mermaid
 flowchart TD
     subgraph Ingress["1. Ingress Entry Points"]
-        CLI["CLI: artemis run"]
-        UI["Web UI: Showcase / Admin Console"]
-        MCP["MCP Server: IDE Tools"]
-        SDK["Python SDK: Agent"]
+        CLI["CLI: artemis run / batch"]
+        Runner["Python SDK: ArtemisRunner (Sync)"]
+        SDK["Python SDK: Agent (Async)"]
     end
 
     subgraph Lock_Env["2. Hardware Locking & Connection"]
@@ -101,10 +100,9 @@ flowchart TD
 ```
 
 ### 2.1 Ingress Layers
-1. **CLI (`artemis run`)**: Parses arguments via `typer` in `artemis/interfaces/cli/commands/run.py` and triggers `execute_task()`.
-2. **MCP (`mcp_server`)**: Exposes remote tools (`mobile_run_task`, `mobile_manage_task`, `mobile_get_device_state`, etc.) to coding assistants and IDEs.
-3. **Showcase Web Console (`apps/admin_console`)**: FastAPI service managing task lifecycles, real-time screen streaming, and interactive sessions over HTTP/WebSocket.
-4. **Python SDK (`artemis.sdk.Agent`)**: Allows executing tasks programmatically directly from Python code.
+1. **CLI (`artemis run`, `artemis batch`)**: Parses arguments via `typer` in `artemis/interfaces/cli/commands/run.py` and triggers `execute_task()` directly in-process via `asyncio.run()`.
+2. **Synchronous Python SDK (`ArtemisRunner`)**: Simple context manager in `artemis/runner.py` for scripts, testing frameworks (`pytest`), and assertions with optional Pydantic structured output.
+3. **Asynchronous Python SDK (`artemis.sdk.Agent`)**: Full async lifecycle (`init()`, `run_task()`, `clean()`) for advanced pipelines and custom event loops.
 
 ### 2.2 Device Lock and Hardware Connection
 - **`DeviceExecutionLock` (`artemis/runtime/device_lock.py`)**: Implements a strict global FIFO queue indexed by ADB device serial numbers. This prevents concurrent tasks from dispatching conflicting touch inputs to the same screen.
@@ -372,7 +370,7 @@ ARTEMIS allows injecting runtime user instructions without restarting the task:
 
 ### 5.5 Graceful Task Cancellation
 `artemis/runtime/cancel_requests.py` coordinates task teardown:
-- Upon receiving a cancellation request (via Web UI, MCP `mobile_manage_task`, or `Ctrl+C`), the runtime halts background daemons, flushes and finalizes FFmpeg/scrcpy video recordings, writes status and trace summaries to disk, and releases the hardware device lock.
+- Upon receiving a cancellation request (via `Ctrl+C` or timeout expiration), the runtime halts in-process tasks, flushes and finalizes FFmpeg/scrcpy video recordings, writes status and trace summaries to disk, and releases the hardware device lock.
 
 ---
 
@@ -401,7 +399,7 @@ artemis/
 │   ├── data_engine/             # Telemetry database, session lifecycle, and trace stores
 │   ├── drivers/                 # Low-level drivers for ADB, IME keyboards, and recording
 │   ├── graph/                   # LangGraph orchestration (state.py, graph.py, perception.py)
-│   ├── interfaces/cli/          # Typer CLI suite (run, ui, doctor, mcp, helper)
+│   ├── interfaces/cli/          # Typer CLI suite (run, batch, doctor, trace, helper)
 │   ├── llm/                     # Model routers, structured output parsers, and circuit breakers
 │   ├── mcp/                     # In-process device action execution (McpActionExecutor)
 │   ├── memory/                  # TranscriptLedger with multi-tiered S/F/A/T memory
@@ -410,7 +408,6 @@ artemis/
 │   └── utils/                   # Coordinate transforms, computer vision, and OCR helpers
 ├── config/
 │   └── artemis.jsonc            # Central configuration for models, subagents, and profiles
-├── mcp_server/                  # Model Context Protocol server for IDE integrations
 ├── packages/
 │   └── artemis-accessibility-helper/  # Java source code for on-device Accessibility Service APK
 └── traces/                      # Persistent storage for session logs, steps, and recordings

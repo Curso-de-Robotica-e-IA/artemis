@@ -114,6 +114,14 @@ class LLMConfig(LLMConfigBase):
         if self.output_analyzer:
             self.output_analyzer.validate_provider("OutputAnalyzer")
 
+    def get_utils(self, item: str) -> LLMWithFallback:
+        """Retrieve model configuration for a specific utility node with fallback to agent nodes."""
+        if hasattr(self.utils, item):
+            return getattr(self.utils, item)
+        if hasattr(self, item):
+            return getattr(self, item)
+        return super().get_utils(item)
+
     def get_agent(self, item: AgentNode) -> LLMWithFallback:
         """Retrieve model configuration for a specific agent node with sensible defaults."""
         val = getattr(self, item)

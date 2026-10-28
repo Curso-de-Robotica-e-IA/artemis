@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 import functools
 import logging
+import os
 from pathlib import Path
 import re
 import sys
@@ -923,12 +924,35 @@ def _resolve_endpoint(
         val = getattr(obj, attr, None)
         return val if isinstance(val, expected_type) else None
 
-    provider_val = getattr(cfg, "provider", "google")
-    model_val = getattr(cfg, "model", "gemini-2.5-flash")
+    raw_provider = getattr(cfg, "provider", "google")
+    provider_val = str(raw_provider) if isinstance(raw_provider, str) else "google"
+
+    raw_model = getattr(cfg, "model", "gemini-2.5-flash")
+    model_val = str(raw_model) if isinstance(raw_model, str) else "gemini-2.5-flash"
+
+    api_base_val = getattr(cfg, "api_base", None) or getattr(cfg, "base_url", None)
+    if not api_base_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_base_val = (
+            str(settings.OPENAI_BASE_URL)
+            if settings.OPENAI_BASE_URL
+            else os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE")
+        )
+
+    api_key_val = getattr(cfg, "api_key", None)
+    if not api_key_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_key_val = (
+            settings.OPENAI_API_KEY.get_secret_value()
+            if settings.OPENAI_API_KEY
+            else os.environ.get("OPENAI_API_KEY")
+        )
 
     return ModelEndpoint(
         provider=ModelProvider.from_string(provider_val),
         model_name=str(model_val),
+        api_base=api_base_val,
+        api_key=api_key_val,
         temperature=_get_val(cfg, "temperature", (int, float)) or 0.0,
         timeout_seconds=_get_val(cfg, "timeout", (int, float)) or 60.0,
         thinking_budget=_get_val(cfg, "thinking_budget", int),
@@ -945,11 +969,17 @@ def _get_llm(
     is_utils: bool = False,
     use_fallback: bool = False,
     temperature: float | None = None,
+    model_name: str | None = None,
 ) -> BaseChatModel:
     """Resolves and instantiates the appropriate LLM wrapper for the given agent role."""
     endpoint = _resolve_endpoint(ctx, name, is_utils=is_utils, use_fallback=use_fallback)
+    updates = {}
     if temperature is not None:
-        endpoint = endpoint.model_copy(update={"temperature": temperature})
+        updates["temperature"] = temperature
+    if model_name is not None:
+        updates["model_name"] = model_name
+    if updates:
+        endpoint = endpoint.model_copy(update=updates)
     raw_model = ModelFactory.get_model(endpoint)
 
     handler = DataEngineCallbackHandler(ctx)

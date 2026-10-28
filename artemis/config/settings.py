@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 from artemis.config.constants import (
@@ -107,7 +107,14 @@ class Settings(BaseSettings):
     API_KEY: SecretStr | None = None
 
     # Custom Provider Endpoints
-    OPENAI_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE_URL",
+            "OPENAI_API_BASE",
+        ),
+    )
 
     # Android ADB Connectivity
     ADB_HOST: str | None = Field(default=DEFAULT_ADB_HOST)
@@ -177,6 +184,15 @@ class Settings(BaseSettings):
                 self.GOOGLE_API_KEY = self.GEMINI_API_KEY
             elif self.GCP_API_KEY:
                 self.GOOGLE_API_KEY = self.GCP_API_KEY
+
+        if not self.OPENAI_BASE_URL:
+            env_url = (
+                os.environ.get("OPENAI_BASE_URL")
+                or os.environ.get("OPENAI_API_BASE_URL")
+                or os.environ.get("OPENAI_API_BASE")
+            )
+            if env_url:
+                self.OPENAI_BASE_URL = env_url
 
         # Fallback for OCR & Vision API keys
         if not self.OCR_API_KEY and self.VISION_API_KEY:

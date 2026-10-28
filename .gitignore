@@ -63,6 +63,7 @@ desktop.ini
 !.env.example
 .env.local
 .env.*.local
+.jetski_env
 *.pem
 *.key
 

@@ -66,6 +66,8 @@ class ArtemisRunner:
         self.device_serial = device_serial
         self.profile = profile
         self.timeout = timeout
+        self._custom_traces_dir = traces_dir is not None
+        self._prev_traces_dir = os.environ.get("ARTEMIS_TRACES_DIR")
         if traces_dir:
             os.environ["ARTEMIS_TRACES_DIR"] = str(Path(traces_dir).resolve())
         self.agent: Agent | None = None
@@ -116,6 +118,11 @@ class ArtemisRunner:
         if pending:
             self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         self._loop.close()
+        if self._custom_traces_dir:
+            if self._prev_traces_dir is None:
+                os.environ.pop("ARTEMIS_TRACES_DIR", None)
+            else:
+                os.environ["ARTEMIS_TRACES_DIR"] = self._prev_traces_dir
 
     def __enter__(self) -> ArtemisRunner:
         self.start()
