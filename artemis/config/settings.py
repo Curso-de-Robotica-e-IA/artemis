@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from artemis.config.constants import (
@@ -131,6 +131,31 @@ class Settings(BaseSettings):
     PROJECT_NAME: str | None = None
     ARTEMIS_DEFAULT_PROFILE: str = Field(default=DEFAULT_PROFILE)
     ARTEMIS_DEFAULT_MODEL: str = Field(default=DEFAULT_MODEL)
+    ARTEMIS_TASK_TIMEOUT: float | None = Field(
+        default=600.0,
+        validation_alias=AliasChoices(
+            "ARTEMIS_TASK_TIMEOUT",
+            "ARTEMIS_TIMEOUT",
+            "TASK_TIMEOUT",
+        ),
+        description="Timeout in seconds for agent tasks. None or <= 0 for unlimited.",
+    )
+
+    @field_validator("ARTEMIS_TASK_TIMEOUT", mode="before")
+    @classmethod
+    def _parse_task_timeout(cls, v: object) -> float | None:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return None if v <= 0 else float(v)
+        s = str(v).strip().lower()
+        if s in ("0", "-1", "none", "null", "unlimited", "infinite", "disable", "disabled", "false"):
+            return None
+        try:
+            val = float(s)
+            return None if val <= 0 else val
+        except ValueError:
+            return 600.0
 
     # Explorer Tool Settings (the tier itself is configured in artemis.jsonc or
     # via ARTEMIS_EXPLORER_VERSION; see artemis.config.agent.ExplorerConfig)

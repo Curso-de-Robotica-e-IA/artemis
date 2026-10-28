@@ -8,12 +8,10 @@
   "default": {
     "provider": "openai",
     "model": "ornith-1.5:35b",
-    "timeout": 900.0,
     "thinking_level": "medium",
     "fallback": {
       "provider": "openai",
       "model": "qwen3.8:27b",
-      "timeout": 900.0,
       "thinking_level": "medium"
     }
   },
@@ -24,11 +22,10 @@
     "local-ollama": {
       "provider": "openai",
       "model": "ornith-1.5:35b",
-      "timeout": 900.0,
       "fallback": {
         "provider": "openai",
-        "model": "qwen3.8:27b",
-        "timeout": 900.0
+        "model": "qwen3.8:27b"
+        
       }
     }
   },
@@ -55,11 +52,9 @@
     // 👁️ Object Detector & Explorer (Flash Mode): Visual coordinates grounding and bounding boxes
     "object_detector": {
       "model": "ornith-1.5:35b",
-      "timeout": 900.0,
       "fallback": {
         "provider": "openai",
-        "model": "ornith-1.5:35b",
-        "timeout": 900.0
+        "model": "ornith-1.5:35b"
       }
     },
     // 🔍 Explorer: Deep element grounding and multi-candidate visual search
@@ -74,11 +69,9 @@
     // 🔽 Hopper: Fast lightweight package name locator
     "hopper": {
       "model": "ornith-1.5:35b",
-      "timeout": 900.0,
       "fallback": {
         "provider": "openai",
-        "model": "lfm2.5:24b",
-        "timeout": 900.0
+        "model": "lfm2.5:24b"
       }
     },
     // 📝 Outputter: Synthesizes execution trace into final output report
@@ -116,11 +109,9 @@
     "flash": {
       "max_turns": 0,
       "explorer_mode": "flash",
-      // 🧠 Step Summarizer: Asynchronous visual context compressor
       "step_summarizer": {
-        "enabled": true,
+        "enabled": false,
         "model": "ornith-1.5:35b",
-        "timeout": 900.0,
         "prune_history_xml": true
       }
     },
@@ -129,77 +120,74 @@
         "mode": "flash"
       },
       "planner_validation": {
-        "enabled": true
+        "enabled": false
       },
       "committee": {
         "enabled": false,
-        "debate_rounds": 2
+        "debate_rounds": 1
       },
       "checker": {
         "enabled": true,
         "midway_checks": false,
         "final_check": true,
-        "max_iterations": 20,
-        "final_check_max_attempts": 3,
-        "checkpoint_max_repairs": 2,
-        "max_concurrent_checkpoints": 3,
-        "checkpoint_timeout": 180.0,
-        "settlement_timeout": 120.0,
+        "max_iterations": 5,
+        "final_check_max_attempts": 1,
+        "checkpoint_max_repairs": 1,
+        "max_concurrent_checkpoints": 1,
+        "checkpoint_timeout": 60.0,
+        "settlement_timeout": 60.0,
         "assert_failure_policy": "continue",
-        "device_probes": true
+        "device_probes": false
       },
       "video_analyzer": {
-        "enabled": true,
-        "enable_ledger": true
+        "enabled": false,
+        "enable_ledger": false
       }
     },
     "memory": {
       "runtime": {
-        "max_concurrency": 2,
-        "retry_limit": 3,
-        "flush_timeout_s": 30
+        "max_concurrency": 1,
+        "retry_limit": 2,
+        "flush_timeout_s": 15
       },
       "transcript": {
         "enabled": true,
-        // Caso observe pressão excessiva de memória unificada no Jetson,
-        // reduza context_budget_tokens para 32000.
-        "context_budget_tokens": 32000,
+        "context_budget_tokens": 24000,
         "start_ratio": 0.35,
         "soft_ratio": 0.7,
         "hard_ratio": 0.9,
-        "min_active_steps": 5,
-        "image_scrub_depth": 3,
-        "image_scrub_depth_relaxed": 6,
-        "pending_grace_steps": 3,
+        "min_active_steps": 3,
+        "image_scrub_depth": 1,
+        "image_scrub_depth_relaxed": 2,
+        "pending_grace_steps": 1,
         "xml_scrub_depth": 1,
         "similarity_hint": true,
         "similarity_max_distance": 5
       },
       "chunking": {
-        "max_steps": 12,
-        "min_steps": 3,
-        "target_source_tokens": 2000,
+        "max_steps": 15,
+        "min_steps": 6,
+        "target_source_tokens": 1500,
         "model": "ornith-1.5:35b",
-        "timeout": 900.0,
-        "max_chunks": 8
+        "max_chunks": 4
       },
       "recall": {
-        "enabled": true,
-        "max_results": 5,
-        "max_text_tokens": 2000,
-        "screen_scan_steps": 150
+        "enabled": false,
+        "max_results": 2,
+        "max_text_tokens": 1000,
+        "screen_scan_steps": 50
       },
       "replay": {
-        "max_steps": 5,
-        "max_tokens": 12000
+        "max_steps": 2,
+        "max_tokens": 4000
       }
     },
     "video_analyzer": {
-      "enabled": true,
-      "enable_ledger": true
+      "enabled": false,
+      "enable_ledger": false
     },
     "outputter": {
-      "enabled": true,
+      "enabled": false,
       "force_synthesis": false
     },
     "explorer": {

@@ -930,7 +930,7 @@ def _resolve_endpoint(
     raw_model = getattr(cfg, "model", "gemini-2.5-flash")
     model_val = str(raw_model) if isinstance(raw_model, str) else "gemini-2.5-flash"
 
-    api_base_val = getattr(cfg, "api_base", None) or getattr(cfg, "base_url", None)
+    api_base_val = _get_val(cfg, "api_base", str) or _get_val(cfg, "base_url", str)
     if not api_base_val and provider_val in ("openai", "ollama", "vllm", "custom"):
         api_base_val = (
             str(settings.OPENAI_BASE_URL)
@@ -940,7 +940,7 @@ def _resolve_endpoint(
             or os.environ.get("OPENAI_API_BASE")
         )
 
-    api_key_val = getattr(cfg, "api_key", None)
+    api_key_val = _get_val(cfg, "api_key", str)
     if not api_key_val and provider_val in ("openai", "ollama", "vllm", "custom"):
         api_key_val = (
             settings.OPENAI_API_KEY.get_secret_value()

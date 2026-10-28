@@ -191,11 +191,15 @@ class VisualStepSummarizer(StepMemoryService):
                 try:
                     self._llm = get_google_llm(model_name=target_model, temperature=0.0)
                 except Exception:
-                    raise exc
+                    logger.warning(
+                        f"Could not initialize summarizer LLM; step summarizer will be inactive: {exc}"
+                    )
+                    self._llm = None
         try:
-            configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
-            if isinstance(configured, str) and configured:
-                self._model_name = configured
+            if self._llm is not None:
+                configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
+                if isinstance(configured, str) and configured:
+                    self._model_name = configured
         except Exception as exc:
             logger.debug(
                 "Could not read the configured summarizer model name; keeping %s: %s",
@@ -367,7 +371,7 @@ class VisualStepSummarizer(StepMemoryService):
         (the compaction thresholds' live context base), hence
         ``update_last_prompt=False``.
         """
-        if isinstance(self._llm, RobustChatModelWrapper):
+        if self._llm is None or isinstance(self._llm, RobustChatModelWrapper):
             return
         engine = getattr(self.ctx, "data_engine", None) if self.ctx else None
         record_llm_usage(
@@ -473,6 +477,9 @@ class VisualStepSummarizer(StepMemoryService):
                         "image_url": {"url": f"data:image/jpeg;base64,{b64_post}"},
                     }
                 )
+
+            if self._llm is None:
+                return None
 
             messages: list[BaseMessage] = [
                 SystemMessage(content=rendered_prompt),

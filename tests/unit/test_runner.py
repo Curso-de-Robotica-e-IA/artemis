@@ -74,3 +74,22 @@ def test_artemis_runner_lifecycle_and_execution(tmp_path, monkeypatch):
 
         with pytest.raises(RuntimeError, match="ArtemisRunner is closed"):
             bot.run("Another goal")
+
+
+def test_artemis_runner_timeout_configurations(monkeypatch):
+    runner = ArtemisRunner(timeout=45.0)
+    assert runner.timeout == 45.0
+
+    runner_none = ArtemisRunner(timeout=None)
+    assert runner_none.timeout is None
+
+    runner_zero = ArtemisRunner(timeout=0)
+    assert runner_zero.timeout is None
+
+    monkeypatch.setenv("ARTEMIS_TASK_TIMEOUT", "1200")
+    # Reload settings default or pass unset
+    from artemis.runner import _parse_runner_timeout
+    assert _parse_runner_timeout(1200) == 1200.0
+    assert _parse_runner_timeout("unlimited") is None
+    assert _parse_runner_timeout("0") is None
+    assert _parse_runner_timeout(0) is None
