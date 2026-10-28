@@ -137,44 +137,6 @@ def init_command() -> None:
     env_path.write_text("\n".join(env_content), encoding="utf-8")
 
     # 5. Configure MCP for AI IDEs
-    console.print("\n[bold]Step 5: Connect Artemis to your AI IDE (MCP)[/bold]")
-    console.print("  [1] Antigravity / Jetski (Recommended - Default)")
-    console.print("  [2] Cursor")
-    console.print("  [3] Claude Desktop / Claude Code")
-    console.print("  [4] Windsurf")
-    console.print("  [5] VS Code / Cline / Roo Code")
-    console.print("  [6] Codex")
-    console.print("  [7] All supported IDEs")
-    console.print("  [8] Skip for now")
-    mcp_choice = Prompt.ask(
-        "Select IDE for MCP auto-install",
-        choices=["1", "2", "3", "4", "5", "6", "7", "8"],
-        default="1",
-    )
-    if mcp_choice != "8":
-        target_map = {
-            "1": "antigravity",
-            "2": "cursor",
-            "3": "claude",
-            "4": "windsurf",
-            "5": "vscode",
-            "6": "codex",
-            "7": "all",
-        }
-        target = target_map.get(mcp_choice, "antigravity")
-        try:
-            from artemis.interfaces.cli.commands.mcp import install_mcp_config
-            from mcp_server.utils import env_utils
-
-            proj_root = env_utils.get_project_root()
-            py_exe = env_utils.resolve_python_executable(proj_root)
-            installed_paths = install_mcp_config(target, py_exe, proj_root)
-            console.print(
-                f"[bold green]✔ Configured Artemis MCP in {len(installed_paths)} IDE location(s).[/bold green]"
-            )
-        except Exception as e:
-            console.print(f"[yellow]Could not auto-install MCP config: {e}[/yellow]")
-
     console.print()
     console.print(
         Panel(
@@ -182,8 +144,6 @@ def init_command() -> None:
             f"Configured [bold cyan]{provider_name}[/bold cyan] in [dim]{env_path}[/dim]\n\n"
             "Try running your first task:\n"
             '  [bold cyan]uv run artemis run "Open YouTube and search for Lo-Fi Hip Hop"[/bold cyan]\n\n'
-            "Or connect/update your AI IDE anytime with:\n"
-            "  [bold cyan]uv run artemis mcp --install all[/bold cyan]\n\n"
             "Or run health diagnostics anytime with:\n"
             "  [bold cyan]uv run artemis doctor[/bold cyan]",
             title="☕ Ready to Go!",

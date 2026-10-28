@@ -376,128 +376,17 @@ setup_env_file() {
     fi
 }
 
-# Function to check and build Showcase UI
-setup_showcase_ui() {
-    echo -e "\n${BOLD}6. Checking Showcase UI Build (Angular)...${NC}"
-    local SHOWCASE_INDEX="${ROOT_DIR}/apps/showcase_ui/dist/frontend/browser/index.html"
-    local SHOWCASE_INDEX_ALT1="${ROOT_DIR}/apps/showcase_ui/dist/browser/index.html"
-    local SHOWCASE_INDEX_ALT2="${ROOT_DIR}/apps/showcase_ui/dist/index.html"
-    if [ ! -f "${SHOWCASE_INDEX}" ] && [ ! -f "${SHOWCASE_INDEX_ALT1}" ] && [ ! -f "${SHOWCASE_INDEX_ALT2}" ]; then
-        # Try loading nvm if available in user environment
-        export NVM_DIR="${HOME}/.nvm"
-        if [ -s "${NVM_DIR}/nvm.sh" ]; then
-            # shellcheck disable=SC1090,SC1091
-            . "${NVM_DIR}/nvm.sh" 2>/dev/null || true
-        fi
-        if [ -d "${HOME}/.local/share/node/bin" ] && [[ ":${PATH}:" != *":${HOME}/.local/share/node/bin:"* ]]; then
-            export PATH="${HOME}/.local/share/node/bin:${PATH}"
-        fi
-
-        # Check if nvm already has a compatible Node version installed
-        if ! is_node_compatible && (command -v nvm >/dev/null 2>&1 || type nvm >/dev/null 2>&1); then
-            nvm use 22 >/dev/null 2>&1 || true
-        fi
-
-        if ! is_node_compatible; then
-            if has_cmd node; then
-                local current_node="$(node -v 2>/dev/null)"
-                echo -e "   ${YELLOW}⚡ Detected Node.js ${current_node}, but Angular CLI requires Node.js >= v22.22.0. Upgrading Node.js...${NC}"
-            else
-                echo -e "   ${YELLOW}⚡ Node.js/npm not found. Auto-installing Node.js 22 LTS for Showcase UI compilation...${NC}"
-            fi
-
-            # 1. Try installing Node 22 via nvm if available
-            if command -v nvm >/dev/null 2>&1 || type nvm >/dev/null 2>&1; then
-                echo -e "   ${CYAN}📦 Installing Node.js 22 LTS via nvm...${NC}"
-                nvm install 22 >/dev/null 2>&1 || true
-                nvm use 22 >/dev/null 2>&1 || true
-            fi
-
-            # 2. Try brew on macOS
-            if ! is_node_compatible && [ "${OS_TYPE}" = "Darwin" ] && has_cmd brew; then
-                brew install node >/dev/null 2>&1 || brew upgrade node >/dev/null 2>&1 || true
-            fi
-
-            # 3. Try Linux package managers with sudo / root
-            if ! is_node_compatible && [ "${OS_TYPE}" = "Linux" ]; then
-                if request_sudo "install or upgrade Node.js to >= 22.22.0"; then
-                    local SUDO_PREFIX=""
-                    if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo"; fi
-                    if has_cmd apt-get; then
-                        echo -e "   ${CYAN}📦 Configuring NodeSource Node.js 22 LTS repository...${NC}"
-                        curl -fsSL --connect-timeout 5 --max-time 30 https://deb.nodesource.com/setup_22.x | ${SUDO_PREFIX} bash - >/dev/null 2>&1 || true
-                        ${SUDO_PREFIX} apt-get -o DPkg::Lock::Timeout=5 install -y -qq nodejs 2>/dev/null || true
-                    elif has_cmd dnf; then
-                        curl -fsSL --connect-timeout 5 --max-time 30 https://rpm.nodesource.com/setup_22.x | ${SUDO_PREFIX} bash - >/dev/null 2>&1 || true
-                        ${SUDO_PREFIX} dnf install -y nodejs || true
-                    elif has_cmd pacman; then
-                        ${SUDO_PREFIX} pacman -S --noconfirm nodejs npm || true
-                    fi
-                fi
-            fi
-
-            # 4. Standalone portable Node.js LTS (zero-admin user space fallback, guaranteed compatible)
-            if ! is_node_compatible; then
-                local ARCH="$(uname -m)"
-                local NODE_ARCH=""
-                case "${ARCH}" in
-                    x86_64|amd64) NODE_ARCH="x64" ;;
-                    aarch64|arm64) NODE_ARCH="arm64" ;;
-                esac
-                local OS_SYS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-                if [ -n "${NODE_ARCH}" ] && { [ "${OS_SYS}" = "linux" ] || [ "${OS_SYS}" = "darwin" ]; }; then
-                    local NODE_VER="v22.23.2"
-                    local NODE_DIR="${HOME}/.local/share/node"
-                    echo -e "   ${CYAN}📦 Installing portable Node.js ${NODE_VER} in user space (~/.local)...${NC}"
-                    rm -rf "${NODE_DIR}"
-                    mkdir -p "${NODE_DIR}" "${HOME}/.local/bin"
-                    if curl -fsSL --connect-timeout 5 --max-time 60 "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${OS_SYS}-${NODE_ARCH}.tar.gz" | tar -xz -C "${NODE_DIR}" --strip-components=1 2>/dev/null; then
-                        ln -sf "${NODE_DIR}/bin/node" "${HOME}/.local/bin/node"
-                        ln -sf "${NODE_DIR}/bin/npm" "${HOME}/.local/bin/npm"
-                        ln -sf "${NODE_DIR}/bin/npx" "${HOME}/.local/bin/npx"
-                        export PATH="${NODE_DIR}/bin:${HOME}/.local/bin:${PATH}"
-                        hash -r 2>/dev/null || true
-                        echo -e "   ${GREEN}✓ Portable Node.js ${NODE_VER} installed in user space.${NC}"
-                    fi
-                fi
-            fi
-        fi
-
-        if is_node_compatible; then
-            echo -e "   ${GREEN}✓ Node.js $(node -v 2>/dev/null) and npm $(npm -v 2>/dev/null) ready.${NC}"
-            echo -e "   ${YELLOW}🎨 Building Angular Showcase UI...${NC}"
-            (
-                cd "${ROOT_DIR}/apps/showcase_ui"
-                npm install --silent
-                CLI_NODE_VERSION="${ROOT_DIR}/apps/showcase_ui/node_modules/@angular/cli/src/utilities/node-version.js"
-                if [ -f "${CLI_NODE_VERSION}" ]; then
-                    if [ "${OS_TYPE}" = "Darwin" ]; then
-                        sed -i '' 's/22\.22\.3/22.22.0/g' "${CLI_NODE_VERSION}" 2>/dev/null || true
-                    else
-                        sed -i 's/22\.22\.3/22.22.0/g' "${CLI_NODE_VERSION}" 2>/dev/null || true
-                    fi
-                fi
-                npm run build
-            )
-            echo -e "   ${GREEN}✓ Showcase UI compiled successfully.${NC}"
-        else
-            echo -e "   ${YELLOW}⚠ Could not configure compatible Node.js (>= 22.22.0). Showcase UI will show fallback notice on launch.${NC}"
-        fi
-    else
-        echo -e "   ${GREEN}✓ Showcase UI build already exists.${NC}"
-    fi
-}
 
 # Function to display system readiness report
 verify_readiness() {
     echo -e "\n${BOLD}7. Toolchain Readiness Summary:${NC}"
 
-    local tools=("adb" "ffmpeg" "scrcpy" "uv" "python3" "npm")
+    local tools=("adb" "ffmpeg" "scrcpy" "uv" "python3" )
     for t in "${tools[@]}"; do
         if has_cmd "$t"; then
             local loc
             loc="$(command -v "$t")"
-            if [ "$t" = "npm" ] && has_cmd node; then
+            if [ "$t" =  ] && has_cmd node; then
                 local n_ver
                 n_ver="$(node -v 2>/dev/null || echo '')"
                 echo -e "   ${GREEN}✔ ${t}${NC} (${n_ver}) -> ${DIM}${loc}${NC}"
@@ -515,7 +404,6 @@ install_system_packages
 ensure_uv
 setup_python_env
 setup_env_file
-setup_showcase_ui
 verify_readiness
 
 echo -e "\n${BOLD}${CYAN}======================================================${NC}"
@@ -523,11 +411,11 @@ echo -e "${BOLD}${GREEN}   ✨ Artemis Environment Ready!                      $
 echo -e "${BOLD}${CYAN}======================================================${NC}"
 
 if [ "${AUTO_LAUNCH}" = true ]; then
-    echo -e "\n${GREEN}🚀 Auto-launching Showcase UI...${NC}"
-    exec uv run artemis ui --open
+    echo -e "\n${GREEN}🚀 Running Artemis doctor...${NC}"
+    exec uv run artemis doctor
 else
-    echo -e "To launch the unified UI & live device onboarding:"
-    echo -e "  👉 ${BOLD}${CYAN}./start.sh${NC}   (Recommended - automatically sets up environment)"
-    echo -e "  👉 ${BOLD}source ~/.bashrc && uv run artemis ui${NC} (or open a new terminal tab)"
+    echo -e "To configure and run Artemis:"
+    echo -e "  👉 ${BOLD}${CYAN}uv run artemis init${NC}"
+    echo -e "  👉 ${BOLD}uv run artemis run \"Open Settings\"${NC}"
     echo ""
 fi

@@ -27,7 +27,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 THIRD_PARTY_DIRS = [ROOT / "third_party"]
-ARTEMIS_DIRS = [ROOT / "artemis", ROOT / "apps" / "admin_console", ROOT / "mcp_server"]
+ARTEMIS_DIRS = [ROOT / "artemis"]
 
 
 def _py_files(dirs: list[Path]):

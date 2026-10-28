@@ -24,8 +24,6 @@ authors = [
 requires-python = ">=3.12"
 
 dependencies = [
-    # Remote Python SDK (kept as a zero-dependency workspace package)
-    "artemis-client>=0.1.0",
     # Orchestration & Framework
     "langgraph>=1.0.2,<2.0.0",
     "langchain>=1.0.0",
@@ -52,13 +50,9 @@ dependencies = [
     "rich>=13.7.0",
     "inquirer>=3.4.0",
     "colorama>=0.4.6",
-    # Web, API & Networking
-    "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.30.1",
+    # Networking
     "httpx>=0.28.1",
     "requests>=2.31.0",
-    "websockets>=12.0",
-    "sseclient-py>=1.8.0",
     # Image, Video & Multimodal Perception
     "pillow>=10.0.0",
     "opencv-python>=4.9.0.80",
@@ -89,20 +83,11 @@ dev = [
 
 [project.scripts]
 artemis = "artemis.interfaces.cli.main:cli"
-artemis-admin = "apps.admin_console.server:main"
 
 
 [build-system]
-# requires = ["uv_build>=0.7.20,<0.8.0"]
-# build-backend = "uv_build"
 requires = ["setuptools>=61.0", "Cython"]
 build-backend = "setuptools.build_meta"
-
-[tool.uv.workspace]
-members = ["packages/artemis-client"]
-
-[tool.uv.sources]
-artemis-client = { workspace = true }
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -183,11 +168,9 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.pytest.ini_options]
-# Add project root and apps to Python path for clean absolute imports
+# Add project root to Python path for clean absolute imports
 pythonpath = [
     ".",
-    "apps",
-    "apps/admin_console",
 ]
 
 
@@ -195,7 +178,6 @@ pythonpath = [
 testpaths = [
     "tests/unit",
     "tests/tools",
-    "packages/artemis-client/tests",
 ]
 python_files = [
     "*.test.py",
@@ -256,4 +238,3 @@ dev = [
     "pyright>=1.1.389",
     "pre-commit>=3.5.0",
 ]
-

@@ -222,20 +222,6 @@ def test_update_session_device_info_merges_fields():
     }
 
 
-def test_manage_task_status_exposes_hierarchy_backend(tmp_path, monkeypatch):
-    from mcp_server.tools import task_manager
-
-    monkeypatch.setattr(trace_store, "TRACES_DIR", str(tmp_path))
-    trace_store.init_trace("t9", "goal", "flash", device_serial="dev")
-    trace_store.update_trace_fields(
-        "t9", hierarchy_backend="uiautomator", hierarchy_backend_note="switched"
-    )
-    with patch.object(task_manager, "_reconcile_status", lambda *a, **k: None, create=True):
-        result = task_manager.mobile_manage_task(action="status", trace_id="t9")
-    assert result["hierarchy_backend"] == "uiautomator"
-    assert result["hierarchy_backend_note"] == "switched"
-
-
 # --------------------------------------------------------------------------- #
 # run_outcome environment block
 # --------------------------------------------------------------------------- #

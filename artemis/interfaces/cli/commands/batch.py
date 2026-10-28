@@ -20,14 +20,15 @@ import os
 from pathlib import Path
 from typing import Annotated
 
+from rich.console import Console
+from rich.table import Table
+import typer
+
 from artemis.config import initialize_llm_config
 from artemis.sdk import Agent
 from artemis.sdk.builders import Builders
 from third_party.mobile_use.sdk.types.task import AgentProfile
 from third_party.mobile_use.utils.logger import get_logger
-from rich.console import Console
-from rich.table import Table
-import typer
 
 logger = get_logger(__name__)
 
@@ -140,7 +141,7 @@ def batch_command(
         bool,
         typer.Option(
             "--standalone",
-            help="Run in standalone embedded mode without routing through Artemis Daemon.",
+            help="Run in standalone embedded mode (default; kept for CLI compatibility).",
         ),
     ] = False,
     verification_level: Annotated[
@@ -164,6 +165,7 @@ def batch_command(
     ] = None,
 ) -> None:
     """Execute multiple automation tasks in sequence."""
+    _ = standalone
     task_list: list[str] = []
 
     if tasks_file:
@@ -202,70 +204,6 @@ def batch_command(
             "Error: No tasks provided. Use --file or pass goals as arguments.", fg=typer.colors.RED
         )
         raise typer.Exit(1)
-
-    is_standalone = standalone or os.environ.get("ARTEMIS_STANDALONE") == "1"
-    if not is_standalone:
-        try:
-            from artemis.runtime import (
-                ensure_daemon_running,
-                submit_batch_to_daemon,
-                wait_for_daemon_task,
-            )
-
-            console = Console()
-            console.print("[dim]Connecting to Artemis Daemon scheduler...[/dim]")
-            is_running, base_url = ensure_daemon_running(timeout=8.0, wait_ready=True)
-            if is_running and base_url:
-                console.print(
-                    f"[bold green]✓[/bold green] Artemis Daemon active at [cyan]{base_url}[/cyan]"
-                )
-                resp = submit_batch_to_daemon(
-                    task_list,
-                    profile=profile,
-                    verification_level=verification_level,
-                    explorer_mode=explorer_pro_mode,
-                    base_url=base_url,
-                )
-                if resp and resp.get("tasks"):
-                    console.print(
-                        f"[bold green]✓[/bold green] Enqueued {len(task_list)} batch tasks in Daemon scheduler.\n"
-                    )
-                    results = []
-                    for idx, t_item in enumerate(resp["tasks"], 1):
-                        sid = t_item.get("session_id")
-                        goal = t_item.get("goal")
-                        console.print(
-                            f"[cyan]Waiting for Task {idx}/{len(task_list)}: '{goal}' (Session: {sid})...[/cyan]"
-                        )
-                        final_sess = wait_for_daemon_task(sid, base_url=base_url, timeout=1800.0)
-                        st = final_sess.get("status")
-                        err = final_sess.get("error") or ""
-                        results.append(
-                            {
-                                "task": goal,
-                                "status": "SUCCESS" if st in ("completed", "success") else "FAILED",
-                                "error": err,
-                            }
-                        )
-
-                    table = Table(title="Batch Execution Summary")
-                    table.add_column("#", justify="right", style="cyan")
-                    table.add_column("Task Goal", style="white")
-                    table.add_column("Status", justify="center")
-                    table.add_column("Notes", style="red")
-
-                    for i, res in enumerate(results, 1):
-                        status_styled = (
-                            "[bold green]PASS[/bold green]"
-                            if res["status"] == "SUCCESS"
-                            else "[bold red]FAIL[/bold red]"
-                        )
-                        table.add_row(str(i), res["task"], status_styled, res["error"])
-
-                    console.print(table)
-                    return
-        except Exception as exc:
-            logger.debug(f"Batch daemon routing notice: {exc}")
 
     asyncio.run(
         run_batch_tasks(

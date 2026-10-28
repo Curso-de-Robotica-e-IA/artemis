@@ -16,9 +16,14 @@
 
 import asyncio
 import os
+import signal
 from typing import Annotated
 
 from langchain_core.callbacks.base import Callbacks
+from rich.console import Console
+from rich.panel import Panel
+import typer
+
 from artemis.config import checker_overrides_for_level, settings
 from artemis.utils.startup_progress import publish_startup_progress
 from third_party.mobile_use.main import (
@@ -33,10 +38,6 @@ from third_party.mobile_use.main import (
 )
 from third_party.mobile_use.utils.cli_helpers import display_local_device_status
 from third_party.mobile_use.utils.logger import get_logger
-import signal
-from rich.console import Console
-from rich.panel import Panel
-import typer
 
 logger = get_logger(__name__)
 
@@ -292,104 +293,15 @@ def run_command(
         bool,
         typer.Option(
             "--standalone",
-            help="Run in standalone embedded mode without auto-spawning the Artemis Daemon.",
+            help="Run in standalone embedded mode (default; kept for CLI compatibility).",
         ),
     ] = False,
 ) -> None:
     """Run an autonomous UI automation task on the connected Android device."""
+    _ = standalone
     ensure_video_recording_available(with_video_recording_tools)
 
     console = Console()
-
-    is_worker = (
-        os.environ.get("ARTEMIS_TASK_WORKER") == "1"
-        or os.environ.get("ARTEMIS_DEVICE_QUEUE_TICKET") is not None
-    )
-    is_standalone = standalone or os.environ.get("ARTEMIS_STANDALONE") == "1"
-
-    # All platforms route through unified Artemis Daemon unless specifically configured as standalone
-    if not is_worker and not is_standalone:
-        try:
-            import uuid
-            from artemis.runtime import (
-                ensure_daemon_running,
-                submit_task_to_daemon,
-                wait_for_daemon_task,
-                stop_task_on_daemon,
-            )
-
-            console.print("[dim]Connecting to Artemis Daemon scheduler...[/dim]")
-            is_running, base_url = ensure_daemon_running(timeout=8.0, wait_ready=True)
-            if is_running and base_url:
-                target_sid = session_id or str(uuid.uuid4())
-                console.print(
-                    f"[bold green]✓[/bold green] Artemis Daemon active at [cyan]{base_url}[/cyan]"
-                )
-                resp = submit_task_to_daemon(
-                    goal=goal,
-                    profile=profile or "pro",
-                    device_serial=device_serial,
-                    expected_output=output_description,
-                    enable_outputter=enable_outputter,
-                    locked_app_package=locked_app_package,
-                    app_path=app_path,
-                    session_id=target_sid,
-                    ingress="cli",
-                    base_url=base_url,
-                )
-                if resp and resp.get("tasks"):
-                    console.print(
-                        f"[bold green]✓[/bold green] Task scheduled in unified queue (Session: [cyan]{target_sid}[/cyan])"
-                    )
-                    console.print(f"[dim]Live dashboard & replay: {base_url}[/dim]\n")
-
-                    def on_status(sess_info):
-                        st = sess_info.get("status")
-                        if st == "queued":
-                            console.print(
-                                "[yellow]⏳ Task queued in scheduler, waiting for device...[/yellow]"
-                            )
-                        elif st == "running":
-                            console.print("[green]▶ Task executing on mobile device...[/green]")
-
-                    try:
-                        final_res = wait_for_daemon_task(
-                            target_sid,
-                            base_url=base_url,
-                            timeout=1800.0,
-                            on_status_update=on_status,
-                        )
-                        final_st = final_res.get("status")
-                        if final_st in ("completed", "success"):
-                            console.print(
-                                "\n[bold green]✅ Task completed successfully![/bold green]"
-                            )
-                            return
-                        else:
-                            err = final_res.get("error") or final_res.get("explanation") or ""
-                            console.print(f"\n[bold red]✖ Task {final_st}[/bold red]: {err}")
-                            raise SystemExit(1)
-                    except KeyboardInterrupt:
-                        console.print("\n[yellow]Stopping task on Daemon...[/yellow]")
-                        stop_task_on_daemon(target_sid, base_url=base_url)
-                        console.print("[yellow]Task cancelled.[/yellow]")
-                        raise SystemExit(130)
-                else:
-                    console.print(
-                        "[yellow]Warning: Could not enqueue task to Daemon. Falling back to local execution...[/yellow]"
-                    )
-            else:
-                console.print(
-                    "[yellow]Warning: Artemis Daemon could not be started. Falling back to local execution...[/yellow]"
-                )
-        except SystemExit:
-            raise
-        except Exception as exc:
-            logger.debug(f"Daemon dispatch error: {exc}")
-            console.print(
-                f"[yellow]Daemon routing notice: {exc}. Falling back to local execution...[/yellow]"
-            )
-
     display_local_device_status(console, host=settings.ADB_HOST, port=settings.ADB_PORT)
 
     cancelled = False
@@ -430,9 +342,6 @@ def run_command(
             )
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
-        # KeyboardInterrupt: Ctrl+C / SIGTERM. CancelledError: the daemon asked
-        # this worker to stop through a cancel marker and the Agent cancelled
-        # its own task so the recording and trace could be finalized.
         cancelled = True
     except Exception as e:
         err_msg = str(e)

@@ -20,25 +20,22 @@ from artemis import _legacy_imports
 # Old import paths of the modules moved to third_party/ (deprecated).
 _legacy_imports.install()
 
-from artemis.interfaces.sdk.client import ArtemisClient, ConcurrencyMode
-from artemis.interfaces.sdk.task import StreamEvent, StreamEventType, Task
-from artemis_client import Capabilities, Device, TaskHandle, TaskResult
+from artemis.drivers.base import BaseDeviceDriver
+from artemis.interfaces.sdk.task import StreamEvent, StreamEventType, Task, TaskResult
+from artemis.runner import ArtemisRunner
+from artemis.runtime.device_lock import ConcurrencyMode
 from artemis.sdk.agent import Agent
 from artemis.sdk.builders import Builders
-from artemis.drivers.base import BaseDeviceDriver
 
 __all__ = [
     "__version__",
-    "ArtemisClient",
-    "Capabilities",
+    "Agent",
+    "ArtemisRunner",
+    "BaseDeviceDriver",
+    "Builders",
     "ConcurrencyMode",
-    "Device",
     "StreamEvent",
     "StreamEventType",
-    "Agent",
-    "Builders",
     "Task",
-    "TaskHandle",
     "TaskResult",
-    "BaseDeviceDriver",
 ]

@@ -23,19 +23,6 @@ from setuptools.command.sdist import sdist as _sdist
 USE_CYTHON = os.environ.get("USE_CYTHON", "0") == "1"
 
 
-def _showcase_dist(source_root: Path) -> Path | None:
-    """Locate a complete Angular browser build in a source or sdist tree."""
-    base_dist = source_root / "apps" / "showcase_ui" / "dist"
-    candidates = (
-        base_dist / "frontend" / "browser",
-        base_dist / "browser",
-        base_dist / "frontend",
-        base_dist,
-        source_root / "artemis" / "resources" / "showcase_ui",
-    )
-    return next((path for path in candidates if (path / "index.html").is_file()), None)
-
-
 def _copy_release_resources(source_root: Path, resource_root: Path) -> None:
     """Stage immutable runtime resources into a wheel or source distribution."""
     config_candidates = (
@@ -46,35 +33,18 @@ def _copy_release_resources(source_root: Path, resource_root: Path) -> None:
     if config_source is None:
         raise RuntimeError("Cannot build Artemis: config/artemis.jsonc is missing.")
 
-    showcase_source = _showcase_dist(source_root)
-    if showcase_source is None:
-        raise RuntimeError(
-            "Cannot build an Artemis distribution without the Showcase UI. "
-            "Run `npm ci --prefix apps/showcase_ui` and "
-            "`npm run build --prefix apps/showcase_ui` first."
-        )
     config_target = resource_root / "config"
     config_target.mkdir(parents=True, exist_ok=True)
     shutil.copy2(config_source, config_target / "artemis.jsonc")
 
-    showcase_target = resource_root / "showcase_ui"
-    if showcase_target.exists():
-        shutil.rmtree(showcase_target)
-    shutil.copytree(showcase_source, showcase_target)
-
 
 class build_py(_build_py):
-    """Build Python modules, then stage config and precompiled web assets."""
+    """Build Python modules, then stage config resources."""
 
     def run(self) -> None:
         super().run()
-        # Editable installs use the checkout's config and frontend assets.
         if self.editable_mode:
             return
-        # Older builds may have copied frontend sources and node_modules here.
-        excluded_showcase = Path(self.build_lib) / "apps" / "showcase_ui"
-        if excluded_showcase.exists():
-            shutil.rmtree(excluded_showcase)
         _copy_release_resources(
             Path.cwd(),
             Path(self.build_lib) / "artemis" / "resources",
@@ -85,16 +55,7 @@ class sdist(_sdist):
     """Make sdists self-contained so wheels can be built from their archive."""
 
     def make_release_tree(self, base_dir: str, files: list[str]) -> None:
-        # Old egg-info manifests may include Python packages from node_modules.
-        filtered_files = [
-            path for path in files if not Path(path).as_posix().startswith("apps/showcase_ui/")
-        ]
-        super().make_release_tree(base_dir, filtered_files)
-        # Protect local rebuilds from stale egg-info/SOURCES.txt manifests
-        # generated before package discovery was narrowed.
-        excluded_showcase = Path(base_dir) / "apps" / "showcase_ui"
-        if excluded_showcase.exists():
-            shutil.rmtree(excluded_showcase)
+        super().make_release_tree(base_dir, files)
         _copy_release_resources(
             Path.cwd(),
             Path(base_dir) / "artemis" / "resources",
@@ -140,18 +101,12 @@ setup(
         include=[
             "artemis",
             "artemis.*",
-            "mcp_server",
-            "mcp_server.*",
-            "apps",
-            "apps.admin_console",
-            "apps.admin_console.*",
             "third_party.*",
         ],
     ),
     package_data={
         "artemis": ["**/*.json", "**/*.md"],
-        "artemis.resources": ["config/*.jsonc", "showcase_ui/*", "showcase_ui/**/*"],
-        "apps.admin_console": ["index.html"],
+        "artemis.resources": ["config/*.jsonc"],
         # third_party has no __init__.py (namespace package), so it does not clash
         # with other distributions that also ship a third_party directory.
         "third_party.mobile_use": ["LICENSE", "NOTICE", "METADATA", "**/*.md"],

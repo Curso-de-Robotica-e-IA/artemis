@@ -63,13 +63,6 @@ def host_env(tmp_path, monkeypatch, clean_ide_env):
     monkeypatch.setattr("artemis.config.paths.get_default_traces_path", lambda: traces)
     monkeypatch.setattr("artemis.config.paths.is_source_checkout", lambda: True)
     monkeypatch.setattr(sys, "executable", str(venv_python))
-
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_standalone_forced", lambda: False)
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_artemis_daemon", lambda: True)
-    monkeypatch.setattr(
-        "artemis.runtime.daemon_client.daemon_log_path", lambda: tmp_path / "daemon.log"
-    )
-    monkeypatch.setattr("artemis.runtime.server_lifecycle.is_port_in_use", lambda *a, **k: True)
     return tmp_path
 
 
@@ -95,59 +88,9 @@ async def test_consistent_host_passes(host_env):
     assert meta["env_file_exists"] is False
     assert meta["traces_dir_writable"] is True
     assert (host_env / "traces").is_dir()
-    assert meta["daemon"] == {
-        "host": "127.0.0.1",
-        "port": 8000,
-        "standalone_forced": False,
-        "reachable": True,
-        "port_in_use": True,
-        "port_held_by_other_process": False,
-        "log_path": str(host_env / "daemon.log"),
-    }
     labels = [a.label for a in result.actions]
     assert labels[0] == "Host OK"
     assert "Env File Location" in labels  # informational even when passing
-
-
-@pytest.mark.asyncio
-async def test_daemon_port_held_by_other_process_warns(host_env, monkeypatch):
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_artemis_daemon", lambda: False)
-
-    result = await IntegrationHostProbe().probe()
-
-    assert result.status is ProbeStatus.WARN
-    assert result.is_blocker is False  # tasks still run standalone
-    assert result.metadata["daemon"]["port_held_by_other_process"] is True
-    assert "port 8000 is held" in result.description.lower()
-    port_fix = next(a for a in result.actions if a.label == "Free the Daemon Port")
-    assert "ARTEMIS_DAEMON_PORT" in port_fix.payload
-
-
-@pytest.mark.asyncio
-async def test_daemon_not_running_and_port_free_is_informational(host_env, monkeypatch):
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_artemis_daemon", lambda: False)
-    monkeypatch.setattr("artemis.runtime.server_lifecycle.is_port_in_use", lambda *a, **k: False)
-
-    result = await IntegrationHostProbe().probe()
-
-    assert result.status is ProbeStatus.PASS
-    assert "auto-start" in result.description
-    auto = next(a for a in result.actions if a.label == "Daemon Auto-Start")
-    assert str(host_env / "daemon.log") in auto.payload
-
-
-@pytest.mark.asyncio
-async def test_standalone_mode_skips_daemon_probe(host_env, monkeypatch):
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_standalone_forced", lambda: True)
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_artemis_daemon", lambda: False)
-
-    result = await IntegrationHostProbe().probe()
-
-    assert result.status is ProbeStatus.PASS
-    assert result.metadata["daemon"]["standalone_forced"] is True
-    assert result.metadata["daemon"]["port_held_by_other_process"] is False
-    auto = next(a for a in result.actions if a.label == "Daemon Auto-Start")
-    assert "ARTEMIS_STANDALONE" in auto.payload
 
 
 @pytest.mark.asyncio
@@ -293,7 +236,9 @@ async def test_missing_venv_warns_with_uv_sync(host_env, monkeypatch):
 @pytest.mark.asyncio
 async def test_unwritable_traces_dir_fails_even_with_other_warnings(host_env, monkeypatch):
     monkeypatch.setattr(host_probe, "directory_is_writable", lambda _p: (False, "denied"))
-    monkeypatch.setattr("artemis.runtime.daemon_client.is_artemis_daemon", lambda: False)
+    other = host_env / "other-python.exe"
+    other.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(other))
 
     result = await IntegrationHostProbe().probe()
 
@@ -304,8 +249,8 @@ async def test_unwritable_traces_dir_fails_even_with_other_warnings(host_env, mo
     assert result.metadata["traces_dir_error"] == "denied"
     assert result.actions[0].label == "Fix Traces Directory"
     assert "ARTEMIS_TRACES_DIR" in result.actions[0].payload
-    # The port problem is still reported alongside the blocking failure.
-    assert "port 8000 is held" in result.description.lower()
+    # The interpreter mismatch is still reported alongside the blocking failure.
+    assert "not the project virtualenv" in result.description.lower()
 
 
 def test_directory_is_writable_reports_real_errors(tmp_path):
@@ -391,7 +336,6 @@ async def test_traces_path_creation_error_becomes_fail_not_crash(host_env, monke
     meta = result.metadata
     assert meta["traces_dir_writable"] is False
     assert "Permission denied" in meta["traces_dir_error"]
-    # The intended path is still named, resolved without touching the disk.
     assert Path(meta["traces_dir"]) == host_env / "ro" / "traces"
     assert not (host_env / "ro").exists()
     assert result.actions[0].label == "Fix Traces Directory"
@@ -416,56 +360,3 @@ def test_intended_traces_path_mirrors_selection_without_mkdir(tmp_path, monkeypa
     assert not (tmp_path / "traces").exists()
     assert not (tmp_path / "app").exists()
     assert not (tmp_path / "env-traces").exists()
-
-
-# --------------------------------------------------------------------------- #
-# Daemon identity (a dev server on port 8000 is not the daemon)
-# --------------------------------------------------------------------------- #
-
-
-class _FakeResponse:
-    def __init__(self, status: int, body: bytes):
-        self.status = status
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-@pytest.mark.parametrize(
-    "status, body, expected",
-    [
-        (200, b'{"running": true, "port": 8000, "current_pid": 42}', True),
-        (200, b"<!doctype html><title>Vite App</title>", False),  # dev server on /
-        (200, b'{"hello": "world"}', False),
-        (404, b"", False),
-    ],
-)
-def test_is_artemis_daemon_requires_the_server_status_shape(monkeypatch, status, body, expected):
-    from artemis.runtime import daemon_client
-
-    seen: dict[str, str] = {}
-
-    def fake_urlopen(req, timeout):
-        seen["url"] = req.full_url
-        return _FakeResponse(status, body)
-
-    monkeypatch.setattr(daemon_client.urllib.request, "urlopen", fake_urlopen)
-    assert daemon_client.is_artemis_daemon("127.0.0.1", 8000) is expected
-    assert seen["url"] == "http://127.0.0.1:8000/api/system/server-status"
-
-
-def test_is_artemis_daemon_is_false_when_nothing_listens(monkeypatch):
-    from artemis.runtime import daemon_client
-
-    def refuse(req, timeout):
-        raise ConnectionRefusedError()
-
-    monkeypatch.setattr(daemon_client.urllib.request, "urlopen", refuse)
-    assert daemon_client.is_artemis_daemon("127.0.0.1", 8000) is False

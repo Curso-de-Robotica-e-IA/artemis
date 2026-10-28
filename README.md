@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="./README.md"><b>English</b></a> •
-  <a href="./README_CN.md">中文文档</a> •
+  <a href="./docs/README_PT.md">Português</a> •
   <a href="#workflow-showcase">Workflow Showcase</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#mcp-setup">MCP for IDEs</a> •
@@ -75,34 +75,21 @@
 <a id="quick-start"></a>
 ## Quick Start
 
-Ensure an Android device (with **USB Debugging** enabled) or emulator is connected. The one-click startup script will automatically:
-- **Install System Toolchains**: Detect and auto-install ADB, scrcpy, FFmpeg, and Python (`uv`) dependencies.
-- **Mount Global MCP Server & AI Agent Rules**: Prompt to automatically install global MCP configurations and the **Artemis Mobile Testing Mindset (`rules.md`)** into your AI IDEs (**Antigravity**, **Cursor**, **Claude Code**, **Codex**, **Windsurf**, **VS Code**, **Cline/Roo**, **OpenClaw**).
-
-### macOS and Linux
+Ensure an Android device (with **USB Debugging** enabled) or emulator is connected:
 
 ```bash
 # 1. Clone repo & navigate to directory
 git clone https://github.com/google/artemis.git && cd artemis
 
-# 2. One-click launch
-./start.sh
+# 2. Sync Python dependencies
+uv sync
+
+# 3. Configure API keys & device (interactive wizard)
+uv run artemis init
+
+# 4. Run an autonomous task directly in-process
+uv run artemis run "Open Settings, find Battery and tell me current level" --profile flash
 ```
-
-### Windows PowerShell
-
-```powershell
-# 1. Clone repo & navigate to directory
-git clone https://github.com/google/artemis.git
-cd artemis
-
-# 2. One-click launch
-.\start.bat
-```
-
-> PowerShell does not search the current directory for executable scripts by default, so use `.\start.bat` without a trailing `\`. In Command Prompt (CMD), use `start.bat` instead.
-
-> **Tip**: Opens `http://localhost:8000` in your default browser with a device connection wizard, live screen mirroring, prompt sandbox, and execution replays. You can also run directly from CLI: `uv run artemis run "Open Settings, find Battery and tell me current level" --profile flash`.
 
 <a id="mcp-setup"></a>
 <a id="mcp"></a>
@@ -115,7 +102,7 @@ ARTEMIS includes a native **Model Context Protocol (MCP)** server. Connect your 
 
 ### 1. One-Click Auto Install (Recommended)
 
-Running `./start.sh` (macOS/Linux) or `.\start.bat` (Windows PowerShell) will prompt you to configure global MCP and testing rules for detected IDEs (or you can install/update anytime later manually using the commands below):
+Configure global MCP and testing rules for detected IDEs using the commands below:
 
 ```bash
 # Auto-install MCP server & global rules for Antigravity / Jetski:
@@ -205,51 +192,25 @@ In Codex, Antigravity, or Claude Code, simply prompt:
 
 <br>
 
-Install the zero-runtime-dependency client on the development machine. ADB,
-agents, models, and image processing remain on the device host:
-
-```powershell
-uv add "artemis-client @ git+https://github.com/google/artemis.git#subdirectory=packages/artemis-client"
-```
+Run ARTEMIS directly in-process as a pure Python library:
 
 ```python
-import asyncio
-from artemis_client import ArtemisClient
+from artemis import ArtemisRunner
 
-
-async def main():
-    client = ArtemisClient(
-        "http://artemis-host:8000",
-        device_serial="emulator-5554",  # optional: target specific device serial
-        default_profile="flash",  # "flash" (fast reactive) or "pro" (deep reasoning)
+with ArtemisRunner(device_serial="emulator-5554", profile="flash") as bot:
+    result = bot.run(
+        "Open System Settings, go to 'Battery', verify battery percentage is displayed, and check for any crash dialogs."
     )
-
-    result = await client.run(
-        "Open System Settings, go to 'Battery', verify battery percentage is displayed, and check for any crash dialogs.",
-    )
-
-    assert result.succeeded, f"Test failed: {result.error or result.status}"
-    print(f"✅ Test Passed! Device: {result.device_serial} | Trace ID: {result.trace_id}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    print(result)
 ```
 
 </details>
 
 ## Usage Modes
 
-<p align="center">
-  <img src="./docs/assets/artemis-ui-showcase-en.png" alt="Artemis Web Console" width="100%" />
-  <br />
-  <sub><b>Console Overview</b>: <b>① View Switcher</b> (Home / Workspace) · <b>② Model & Replay</b> (Flash/Pro status & video replay) · <b>③ Live Agent Stream</b> (Action perception, target coordinates & structured results) · <b>④ Prompt Dock</b> (Natural language dispatch) · <b>⑤ Task Queue & Dashboard</b> (Lifecycle & history)</sub>
-</p>
-
-* **Web Visual Test Console (`uv run artemis ui`)**: Real-time screen projection and interactive panel, supporting natural language test dispatch, live reasoning telemetry, action trajectories, and execution replay; manage server lifecycle anytime from any terminal using `uv run artemis restart`, `uv run artemis stop`, and `uv run artemis status`;
-* **MCP Server**: Connects **Antigravity, Claude Code, Windsurf**, and other MCP clients to real devices for bug reproduction and test execution;
-* **Developer CLI (`uv run artemis run`)**: Direct terminal execution for automated test cases, exploratory stability inspection, or AndroidWorld benchmarks with high-fidelity structured terminal output;
-* **Python SDK**: Integrates as a standard Python library into existing automated testing frameworks (e.g., pytest) or CI/CD pipelines with strongly typed Pydantic structured outputs and assertion support. To run ARTEMIS in-process from another project (no server), see [`templates/embedded`](./templates/embedded/README.md).
+* **Python SDK (`from artemis import ArtemisRunner, Agent`)**: Integrates directly in-process as a standard Python library into automated testing frameworks (e.g., pytest) or CI/CD pipelines with strongly typed Pydantic structured outputs and assertion support;
+* **Developer CLI (`uv run artemis run`)**: Direct in-process terminal execution for automated test cases, batch runs (`artemis batch`), trace inspection (`artemis trace list` / `artemis trace view`), and diagnostics (`artemis doctor`);
+* **MCP Server (`uv run artemis mcp`)**: Connects **Antigravity, Claude Code, Windsurf**, and other MCP clients to real devices for bug reproduction and test execution.
 
 <a id="on-device-helper"></a>
 ## What ARTEMIS Installs on Your Phone

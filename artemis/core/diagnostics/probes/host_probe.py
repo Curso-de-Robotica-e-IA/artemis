@@ -19,18 +19,15 @@ machine?". This probe answers the question that precedes it when Artemis is
 embedded in an AI coding assistant (Claude Code, Cursor, Codex, Antigravity,
 ...): "was the server launched the way the installer expects, and can it
 spawn a background runner?". The failure modes it covers are the ones users
-hit mostly through MCP, rarely from the CLI or the web console:
+hit mostly through MCP:
 
 * the MCP client started the server with a different interpreter than the
   project virtualenv, so the spawned runner imports a different package set;
 * the ``.env`` file the settings loader reads is not where the user put the key;
-* the traces directory is not writable from the client's sandbox;
-* the daemon port is held by another process (a very common collision with
-  dev servers that also default to port 8000).
+* the traces directory is not writable from the client's sandbox.
 
-The probe is not registered in the default :class:`ReadinessEngine` probe set:
-the web console has its own device wizard and would only render noise. The
-``mobile_diagnose`` MCP tool and ``artemis doctor`` run it explicitly.
+The probe is not registered in the default :class:`ReadinessEngine` probe set.
+The ``mobile_diagnose`` MCP tool and ``artemis doctor`` run it explicitly.
 
 Only the unwritable-traces case blocks task execution; the result carries
 ``is_blocker`` accordingly, so the WARN findings degrade the verdict without
@@ -89,41 +86,22 @@ def detect_mcp_client() -> str | None:
     before the generic VS Code markers because Cursor, Windsurf, Cline and Roo
     are (or run inside) VS Code and inherit ``VSCODE_*`` / ``TERM_PROGRAM``.
     """
-    # Antigravity injects its language-server endpoint and CSRF token
-    # (ANTIGRAVITY_LS_ADDRESS / ANTIGRAVITY_CSRF_TOKEN) so child processes can
-    # call `agentapi`; mcp_server/notifiers/agentapi.py relies on the same pair.
     if _env_has_prefix("ANTIGRAVITY_"):
         return "antigravity"
-    # Claude Code marks every child with CLAUDECODE=1 plus CLAUDE_CODE_* details
-    # (entrypoint, session id, ...). Claude Desktop shares the same installer
-    # target, so both map to "claude".
     if os.environ.get("CLAUDECODE") == "1" or _env_has_prefix("CLAUDE_CODE_"):
         return "claude"
-    # Cursor tags its integrated terminal and spawned processes with
-    # CURSOR_TRACE_ID (and CURSOR_AGENT in agent mode).
     if "CURSOR_TRACE_ID" in os.environ or _env_has_prefix("CURSOR_"):
         return "cursor"
-    # Windsurf (Codeium) exports WINDSURF_* to its child processes.
     if _env_has_prefix("WINDSURF_"):
         return "windsurf"
-    # Codex CLI sets CODEX_SANDBOX* / CODEX_* for the processes it runs.
-    # CODEX_HOME alone is excluded: users set it by hand to relocate the Codex
-    # config directory, so on its own it does not prove Codex launched us.
     if _env_has_prefix("CODEX_", exclude=("CODEX_HOME",)):
         return "codex"
-    # OPENCLAW_WEBHOOK_URL is a notifier setting users put in any host's env
-    # block (see mcp_server/notifiers/webhook.py); only other OPENCLAW_* vars
-    # indicate the OpenClaw runtime itself.
     if _env_has_prefix("OPENCLAW_", exclude=("OPENCLAW_WEBHOOK_URL",)):
         return "openclaw"
-    # Cline / Roo Code run as VS Code extensions; their own prefixes are rare
-    # but unambiguous when present, and must win over the generic VS Code check.
     if _env_has_prefix("CLINE_"):
         return "cline"
     if _env_has_prefix("ROO_"):
         return "roo"
-    # Plain VS Code (Copilot agent mode) exports VSCODE_PID / VSCODE_IPC_HOOK
-    # and sets TERM_PROGRAM=vscode. Weakest signal, so it is checked last.
     if (
         "VSCODE_PID" in os.environ
         or "VSCODE_IPC_HOOK" in os.environ
@@ -224,24 +202,11 @@ class IntegrationHostProbe(BaseProbe):
         return True
 
     async def probe(self) -> ProbeResult:
-        # Lazy imports keep this module importable in stripped test environments
-        # and avoid a core -> runtime import at package import time.
         from artemis.config.paths import ROOT_DIR, get_env_file, is_source_checkout
-        from artemis.runtime.daemon_client import (
-            DEFAULT_DAEMON_HOST,
-            DEFAULT_DAEMON_PORT,
-            daemon_log_path,
-            is_artemis_daemon,
-            is_standalone_forced,
-        )
-        from artemis.runtime.server_lifecycle import is_port_in_use
 
         project_root = Path(ROOT_DIR)
         source_checkout = is_source_checkout()
         server_python = Path(sys.executable)
-        # A project virtualenv is only meaningful for a source checkout. In a
-        # wheel install ROOT_DIR is site-packages, which never carries a .venv;
-        # the current interpreter also runs background tasks.
         venv_python: Path | None = project_venv_python(project_root) if source_checkout else None
         venv_exists = venv_python is not None and venv_python.is_file()
         runner_python = venv_python if venv_exists else server_python
@@ -254,13 +219,6 @@ class IntegrationHostProbe(BaseProbe):
             traces_writable, traces_error = directory_is_writable(traces_dir)
         else:
             traces_writable = False
-
-        standalone = is_standalone_forced()
-        # Identity, not liveness: a dev server squatting on the port answers
-        # HTTP too, and must show up as a hijacked port, not as the daemon.
-        daemon_reachable = False if standalone else is_artemis_daemon()
-        port_in_use = is_port_in_use(DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_HOST)
-        port_hijacked = port_in_use and not daemon_reachable and not standalone
 
         metadata: dict[str, Any] = {
             "os": sys.platform,
@@ -277,15 +235,6 @@ class IntegrationHostProbe(BaseProbe):
             "traces_dir": str(traces_dir),
             "traces_dir_writable": traces_writable,
             "traces_dir_error": traces_error,
-            "daemon": {
-                "host": DEFAULT_DAEMON_HOST,
-                "port": DEFAULT_DAEMON_PORT,
-                "standalone_forced": standalone,
-                "reachable": daemon_reachable,
-                "port_in_use": port_in_use,
-                "port_held_by_other_process": port_hijacked,
-                "log_path": str(daemon_log_path()),
-            },
         }
 
         problems: list[str] = []
@@ -303,24 +252,6 @@ class IntegrationHostProbe(BaseProbe):
                         f"Make {traces_dir} writable for the user running the MCP server, or point "
                         "ARTEMIS_TRACES_DIR at a writable directory in the MCP server's env block, "
                         "then restart the MCP server."
-                    ),
-                )
-            )
-
-        if port_hijacked:
-            status = ProbeStatus.WARN if status is ProbeStatus.PASS else status
-            problems.append(
-                f"port {DEFAULT_DAEMON_PORT} is held by a process that is not the Artemis daemon"
-            )
-            actions.append(
-                ProbeAction(
-                    action_type="hint",
-                    label="Free the Daemon Port",
-                    payload=(
-                        f"Another program is listening on {DEFAULT_DAEMON_HOST}:{DEFAULT_DAEMON_PORT}"
-                        " (often a dev server). Stop it, or set ARTEMIS_DAEMON_PORT to a free port in"
-                        " the MCP server's env block and restart the MCP server. Tasks still run in"
-                        " standalone mode meanwhile, without the shared scheduler."
                     ),
                 )
             )
@@ -370,38 +301,18 @@ class IntegrationHostProbe(BaseProbe):
                 )
             )
 
-        if not daemon_reachable and not port_hijacked:
-            actions.append(
-                ProbeAction(
-                    action_type="hint",
-                    label="Daemon Auto-Start",
-                    payload=(
-                        "Standalone mode is forced (ARTEMIS_STANDALONE=1); tasks run as detached"
-                        " runner processes."
-                        if standalone
-                        else "The Artemis daemon is not running; mobile_run_task starts it on the"
-                        f" first task. Its log is {daemon_log_path()}."
-                    ),
-                )
-            )
-
         if status is ProbeStatus.PASS:
             summary = "Host Ready"
             description = (
                 f"MCP server runs on {server_python}; runner uses {runner_python}. "
-                f"Traces at {traces_dir}. "
-                + (
-                    "Daemon reachable."
-                    if daemon_reachable
-                    else "Daemon will auto-start on the first task."
-                )
+                f"Traces at {traces_dir}."
             )
             actions.insert(
                 0,
                 ProbeAction(
                     action_type="hint",
                     label="Host OK",
-                    payload="Interpreter, traces directory and daemon port look consistent.",
+                    payload="Interpreter and traces directory look consistent.",
                 ),
             )
         else:
@@ -409,11 +320,6 @@ class IntegrationHostProbe(BaseProbe):
             joined = "; ".join(problems)
             description = joined[:1].upper() + joined[1:] + "."
 
-        # Only an unwritable traces directory stops tasks from running. The
-        # WARN findings (interpreter mismatch, missing venv, squatted port) are
-        # degradations the runner works around, so they must not turn the
-        # verdict into "blocked" — a pip/conda checkout without .venv would
-        # otherwise never leave that state.
         return ProbeResult(
             id=self.probe_id,
             category=self.category,
