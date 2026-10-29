@@ -72,8 +72,14 @@ with ArtemisRunner(device_serial="emulator-5554", profile="flash") as bot:
     result = bot.run("Open Settings and check Wi-Fi connection status")
     print(result)
 
-    # Task with custom timeout (seconds)
-    bot.run("Turn on Airplane Mode", timeout=120)
+    # Task with full step history (commands, coordinates, and results)
+    response = bot.run("Turn on Airplane Mode", include_steps=True)
+    print("Outcome:", response["output"])
+    for step in response["steps"]:
+        print(f"Step {step['step_number']}: {step['command']} at {step['pixel_coordinates']}")
+
+    # Or inspect steps after the run
+    steps = bot.get_steps()
 ```
 
 ### 2. Structured Pydantic Output Extraction
@@ -201,3 +207,4 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 Code not owned by Google lives under [`third_party/`](third_party/), one directory per upstream project, each with its own `LICENSE` and `METADATA`.
 - [`third_party/mobile_use`](third_party/mobile_use/) – portions of [mobile-use](https://github.com/minitap-ai/mobile-use) by Minitap, Inc., Apache License 2.0.
+

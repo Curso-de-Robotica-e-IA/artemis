@@ -93,3 +93,30 @@ def test_artemis_runner_timeout_configurations(monkeypatch):
     assert _parse_runner_timeout("unlimited") is None
     assert _parse_runner_timeout("0") is None
     assert _parse_runner_timeout(0) is None
+
+
+def test_artemis_runner_include_steps():
+    fake_agent = MagicMock()
+    fake_agent.init = AsyncMock()
+    fake_agent.run_task = AsyncMock(return_value={"status": "completed", "explanation": "Done"})
+    fake_agent.clean = AsyncMock()
+    mock_steps = [
+        {
+            "step_number": 1,
+            "action": "click",
+            "command": "click",
+            "coordinates": [500, 500],
+            "pixel_coordinates": [540, 1200],
+            "args": {"target": [500, 500]},
+        }
+    ]
+    fake_agent.get_steps = MagicMock(return_value=mock_steps)
+
+    with patch("artemis.runner.Agent", return_value=fake_agent):
+        with ArtemisRunner(device_serial="test-device") as bot:
+            res = bot.run("Test goal", include_steps=True)
+            assert res["status"] == "completed"
+            assert res["output"] == {"status": "completed", "explanation": "Done"}
+            assert res["steps"] == mock_steps
+            assert bot.last_steps == mock_steps
+            assert bot.get_steps() == mock_steps

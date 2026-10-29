@@ -483,3 +483,91 @@ class Agent(AgentBase):
             )
         except (OSError, ValueError, RuntimeError) as exc:
             logger.debug(f"Could not record hierarchy backend in status.json: {exc}")
+
+    def get_steps(self, session_id: str | None = None) -> list[dict]:
+        """Retrieve all recorded steps for a task session with commands and coordinates.
+
+        Args:
+            session_id: Target task session ID; defaults to the most recent task.
+
+        Returns:
+            A list of step dicts containing step_number, action, command, coordinates,
+            pixel_coordinates, args, status, result, summary, and target metadata.
+        """
+        from artemis.config.paths import get_data_engine_db_path, get_default_traces_path
+        from artemis.data_engine.storage import StorageManager
+
+        target_sid = session_id or getattr(self, "_last_session_id", None)
+        if not target_sid and getattr(self, "_tasks", None):
+            target_sid = self._tasks[-1].id
+        if not target_sid:
+            return []
+
+        db_path = get_data_engine_db_path()
+        if not db_path.exists():
+            return []
+
+        storage = StorageManager(db_path, get_default_traces_path(), read_only=True)
+        try:
+            step_records = storage.get_steps(str(target_sid))
+        except Exception as exc:
+            logger.debug(f"Could not retrieve steps for session {target_sid}: {exc}")
+            return []
+
+        width, height = 1080, 2400
+        ctx = getattr(self, "_last_context", None)
+        if ctx and getattr(ctx, "device", None):
+            width = ctx.device.device_width or width
+            height = ctx.device.device_height or height
+        elif getattr(self, "_device_context", None):
+            width = self._device_context.device_width or width
+            height = self._device_context.device_height or height
+
+        result = []
+        for s in step_records:
+            action_data = s.action_taken or {}
+            action_name = action_data.get("action", "")
+            norm_coords = action_data.get("normalized_coordinates") or action_data.get("coordinates")
+            args = action_data.get("args") or {}
+
+            pixel_coords = None
+            if isinstance(norm_coords, (list, tuple)):
+                if len(norm_coords) == 2:
+                    pixel_coords = [
+                        int(round(norm_coords[0] * width / 1000.0)),
+                        int(round(norm_coords[1] * height / 1000.0)),
+                    ]
+                elif len(norm_coords) == 4:
+                    pixel_coords = [
+                        int(round(norm_coords[0] * width / 1000.0)),
+                        int(round(norm_coords[1] * height / 1000.0)),
+                        int(round(norm_coords[2] * width / 1000.0)),
+                        int(round(norm_coords[3] * height / 1000.0)),
+                    ]
+
+            step_dict = {
+                "step_number": s.step_number,
+                "action": action_name,
+                "command": action_name,
+                "coordinates": norm_coords,
+                "pixel_coordinates": pixel_coords,
+                "args": args,
+                "status": (s.last_execution_result or {}).get("status", "completed"),
+                "result": (s.last_execution_result or {}).get("result"),
+                "summary": s.summary,
+                "thinking": s.operator_raw_thinking,
+                "timestamp": s.timestamp,
+            }
+            for meta_key in (
+                "target_text",
+                "target_bounds",
+                "target_resource_id",
+                "target_class",
+                "target_description",
+            ):
+                if meta_key in action_data:
+                    step_dict[meta_key] = action_data[meta_key]
+
+            result.append(step_dict)
+
+        return result

@@ -109,6 +109,7 @@ class ArtemisRunner:
         profile: str | None = None,
         timeout: float | None | object = _UNSET,
         output: Any = None,
+        return_steps: bool = False,
     ) -> Any:
         """Run one task and return the outcome.
 
@@ -117,6 +118,7 @@ class ArtemisRunner:
             profile: Overrides the default profile for this task.
             timeout: Overrides the default timeout in seconds; None or <= 0 waits without limit.
             output: Optional structured output description or Pydantic model class.
+            return_steps: If True, returns a dict with 'output', 'status', and detailed 'steps'.
         """
         if self._loop.is_closed():
             raise RuntimeError("ArtemisRunner is closed; create a new instance.")
@@ -125,7 +127,31 @@ class ArtemisRunner:
         assert self.agent is not None
         task = self.agent.run_task(goal=goal, profile=profile or self.profile, output=output)
         limit = self.timeout if timeout is _UNSET else _parse_runner_timeout(timeout)
-        return self._loop.run_until_complete(asyncio.wait_for(task, limit))
+        raw_result = self._loop.run_until_complete(asyncio.wait_for(task, limit))
+        if return_steps:
+            steps = self.get_steps()
+            status = "completed"
+            if isinstance(raw_result, dict) and raw_result.get("status") in ("failed", "cancelled"):
+                status = raw_result.get("status")
+            return {
+                "output": raw_result,
+                "status": status,
+                "steps": steps,
+            }
+        return raw_result
+
+    def get_steps(self, session_id: str | None = None) -> list[dict[str, Any]]:
+        """Retrieve all recorded steps with commands and coordinates for the last or specified session."""
+        if self.agent is not None and hasattr(self.agent, "get_steps"):
+            res = self.agent.get_steps(session_id=session_id)
+            if isinstance(res, list):
+                return res
+        return []
+
+    @property
+    def last_steps(self) -> list[dict[str, Any]]:
+        """List of all recorded steps for the most recent task execution."""
+        return self.get_steps()
 
     def close(self) -> None:
         """Clean up the agent and release event loop resources."""

@@ -441,6 +441,8 @@ class AgentBase:
             agent_config=self._config,
         )
 
+        self._last_context = context
+        self._last_session_id = task_id
         output_config = None
         if request.output_description or request.output_format:
             output_config = OutputConfig(
