@@ -195,10 +195,16 @@ class FlashRunner:
 
     def _video_tools_enabled(self) -> bool:
         """Same gate the Pro graph applies before binding ``video_analyzer``."""
+        from artemis.config.agent import is_tool_denylisted
+
+        if is_tool_denylisted(self.ctx, "video_analyzer", "flash"):
+            return False
         setup = getattr(self.ctx, "execution_setup", None)
         return getattr(setup, "video_recording_tools_enabled", False) is True
 
     def _get_tools(self) -> list:
+        from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+
         # Flash has no tool that writes notes and its prompt never teaches
         # them, so the Validator set's note readers are left out here.
         tools = [
@@ -207,16 +213,18 @@ class FlashRunner:
             if t is not READ_NOTE_TOOL and t is not LIST_NOTES_TOOL
         ]
         tools.insert(1, CLICK_SEQUENCE_TOOL)
-        tools.append(ASK_EXPLORER_TOOL)
+        if is_explorer_enabled(self.ctx, "flash"):
+            tools.append(ASK_EXPLORER_TOOL)
         # Helper tools shared with the Pro operator: the history tools are
         # declared from the very same args schemas the LangChain tools bind
         # (same availability gates: a DataEngine session, recall config).
         tools.extend(history_tool_declarations(self.ctx))
-        if self._video_tools_enabled():
+        if self._video_tools_enabled() and not is_tool_denylisted(self.ctx, "video_analyzer", "flash"):
             from artemis.tools.video_tool import VIDEO_ANALYZER_TOOL
 
             tools.append(VIDEO_ANALYZER_TOOL)
         tools.append(REPORT_TASK_STATUS_TOOL)
+        tools = [t for t in tools if not is_tool_denylisted(self.ctx, t.name, "flash")]
         # With an actuator installed, drop declarations for device actions the
         # backend does not implement (and append its extension tools); without
         # one, the full historical declaration set is kept.

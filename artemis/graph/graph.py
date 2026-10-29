@@ -975,15 +975,18 @@ async def get_graph(ctx: ArtemisContext) -> CompiledStateGraph:
             operator_native_tools.append(t)
 
     # Get specialized tools for Operator (history tools: shared definitions)
+    from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
     from artemis.tools.history import HISTORY_TOOL_WRAPPERS
 
     operator_specialized_wrappers = [
-        ask_diagnoser_wrapper,
         run_adb_command_wrapper,
         manage_task_wrapper,
-        ask_explorer_wrapper,
         *HISTORY_TOOL_WRAPPERS,
     ]
+    if not is_tool_denylisted(ctx, "ask_diagnoser", "operator"):
+        operator_specialized_wrappers.insert(0, ask_diagnoser_wrapper)
+    if is_explorer_enabled(ctx, "operator"):
+        operator_specialized_wrappers.append(ask_explorer_wrapper)
     # ask_committee does not follow the Operator's pre-decision / turn-ending contract.
 
     operator_specialized_tools = get_tools_from_wrappers(ctx, operator_specialized_wrappers)
@@ -1010,8 +1013,14 @@ async def get_graph(ctx: ArtemisContext) -> CompiledStateGraph:
 
     operator_tools = operator_native_tools + operator_specialized_tools
 
-    if ctx.execution_setup and ctx.execution_setup.video_recording_tools_enabled:
+    if (
+        ctx.execution_setup
+        and ctx.execution_setup.video_recording_tools_enabled
+        and not is_tool_denylisted(ctx, "video_analyzer", "operator")
+    ):
         operator_tools.append(get_video_analyzer_tool(ctx, role="operator"))
+
+    operator_tools = [t for t in operator_tools if not is_tool_denylisted(ctx, t.name, "operator")]
 
     graph_builder.add_node("operator", OperatorNode(ctx, tools=operator_tools))
     graph_builder.add_node("validator", ValidatorNode(ctx))

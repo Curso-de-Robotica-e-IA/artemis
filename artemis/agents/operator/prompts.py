@@ -208,6 +208,17 @@ def resolve_operator_prompt_tools(ctx: ArtemisContext) -> frozenset[str]:
     if not (setup and getattr(setup, "video_recording_tools_enabled", False)):
         available.discard("video_analyzer")
 
+    from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+
+    if is_tool_denylisted(ctx, "video_analyzer", "operator"):
+        available.discard("video_analyzer")
+
+    if not is_explorer_enabled(ctx, "operator"):
+        available.discard("ask_explorer")
+
+    if is_tool_denylisted(ctx, "ask_diagnoser", "operator"):
+        available.discard("ask_diagnoser")
+
     # The history tools need a DataEngine to read, and search_history is also
     # config-gated; the prompt must not advertise a tool that is not bound.
     if getattr(ctx, "data_engine", None) is None:

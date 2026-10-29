@@ -4,7 +4,7 @@ import time
 with ArtemisRunner(device_serial="NMQR240198", profile="flash") as bot:
     # Basic task execution
     start_time = time.time()
-    result = bot.run("Go to camera app and turn on the flash, after turn off, and after turn auto. To do this task only use navigation controls, tap gestures, and swipe gestures.", return_steps=True)
+    result = bot.run("Open the camera app, turn the flash on, then turn it off, and finally select the automatic option.", return_steps=True)
     end_time = time.time()
     print(f"Execution time: {end_time - start_time:.2f} seconds")
 

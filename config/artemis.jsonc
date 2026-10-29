@@ -32,76 +32,76 @@
   // ------------------------------------------------------------------------------
   // 3. Agent & Sub-Agent Node Customizations (Optional - Inherits from 'default')
   // ------------------------------------------------------------------------------
-  "nodes": {
-    "provider": "openai",
-    // 🧠 Planner: High-level goal decomposition and strategic step planning
-    "planner": {
-      "model": "ornith-1.5:35b",
-      "thinking_level": "high"
-    },
-    // 🎯 Operator: Screen perception, element interaction, and direct execution
-    "operator": {
-      "model": "ornith-1.5:35b",
-      "thinking_level": "medium",
-      "include_thoughts": true
-    },
-    // 🎬 Video Analyzer: Multimodal screen recording verification and temporal analysis
-    "video_analyzer": {
-      "model": "ornith-1.5:35b"
-    },
-    // 👁️ Object Detector & Explorer (Flash Mode): Visual coordinates grounding and bounding boxes
-    "object_detector": {
-      "model": "ornith-1.5:35b",
-      "fallback": {
-        "provider": "openai",
-        "model": "ornith-1.5:35b"
-      }
-    },
-    // 🔍 Explorer: Deep element grounding and multi-candidate visual search
-    "explorer": {
-      "model": "ornith-1.5:35b",
-      "thinking_level": "medium"
-    },
-    // 📋 Summarizer: Aggregates step history and generates structured outcome
-    "summarizer": {
-      "model": "ornith-1.5:35b"
-    },
-    // 🔽 Hopper: Fast lightweight package name locator
-    "hopper": {
-      "model": "ornith-1.5:35b",
-      "fallback": {
-        "provider": "openai",
-        "model": "lfm2.5:24b"
-      }
-    },
-    // 📝 Outputter: Synthesizes execution trace into final output report
-    "outputter": {
-      "model": "ornith-1.5:35b"
-    },
-    // 🪵 Log Analyzer: Error log diagnosis with search grounding
-    "log_analyzer": {
-      "model": "ornith-1.5:35b",
-      "enable_grounding": true
-    },
-    // 🩺 Diagnoser Expert: Failure root cause diagnosis with search grounding
-    "diagnoser_expert": {
-      "model": "ornith-1.5:35b",
-      "enable_grounding": true
-    },
-    // 🏛️ Committee Council Members
-    "planner_avatar": {
-      "model": "ornith-1.5:35b"
-    },
-    "history_analyzer_expert": {
-      "model": "ornith-1.5:35b"
-    },
-    // 🔎 Checker: Plan-declared checkpoint verification and exit final review.
-    "checker": {
-      "model": "ornith-1.5:35b",
-      "thinking_level": "medium",
-      "include_thoughts": true
-    }
-  },
+  // "nodes": {
+  //   "provider": "openai",
+  //   // 🧠 Planner: High-level goal decomposition and strategic step planning
+  //   "planner": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "high"
+  //   },
+  //   // 🎯 Operator: Screen perception, element interaction, and direct execution
+  //   "operator": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium",
+  //     "include_thoughts": true
+  //   },
+  //   // 🎬 Video Analyzer: Multimodal screen recording verification and temporal analysis
+  //   "video_analyzer": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 👁️ Object Detector & Explorer (Flash Mode): Visual coordinates grounding and bounding boxes
+  //   "object_detector": {
+  //     "model": "ornith-1.5:35b",
+  //     "fallback": {
+  //       "provider": "openai",
+  //       "model": "ornith-1.5:35b"
+  //     }
+  //   },
+  //   // 🔍 Explorer: Deep element grounding and multi-candidate visual search
+  //   "explorer": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium"
+  //   },
+  //   // 📋 Summarizer: Aggregates step history and generates structured outcome
+  //   "summarizer": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🔽 Hopper: Fast lightweight package name locator
+  //   "hopper": {
+  //     "model": "ornith-1.5:35b",
+  //     "fallback": {
+  //       "provider": "openai",
+  //       "model": "ornith-1.5:35b"
+  //     }
+  //   },
+  //   // 📝 Outputter: Synthesizes execution trace into final output report
+  //   "outputter": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🪵 Log Analyzer: Error log diagnosis with search grounding
+  //   "log_analyzer": {
+  //     "model": "ornith-1.5:35b",
+  //     "enable_grounding": true
+  //   },
+  //   // 🩺 Diagnoser Expert: Failure root cause diagnosis with search grounding
+  //   "diagnoser_expert": {
+  //     "model": "ornith-1.5:35b",
+  //     "enable_grounding": true
+  //   },
+  //   // 🏛️ Committee Council Members
+  //   "planner_avatar": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   "history_analyzer_expert": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🔎 Checker: Plan-declared checkpoint verification and exit final review.
+  //   "checker": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium",
+  //     "include_thoughts": true
+  //   }
+  // },
   // ------------------------------------------------------------------------------
   // 4. Runtime Mode & Agent Capabilities Configuration (Dual-Engine: Flash vs. Pro)
   // ------------------------------------------------------------------------------
@@ -117,6 +117,7 @@
     },
     "pro": {
       "explorer": {
+        "enabled": false,
         "mode": "flash"
       },
       "planner_validation": {
@@ -127,7 +128,7 @@
         "debate_rounds": 1
       },
       "checker": {
-        "enabled": true,
+        "enabled": false,
         "midway_checks": false,
         "final_check": true,
         "max_iterations": 5,
@@ -191,10 +192,13 @@
       "force_synthesis": false
     },
     "explorer": {
+      "enabled": false,
       "default_version": "flash"
     },
     "explorer_versions": {},
     "denylisted_tools": {
+      "operator": ["ask_explorer", "video_analyzer", "ask_diagnoser"],
+      "flash": ["ask_explorer", "video_analyzer"],
       "explorer": []
     }
   }
