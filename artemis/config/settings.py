@@ -167,6 +167,15 @@ class Settings(BaseSettings):
         description="Maximum dimension in pixels for screenshots sent to LLM. 0 to disable.",
     )
 
+    ARTEMIS_UI_OCCLUSION_WARNINGS: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "ARTEMIS_UI_OCCLUSION_WARNINGS",
+            "UI_OCCLUSION_WARNINGS",
+        ),
+        description="Whether to append mutual occlusion warnings to UI elements in minimal list.",
+    )
+
     # Explorer Tool Settings (the tier itself is configured in artemis.jsonc or
     # via ARTEMIS_EXPLORER_VERSION; see artemis.config.agent.ExplorerConfig)
     EXPLORER_CACHING: bool | None = Field(

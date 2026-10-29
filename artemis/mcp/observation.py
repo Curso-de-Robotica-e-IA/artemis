@@ -25,10 +25,12 @@ import base64
 import time
 
 from artemis.config import get_temp_dir
+from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.action_types import ActionCode, ObserveResult
 from artemis.utils.ocr_xml_fusion import fuse_ocr_with_xml
+from artemis.utils.ui_filter import filter_ui_hierarchy
 from artemis.utils.visualization import format_minimal_list_with_elements
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -87,8 +89,20 @@ async def observe(
             ctx.device.device_width = width
             ctx.device.device_height = height
 
+        if xml_hierarchy:
+            xml_hierarchy = filter_ui_hierarchy(
+                xml_hierarchy,
+                screen_width=width,
+                screen_height=height,
+            )
+
         fused_xml = fuse_ocr_with_xml(xml_hierarchy, ocr_results)
-        minimal_list_str, elements, _ = format_minimal_list_with_elements(fused_xml, width, height)
+        minimal_list_str, elements, _ = format_minimal_list_with_elements(
+            fused_xml,
+            width,
+            height,
+            inject_occlusion_warnings=settings.ARTEMIS_UI_OCCLUSION_WARNINGS,
+        )
     except Exception as e:
         logger.error(f"Failed to fetch or fuse UI hierarchy: {e}")
         minimal_list_str = "Not available due to hierarchy error."
