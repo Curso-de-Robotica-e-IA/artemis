@@ -260,7 +260,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
         start_y: int,
         end_x: int,
         end_y: int,
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         try:
             cmd = f"input swipe {start_x} {start_y} {end_x} {end_y} {duration_ms}"
@@ -274,7 +274,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         dir_str = str(direction).lower()
         mid_x = int(

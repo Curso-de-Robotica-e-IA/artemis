@@ -79,7 +79,7 @@ class Actuator(Protocol):
         self,
         start: tuple[int, int],
         end: tuple[int, int],
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> ActionResult: ...
 
     async def press_key(self, key: str) -> ActionResult: ...
@@ -108,6 +108,6 @@ class Actuator(Protocol):
         """Returns the raw UI hierarchy elements as provided by the device."""
         ...
 
-    async def get_screen_data(self) -> Any:
+    async def get_screen_data(self, skip_settling: bool = False) -> Any:
         """Returns combined screen data (screenshot + elements + dimensions)."""
         ...

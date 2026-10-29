@@ -42,7 +42,7 @@ __all__ = ["observe"]
 async def observe(
     ctx: ArtemisContext,
     controller: UnifiedMobileController,
-    settle_ms: int = 400,
+    settle_ms: int | None = None,
     ocr_results: list | None = None,
 ) -> tuple[ObserveResult, bytes | None]:
     """Captures and indexes the current screen.
@@ -56,13 +56,19 @@ async def observe(
     failed capture yields ``ok=False``; a failed hierarchy parse still returns the
     screenshot with ``hierarchy_ok=False``.
     """
+    if settle_ms is None:
+        settle_ms = settings.ARTEMIS_SETTLE_MS
+
     try:
         if settle_ms > 0:
             logger.info(f"Delaying {settle_ms / 1000:.1f}s before capturing screen state...")
             await asyncio.sleep(settle_ms / 1000.0)
         else:
             logger.info("Retrieving screen data directly (skip settling)...")
-        device_data = await controller.get_screen_data()
+        try:
+            device_data = await controller.get_screen_data(skip_settling=True)
+        except TypeError:
+            device_data = await controller.get_screen_data()
         screenshot_bytes = base64.b64decode(device_data.base64)
     except Exception as e:
         logger.error(f"Failed to capture screen state: {e}")

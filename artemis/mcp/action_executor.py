@@ -196,7 +196,7 @@ class McpActionExecutor:
                     message = finalize(res) if finalize else res.message
 
                 if res.ok or self._observe_despite_failure(raw_name, res):
-                    obs = await session.observe(settle_ms=400)
+                    obs = await session.observe()
                     if obs.ok:
                         shot_path = obs.screenshot_path
                         xml_list = obs.elements_text

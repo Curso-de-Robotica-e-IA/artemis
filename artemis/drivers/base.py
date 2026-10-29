@@ -132,7 +132,7 @@ class BaseDeviceDriver(ABC):
         start_y: int,
         end_x: int,
         end_y: int,
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         """Performs a drag/swipe gesture from start to end pixel coordinates."""
         ...
@@ -141,7 +141,7 @@ class BaseDeviceDriver(ABC):
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         """Performs standard cardinal scrolling gesture across device viewport."""
         ...

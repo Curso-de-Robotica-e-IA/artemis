@@ -176,6 +176,24 @@ class Settings(BaseSettings):
         description="Whether to append mutual occlusion warnings to UI elements in minimal list.",
     )
 
+    ARTEMIS_SETTLE_MS: int = Field(
+        default=150,
+        validation_alias=AliasChoices(
+            "ARTEMIS_SETTLE_MS",
+            "SETTLE_MS",
+        ),
+        description="Settling delay in milliseconds before capturing screen in observe().",
+    )
+
+    ARTEMIS_STEP_SUMMARIZER: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ARTEMIS_STEP_SUMMARIZER",
+            "STEP_SUMMARIZER",
+        ),
+        description="Whether to run background step visual summarization in Flash runner.",
+    )
+
     # Explorer Tool Settings (the tier itself is configured in artemis.jsonc or
     # via ARTEMIS_EXPLORER_VERSION; see artemis.config.agent.ExplorerConfig)
     EXPLORER_CACHING: bool | None = Field(

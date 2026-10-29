@@ -56,6 +56,20 @@ class UnifiedMobileController(UnifiedMobileControllerBase):
         super().__init__(ctx, get_driver(ctx))
         self._segment_cache: dict[tuple[str, int, float, float], VideoRecordingResult] = {}
 
+    async def get_screen_data(self, skip_settling: bool = False) -> Any:
+        try:
+            data = await self._driver.get_screen_data(skip_settling=skip_settling)
+        except TypeError:
+            data = await self._driver.get_screen_data()
+        from third_party.mobile_use.controllers.unified_controller import ScreenDataResponse
+        return ScreenDataResponse(
+            base64=data.screenshot_base64,
+            elements=data.ui_elements or [],
+            width=data.width,
+            height=data.height,
+            platform=data.platform,
+        )
+
     @staticmethod
     async def _spawn_scrcpy(command: list[str]) -> asyncio.subprocess.Process:
         kwargs: dict[str, Any] = {

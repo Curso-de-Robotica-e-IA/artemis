@@ -170,8 +170,11 @@ class ActionSession:
         result = await self.call_raw(name, args)
         return ActionResult.model_validate(result.structuredContent)
 
-    async def observe(self, settle_ms: int = 400, include_image: bool = False) -> ObserveResult:
+    async def observe(self, settle_ms: int | None = None, include_image: bool = False) -> ObserveResult:
         """Captures and indexes the current screen via the internal observe tool."""
+        if settle_ms is None:
+            from artemis.config.settings import settings
+            settle_ms = settings.ARTEMIS_SETTLE_MS
         result = await self.call_raw(
             "observe_screen", {"settle_ms": settle_ms, "include_image": include_image}
         )

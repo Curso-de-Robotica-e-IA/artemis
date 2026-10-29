@@ -20,7 +20,7 @@ from typing import Any
 
 def parse_swipe_parameters(
     args: Any,
-    default_duration: int | None = 800,
+    default_duration: int | None = 400,
 ) -> tuple[str | None, str | list[int] | None, int | None]:
     """Parses swipe/drag/scroll parameters from various possible input formats into a standardized tuple:
 
@@ -299,13 +299,13 @@ def compute_smart_swipe_coordinates(
     if duration is None:
         dist = ((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5
         if dist <= 300:
-            duration_ms = 350
+            duration_ms = 250
         elif dist <= 600:
-            duration_ms = 550
+            duration_ms = 350
         elif dist <= 1000:
-            duration_ms = 800
+            duration_ms = 450
         else:
-            duration_ms = 900
+            duration_ms = 500
     else:
         duration_ms = int(duration)
 

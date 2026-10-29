@@ -71,6 +71,7 @@ from artemis.config import (
     StepSummarizerConfig,
     load_agent_config,
 )
+from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.data_engine.trace import trace
@@ -161,6 +162,9 @@ class FlashRunner:
         # ``agent_name="flash"`` makes ask_explorer follow ``explorer.flash_mode``
         # (the Flash profile knob) instead of the Pro profile's tier.
         self.executor = McpActionExecutor(ctx, self.controller, agent_name="flash")
+        summarizer_enabled = self.step_summarizer_cfg.enabled and getattr(
+            settings, "ARTEMIS_STEP_SUMMARIZER", True
+        )
         self.summarizer = (
             VisualStepSummarizer(
                 ctx,
@@ -169,7 +173,7 @@ class FlashRunner:
                 max_concurrency=self.memory_runtime_cfg.max_concurrency,
                 flush_timeout_s=self.memory_runtime_cfg.flush_timeout_s,
             )
-            if self.step_summarizer_cfg.enabled
+            if summarizer_enabled
             else None
         )
         # Publish the service on the composition root (ctx.step_memory) so
