@@ -32,6 +32,7 @@ from artemis.tools.command_tool import (
     _is_output_long,
 )
 from artemis.utils.plan_grammar import parse_plan, render_plan_grammar_spec
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.task_tree import SELF_DESCRIBED_MARKER, action_intent_phrase
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -384,7 +385,7 @@ class ObservationPromptComponent(PromptComponent):
         builder.add_human_content(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{latest_screenshot_b64}"},
+                "image_url": {"url": f"data:image/jpeg;base64,{encode_image_for_llm(latest_screenshot_b64)}"},
             }
         )
         builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")

@@ -89,6 +89,7 @@ from artemis.services.llm import (
 )
 from artemis.tools.history import history_tool_declarations
 from artemis.tools.tool_wrapper import tool_result_messages
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.coordinates import (
     COORDINATE_SPACE_KEY,
     COORDINATE_SPACE_NORMALIZED,
@@ -367,7 +368,7 @@ class FlashRunner:
             {"type": "text", "text": f"# CURRENT OBSERVATION [{ledger.elapsed_label()}]"}
         ]
         if img_bytes:
-            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+            img_b64 = encode_image_for_llm(img_bytes)
             blocks.append({"type": "text", "text": "--- Current Screenshot ---"})
             blocks.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}

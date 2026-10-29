@@ -38,6 +38,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from artemis.config import settings
 from artemis.context import ArtemisContext
 from artemis.memory.step_memory import JobKey, StepMemoryService
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.services.llm import RobustChatModelWrapper, get_google_llm, get_llm
 from artemis.services.token_meter import record_llm_usage
 from artemis.utils.task_tree import format_actions_clean
@@ -442,7 +443,7 @@ class VisualStepSummarizer(StepMemoryService):
                     action_name=action_name,
                     action_args=action_args,
                 )
-                b64_pre = base64.b64encode(annotated_pre_bytes).decode("utf-8")
+                b64_pre = encode_image_for_llm(annotated_pre_bytes)
                 content_blocks.append(
                     {
                         "type": "text",
@@ -459,7 +460,7 @@ class VisualStepSummarizer(StepMemoryService):
                 )
 
             if post_bytes:
-                b64_post = base64.b64encode(post_bytes).decode("utf-8")
+                b64_post = encode_image_for_llm(post_bytes)
                 content_blocks.append(
                     {
                         "type": "text",

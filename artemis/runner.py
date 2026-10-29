@@ -110,6 +110,7 @@ class ArtemisRunner:
         timeout: float | None | object = _UNSET,
         output: Any = None,
         return_steps: bool = False,
+        include_steps: bool = False,
     ) -> Any:
         """Run one task and return the outcome.
 
@@ -119,6 +120,7 @@ class ArtemisRunner:
             timeout: Overrides the default timeout in seconds; None or <= 0 waits without limit.
             output: Optional structured output description or Pydantic model class.
             return_steps: If True, returns a dict with 'output', 'status', and detailed 'steps'.
+            include_steps: Alias for return_steps.
         """
         if self._loop.is_closed():
             raise RuntimeError("ArtemisRunner is closed; create a new instance.")
@@ -128,7 +130,7 @@ class ArtemisRunner:
         task = self.agent.run_task(goal=goal, profile=profile or self.profile, output=output)
         limit = self.timeout if timeout is _UNSET else _parse_runner_timeout(timeout)
         raw_result = self._loop.run_until_complete(asyncio.wait_for(task, limit))
-        if return_steps:
+        if return_steps or include_steps:
             steps = self.get_steps()
             status = "completed"
             if isinstance(raw_result, dict) and raw_result.get("status") in ("failed", "cancelled"):

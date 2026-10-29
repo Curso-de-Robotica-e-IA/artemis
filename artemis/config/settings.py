@@ -157,6 +157,16 @@ class Settings(BaseSettings):
         except ValueError:
             return 600.0
 
+    ARTEMIS_IMAGE_MAX_DIM: int = Field(
+        default=1280,
+        validation_alias=AliasChoices(
+            "ARTEMIS_IMAGE_MAX_DIM",
+            "IMAGE_MAX_DIM",
+            "ARTEMIS_SCREENSHOT_MAX_DIM",
+        ),
+        description="Maximum dimension in pixels for screenshots sent to LLM. 0 to disable.",
+    )
+
     # Explorer Tool Settings (the tier itself is configured in artemis.jsonc or
     # via ARTEMIS_EXPLORER_VERSION; see artemis.config.agent.ExplorerConfig)
     EXPLORER_CACHING: bool | None = Field(
