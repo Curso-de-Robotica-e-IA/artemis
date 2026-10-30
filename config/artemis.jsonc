@@ -11,7 +11,7 @@
     "thinking_level": "medium",
     "fallback": {
       "provider": "openai",
-      "model": "qwen3.8:27b",
+      "model": "ornith-1.5:35b",
       "thinking_level": "medium"
     }
   },
@@ -24,7 +24,7 @@
       "model": "ornith-1.5:35b",
       "fallback": {
         "provider": "openai",
-        "model": "qwen3.8:27b"
+        "model": "ornith-1.5:35b"
         
       }
     }
