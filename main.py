@@ -57,7 +57,7 @@ def start_screen_mirror(
                 proc.kill()
 
 
-DEVICE_SERIAL = "N0OJ460182"
+DEVICE_SERIAL = "ZF5246RQKB"
 
 # Espelha a tela em segundo plano enquanto executa o bot
 # Dica: defina auto_close=False se preferir manter a janela do scrcpy aberta após a automação
@@ -66,7 +66,7 @@ with start_screen_mirror(device_serial=DEVICE_SERIAL, auto_close=True):
         # Basic task execution
         start_time = time.time()
         result = bot.run(
-            "Open the camera app, turn the flash on, then turn it off, and finally select the automatic option.",
+            "Send an email to jmn@softex.cin.ufpe.br with the subject \"Teste\" and the message \"Passou no teste.\"",
             return_steps=True,
         )
         end_time = time.time()

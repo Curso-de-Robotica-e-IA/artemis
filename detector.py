@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import io
 import json
-import os
 import re
 import subprocess
 import time
@@ -267,28 +266,28 @@ class IconDetector:
         for idx, item in enumerate(items):
             color = COLOR_PALETTE[idx % len(COLOR_PALETTE)]
             px, py = item.pixel_coords
-            x_norm, y_norm = item.normalized_coords
+            #x_norm, y_norm = item.normalized_coords
 
             # Círculo externo
-            draw.ellipse([px - radius, py - radius, px + radius, py + radius], outline=color, width=4)
+            draw.ellipse([px - radius, py - radius, px + radius, py + radius], outline=color, width=6)
             # Mira central
             draw.line([px - radius - 12, py, px + radius + 12, py], fill=color, width=2)
             draw.line([px, py - radius - 12, px, py + radius + 12], fill=color, width=2)
             # Ponto central
-            draw.ellipse([px - 5, py - 5, px + 5, py + 5], fill="#FF0033")
+            draw.ellipse([px - 5, py - 5, px + 5, py + 5], fill="#FF0033", width=6)
 
             # Emblema numérico [1], [2] acima do círculo
             badge_text = f"[{item.index}]"
             draw.rectangle([px - 14, py - radius - 24, px + 14, py - radius - 2], fill=color)
-            draw.text((px - 9, py - radius - 20), badge_text, fill="black")
+            draw.text((px - 9, py - radius - 20), badge_text, fill="black", stroke_width=4, stroke_fill="white")
 
             # Rótulo de texto com coordenadas abaixo
             text = f"{item.index}. {item.label} ({px}, {py})"
             box_w = min(len(text) * 10 + 16, w - px + radius)
             box_y1 = min(py + radius + 6, h - 35)
             box_y2 = min(box_y1 + 28, h - 2)
-            draw.rectangle([px - radius, box_y1, px - radius + box_w, box_y2], fill="black", outline=color, width=1)
-            draw.text((px - radius + 8, box_y1 + 6), text, fill="white")
+            draw.rectangle([px - radius, box_y1, px - radius + box_w, box_y2], fill="black", outline=color, width=6)
+            draw.text((px - radius + 8, box_y1 + 6), text, fill="white", stroke_width=4, stroke_fill="black")
 
         annotated.save(output_path)
 
@@ -330,13 +329,13 @@ def main():
     parser.add_argument(
         "queries",
         nargs="*",
-        default=["all flash options", "all zoom options"],
+        default=["aspect ratio options", "zoom options", "flash options", "camera switch", "photo capture", "portrait mode", "video mode", "settings"],
         help="Nomes ou descrições dos ícones/elementos a localizar (ex: 'flash on' 'flash off' ou 'camera, phone, settings')",
     )
     parser.add_argument("--query", "-q", action="append", help="Adiciona uma query individual de busca (pode repetir: -q 'item1' -q 'item2')")
-    parser.add_argument("--image", "-i", default=None, help="Caminho para imagem local (se omitido, captura da tela)")
+    parser.add_argument("--image", "-i", default='Screenshot3.png', help="Caminho para imagem local (se omitido, captura da tela)")
     parser.add_argument("--device", "-d", default="N0OJ460182", help="Serial ADB do dispositivo (padrão: N0OJ460182)")
-    parser.add_argument("--output", "-o", default="detected_result.png", help="Arquivo onde salvar a imagem anotada")
+    parser.add_argument("--output", "-o", default="result3.png", help="Arquivo onde salvar a imagem anotada")
     parser.add_argument("--json", action="store_true", help="Imprime o resultado em formato JSON")
 
     args = parser.parse_args()
