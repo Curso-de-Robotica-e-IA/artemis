@@ -523,27 +523,55 @@ class Agent(AgentBase):
             width = self._device_context.device_width or width
             height = self._device_context.device_height or height
 
+        def _convert_norm_to_pixels(coords):
+            if not coords or not isinstance(coords, (list, tuple)):
+                return None
+            try:
+                if coords and isinstance(coords[0], (list, tuple)):
+                    converted = []
+                    for item in coords:
+                        res = _convert_norm_to_pixels(item)
+                        if res is not None:
+                            converted.append(res)
+                    return converted if converted else None
+                if len(coords) == 2 and isinstance(coords[0], (int, float)) and isinstance(coords[1], (int, float)):
+                    return [
+                        int(round(coords[0] * width / 1000.0)),
+                        int(round(coords[1] * height / 1000.0)),
+                    ]
+                if len(coords) == 4 and all(isinstance(c, (int, float)) for c in coords):
+                    return [
+                        int(round(coords[0] * width / 1000.0)),
+                        int(round(coords[1] * height / 1000.0)),
+                        int(round(coords[2] * width / 1000.0)),
+                        int(round(coords[3] * height / 1000.0)),
+                    ]
+            except Exception:
+                pass
+            return None
+
         result = []
         for s in step_records:
             action_data = s.action_taken or {}
             action_name = action_data.get("action", "")
             norm_coords = action_data.get("normalized_coordinates") or action_data.get("coordinates")
             args = action_data.get("args") or {}
+            pixel_coords = _convert_norm_to_pixels(norm_coords)
 
-            pixel_coords = None
-            if isinstance(norm_coords, (list, tuple)):
-                if len(norm_coords) == 2:
-                    pixel_coords = [
-                        int(round(norm_coords[0] * width / 1000.0)),
-                        int(round(norm_coords[1] * height / 1000.0)),
-                    ]
-                elif len(norm_coords) == 4:
-                    pixel_coords = [
-                        int(round(norm_coords[0] * width / 1000.0)),
-                        int(round(norm_coords[1] * height / 1000.0)),
-                        int(round(norm_coords[2] * width / 1000.0)),
-                        int(round(norm_coords[3] * height / 1000.0)),
-                    ]
+            extra_meta = s.extra_metadata or {}
+            current_act = (
+                action_data.get("current_activity")
+                or action_data.get("activity")
+                or extra_meta.get("current_activity")
+                or extra_meta.get("activity")
+            )
+            current_pkg = (
+                action_data.get("current_package")
+                or action_data.get("package")
+                or extra_meta.get("current_package")
+                or extra_meta.get("package")
+                or extra_meta.get("foreground_app")
+            )
 
             step_dict = {
                 "step_number": s.step_number,
@@ -557,6 +585,10 @@ class Agent(AgentBase):
                 "summary": s.summary,
                 "thinking": s.operator_raw_thinking,
                 "timestamp": s.timestamp,
+                "current_activity": current_act,
+                "activity": current_act,
+                "current_package": current_pkg,
+                "package": current_pkg,
             }
             for meta_key in (
                 "target_text",

@@ -137,17 +137,20 @@ async def observe(
 
     from pathlib import Path
 
+    obs = ObserveResult(
+        ok=True,
+        message="Screen observed.",
+        screenshot_path=screenshot_path,
+        image_name=Path(screenshot_path).stem if screenshot_path else None,
+        width=width,
+        height=height,
+        elements_text=minimal_list_str,
+        elements=elements,
+        hierarchy_ok=hierarchy_ok,
+    )
+    object.__setattr__(obs, "package", getattr(device_data, "package", None))
+    object.__setattr__(obs, "activity", getattr(device_data, "activity", None))
     return (
-        ObserveResult(
-            ok=True,
-            message="Screen observed.",
-            screenshot_path=screenshot_path,
-            image_name=Path(screenshot_path).stem if screenshot_path else None,
-            width=width,
-            height=height,
-            elements_text=minimal_list_str,
-            elements=elements,
-            hierarchy_ok=hierarchy_ok,
-        ),
+        obs,
         screenshot_bytes,
     )

@@ -27,3 +27,5 @@ class ScreenDataResponse(BaseModel):
     width: int = Field(default=1080, description="Device screen width in pixels")
     height: int = Field(default=2400, description="Device screen height in pixels")
     platform: str = Field(default="android", description="Platform identifier")
+    package: str | None = Field(default=None, description="Current foreground Android package")
+    activity: str | None = Field(default=None, description="Current foreground Android activity")

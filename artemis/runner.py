@@ -139,6 +139,7 @@ class ArtemisRunner:
                 "output": raw_result,
                 "status": status,
                 "steps": steps,
+                "current_activity": steps[-1].get("current_activity") if steps else None,
             }
         return raw_result
 

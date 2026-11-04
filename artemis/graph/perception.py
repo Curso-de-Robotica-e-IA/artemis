@@ -226,7 +226,11 @@ async def perception_node(state: State, ctx: ArtemisContext) -> dict:
             "ocr_results": ocr_results,
             "width": device_data.width,
             "height": device_data.height,
+            "activity": getattr(device_data, "activity", None),
+            "package": getattr(device_data, "package", None),
         },
+        "current_activity": getattr(device_data, "activity", None),
+        "current_package": getattr(device_data, "package", None),
         "injected_instruction": injected_instruction,
         # sticky_or reducer: once latched True, later False updates keep it True
         "user_stop_requested": user_stop_requested,

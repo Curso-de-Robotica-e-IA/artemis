@@ -171,6 +171,7 @@ class McpActionExecutor:
         xml_list: str | None = None
         target_semantics: dict[str, Any] = {}
         target_coordinates: list[int] | None = None
+        obs: Any = None
         with span:
             try:
                 session = await self._session_or_start()
@@ -203,6 +204,10 @@ class McpActionExecutor:
                         if obs.hierarchy_ok:
                             state.indexed_points = [el["center"] for el in obs.elements]
                             state.indexed_elements = obs.elements
+                        if getattr(obs, "activity", None):
+                            state.current_activity = obs.activity
+                        if getattr(obs, "package", None):
+                            state.current_package = obs.package
                         if shot_path:
                             try:
                                 img_bytes = Path(shot_path).read_bytes()
@@ -242,11 +247,15 @@ class McpActionExecutor:
             screenshot_bytes=img_bytes,
             screenshot_path=shot_path,
             ui_elements_text=xml_list,
+            activity=getattr(obs, "activity", None) or getattr(state, "current_activity", None),
+            package=getattr(obs, "package", None) or getattr(state, "current_package", None),
             metadata={
                 "code": res.code.value,
                 "normalized_coordinates": res.normalized_coordinates,
                 "target_semantics": target_semantics,
                 "target_coordinates": target_coordinates,
+                "activity": getattr(obs, "activity", None) or getattr(state, "current_activity", None),
+                "package": getattr(obs, "package", None) or getattr(state, "current_package", None),
             },
         )
 

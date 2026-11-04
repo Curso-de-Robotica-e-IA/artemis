@@ -128,6 +128,8 @@ class AndroidAdbDriver(BaseDeviceDriver):
         screenshot_base64: str = ""
         ui_hierarchy_xml: str | None = None
         ui_elements: list[dict[str, Any]] = []
+        current_package: str | None = None
+        current_activity: str | None = None
 
         # Check if ui_adb_client has direct screen data support
         if self._ui_adb_client and hasattr(self._ui_adb_client, "get_screen_data"):
@@ -154,6 +156,12 @@ class AndroidAdbDriver(BaseDeviceDriver):
                         ui_elements = [raw_elements]
                     elif isinstance(raw_elements, list):
                         ui_elements = raw_elements
+                if hasattr(raw_ui_data, "package") and raw_ui_data.package:
+                    current_package = raw_ui_data.package
+                if hasattr(raw_ui_data, "activity") and raw_ui_data.activity:
+                    act = raw_ui_data.activity
+                    if not (act.startswith("android.widget.") or act.startswith("android.view.")):
+                        current_activity = act
             except Exception as e:
                 logger.debug(f"Direct ui_adb_client.get_screen_data error: {e}")
 
@@ -216,6 +224,29 @@ class AndroidAdbDriver(BaseDeviceDriver):
             else base64.b64decode(clean_b64)
         )
 
+        if not current_activity or current_activity.startswith("android.widget.") or current_activity.startswith("android.view."):
+            try:
+                if hasattr(self.device, "app_current"):
+                    app_info = await asyncio.to_thread(self.device.app_current)
+                    if hasattr(app_info, "activity"):
+                        pkg = getattr(app_info, "package", current_package)
+                        act = app_info.activity
+                        if act and act.startswith(".") and pkg:
+                            current_activity = f"{pkg}{act}"
+                        else:
+                            current_activity = act
+                        current_package = pkg or current_package
+                    elif isinstance(app_info, dict):
+                        pkg = app_info.get("package", current_package)
+                        act = app_info.get("activity")
+                        if act and act.startswith(".") and pkg:
+                            current_activity = f"{pkg}{act}"
+                        else:
+                            current_activity = act
+                        current_package = pkg or current_package
+            except Exception as e:
+                logger.debug(f"Device app_current fallback failed: {e}")
+
         return ScreenData(
             screenshot_bytes=clean_bytes,
             screenshot_base64=clean_b64,
@@ -224,6 +255,8 @@ class AndroidAdbDriver(BaseDeviceDriver):
             width=w,
             height=h,
             platform="android",
+            package=current_package,
+            activity=current_activity,
         )
 
     async def tap(

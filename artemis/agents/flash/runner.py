@@ -628,6 +628,10 @@ class FlashRunner:
                 state.indexed_elements = obs.elements
             if obs.screenshot_path:
                 state.latest_screenshot = obs.screenshot_path
+            if getattr(obs, "activity", None):
+                state.current_activity = obs.activity
+            if getattr(obs, "package", None):
+                state.current_package = obs.package
         return post_img_bytes
 
     def _extract_normalized_coordinates(self, name: str, args: dict, resolved=None):
@@ -705,6 +709,14 @@ class FlashRunner:
             action_dict["normalized_start_coordinates"] = norm_start
             action_dict["normalized_end_coordinates"] = norm_end
         action_dict.update(metadata.get("target_semantics") or {})
+        act = metadata.get("activity") or getattr(exec_result, "activity", None)
+        pkg = metadata.get("package") or getattr(exec_result, "package", None)
+        if act:
+            action_dict["current_activity"] = act
+            action_dict["activity"] = act
+        if pkg:
+            action_dict["current_package"] = pkg
+            action_dict["package"] = pkg
         return action_dict
 
     def _record_action_step(
@@ -739,6 +751,13 @@ class FlashRunner:
                 last_execution_result["error"] = exec_result.text_summary
 
             extra_metadata: dict = {"token_usage": step_token_usage}
+            if action_dict and action_dict.get("current_activity"):
+                extra_metadata["current_activity"] = action_dict["current_activity"]
+                extra_metadata["activity"] = action_dict["current_activity"]
+            if action_dict and action_dict.get("current_package"):
+                extra_metadata["current_package"] = action_dict["current_package"]
+                extra_metadata["package"] = action_dict["current_package"]
+                extra_metadata["foreground_app"] = action_dict["current_package"]
             if injected:
                 # Stamped verbatim on the step it reached: the chunk ledger
                 # keeps it as a never-evicted line at every compression level.

@@ -62,6 +62,8 @@ class ScreenData(BaseModel):
     height: int = Field(default=2400, description="Device screen height in pixels")
     timestamp: float = Field(default_factory=time.time, description="Capture timestamp")
     platform: str = Field(default="android", description="Platform identifier")
+    package: str | None = Field(default=None, description="Current foreground Android package")
+    activity: str | None = Field(default=None, description="Current foreground Android activity")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

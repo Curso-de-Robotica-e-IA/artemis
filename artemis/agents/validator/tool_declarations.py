@@ -61,6 +61,8 @@ class ToolExecutionResult(BaseModel):
     ui_elements_text: str | None = None
     raw_result: Any = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    package: str | None = None
+    activity: str | None = None
 
     def to_langchain_tool_message(self) -> ToolMessage:
         """Converts execution result into a standardized multimodal LangChain ToolMessage."""
@@ -182,6 +184,10 @@ async def capture_screenshot_and_parse_ui(
     if obs.hierarchy_ok:
         state.indexed_points = [el["center"] for el in obs.elements]
         state.indexed_elements = obs.elements
+    if getattr(obs, "activity", None):
+        state.current_activity = obs.activity
+    if getattr(obs, "package", None):
+        state.current_package = obs.package
 
     return obs.screenshot_path, screenshot_bytes, obs.elements_text
 

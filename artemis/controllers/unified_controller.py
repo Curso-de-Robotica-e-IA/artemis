@@ -68,6 +68,8 @@ class UnifiedMobileController(UnifiedMobileControllerBase):
             width=data.width,
             height=data.height,
             platform=data.platform,
+            package=getattr(data, "package", None),
+            activity=getattr(data, "activity", None),
         )
 
     @staticmethod

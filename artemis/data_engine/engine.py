@@ -863,6 +863,7 @@ class DataEngine:
         operator_native_thinking: str | None = None,
         last_execution_result: Any | None = None,
         extra_metadata: dict[str, Any] | None = None,
+        current_activity: str | None = None,
     ) -> UUID:
         """Record a step, saving screenshots and metadata."""
         if not self.current_session_id:
@@ -903,10 +904,72 @@ class DataEngine:
         # parameter wins; otherwise it is derived best-effort from the UI
         # tree's package attributes — a pure string scan, no device call.
         extra_metadata = dict(extra_metadata or {})
+        activity = (
+            current_activity
+            or extra_metadata.get("current_activity")
+            or extra_metadata.get("activity")
+        )
+        if not activity and action_taken and isinstance(action_taken, dict):
+            activity = action_taken.get("current_activity") or action_taken.get("activity")
+        if activity and (activity.startswith("android.widget.") or activity.startswith("android.view.")):
+            activity = None
+        if not activity and hasattr(self, "ctx") and self.ctx:
+            try:
+                ui_client = getattr(self.ctx, "ui_adb_client", None)
+                if ui_client and hasattr(ui_client, "helper"):
+                    helper = ui_client.helper
+                    if hasattr(helper, "_snapshot"):
+                        snap = helper._snapshot()
+                        snap_act = snap.get("activity")
+                        if snap_act and not (snap_act.startswith("android.widget.") or snap_act.startswith("android.view.")):
+                            activity = snap_act
+                        if not foreground_app and snap.get("package"):
+                            foreground_app = snap.get("package")
+            except Exception:
+                pass
+            if not activity:
+                try:
+                    adb_client = self.ctx.get_adb_client()
+                    if adb_client and getattr(self.ctx, "device", None):
+                        dev = adb_client.device(serial=self.ctx.device.device_id)
+                        if hasattr(dev, "app_current"):
+                            app_info = dev.app_current()
+                            if hasattr(app_info, "activity"):
+                                pkg = getattr(app_info, "package", foreground_app)
+                                act = app_info.activity
+                                if act and act.startswith(".") and pkg:
+                                    activity = f"{pkg}{act}"
+                                else:
+                                    activity = act
+                                if not foreground_app and pkg:
+                                    foreground_app = pkg
+                            elif isinstance(app_info, dict):
+                                pkg = app_info.get("package", foreground_app)
+                                act = app_info.get("activity")
+                                if act and act.startswith(".") and pkg:
+                                    activity = f"{pkg}{act}"
+                                else:
+                                    activity = act
+                                if not foreground_app and pkg:
+                                    foreground_app = pkg
+                except Exception:
+                    pass
+
+        if activity:
+            extra_metadata.setdefault("current_activity", activity)
+            extra_metadata.setdefault("activity", activity)
+        if action_taken and isinstance(action_taken, dict) and activity:
+            action_taken.setdefault("current_activity", activity)
+            action_taken.setdefault("activity", activity)
         try:
             app = foreground_app or _derive_foreground_app(ui_tree)
             if app:
                 extra_metadata.setdefault("foreground_app", app)
+                extra_metadata.setdefault("current_package", app)
+                extra_metadata.setdefault("package", app)
+                if action_taken and isinstance(action_taken, dict):
+                    action_taken.setdefault("current_package", app)
+                    action_taken.setdefault("package", app)
         except (AttributeError, TypeError, ValueError):
             pass
 

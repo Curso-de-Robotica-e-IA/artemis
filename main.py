@@ -57,7 +57,7 @@ def start_screen_mirror(
                 proc.kill()
 
 
-DEVICE_SERIAL = "ZF5246RQKB"
+DEVICE_SERIAL = "0083314248"
 
 # Espelha a tela em segundo plano enquanto executa o bot
 # Dica: defina auto_close=False se preferir manter a janela do scrcpy aberta após a automação
@@ -66,7 +66,7 @@ with start_screen_mirror(device_serial=DEVICE_SERIAL, auto_close=True):
         # Basic task execution
         start_time = time.time()
         result = bot.run(
-            "Send an email to jmn@softex.cin.ufpe.br with the subject \"Teste\" and the message \"Passou no teste.\"",
+            "Open the settings menu, navigate to the 'Display' section, turn on adaptive brightness, and turn on the dark mode. Only Use the tap command to interact with the screen.",
             return_steps=True,
         )
         end_time = time.time()
@@ -75,7 +75,8 @@ with start_screen_mirror(device_serial=DEVICE_SERIAL, auto_close=True):
 if result and "steps" in result:
     for step in result["steps"]:
         print(f"\nPasso {step['step_number']}: {step['command']}")
+        print(f"  Activity atual: {step.get('current_activity') or step.get('activity') or 'Desconhecida'}")
         print(f"  Coordenadas (0-1000): {step['coordinates']}")
         print(f"  Pixels reais na tela: {step['pixel_coordinates']}")
         print(f"  Argumentos: {step['args']}")
-        print(f"  Status da ação: {step['status']}")
+        print(f"  Status da ação: {step.get('status', 'concluído')}")

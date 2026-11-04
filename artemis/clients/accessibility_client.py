@@ -346,6 +346,10 @@ class AccessibilityClient:
     def get_screen_data(self) -> UIAutomatorScreenData:
         snapshot = self._snapshot()
         xml, elements = self._elements_from_dump(snapshot)
+        package = snapshot.get("package") or None
+        activity = snapshot.get("activity") or None
+        if activity and (activity.startswith("android.widget.") or activity.startswith("android.view.")):
+            activity = None
         if snapshot.get("has_screenshot") and snapshot.get("screenshot_base64"):
             width, height = _dimensions(snapshot)
             return UIAutomatorScreenData(
@@ -354,6 +358,8 @@ class AccessibilityClient:
                 elements=elements,
                 width=width,
                 height=height,
+                package=package,
+                activity=activity,
             )
 
         # Android 10 and below (or a rate-limited capture that did not recover):
@@ -370,6 +376,8 @@ class AccessibilityClient:
             elements=elements,
             width=screenshot.width,
             height=screenshot.height,
+            package=package,
+            activity=activity,
         )
 
     # ------------------------------------------------------------------ #

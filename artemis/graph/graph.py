@@ -157,6 +157,8 @@ async def execution_check_node(state: State, ctx: ArtemisContext):
             # it reached: the chunk ledger (band ③) preserves it as a
             # never-evicted line at every compression level (§3.3).
             injected = getattr(state, "injected_instruction", None)
+            current_act = raw_data.get("activity") or getattr(state, "current_activity", None)
+            current_pkg = raw_data.get("package") or getattr(state, "current_package", None)
             step_id = ctx.data_engine.record_step(
                 pre_screenshot_bytes=screenshot_bytes,
                 ui_tree=xml_hierarchy,
@@ -169,6 +171,11 @@ async def execution_check_node(state: State, ctx: ArtemisContext):
                     "sub_subgoal_hash": sub_subgoal_hash,
                     "width": raw_data.get("width"),
                     "height": raw_data.get("height"),
+                    "current_activity": current_act,
+                    "activity": current_act,
+                    "current_package": current_pkg,
+                    "package": current_pkg,
+                    "foreground_app": current_pkg,
                     **({"injected_instruction": injected} if injected else {}),
                     **extra_metadata,
                 },
