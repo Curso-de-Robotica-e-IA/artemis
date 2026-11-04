@@ -28,10 +28,23 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
 
 from artemis.config.settings import settings
-from artemis.llm.google.provider import supports_thinking_level
+from artemis.llm.google.provider import strip_provider_prefix, supports_thinking_level
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_GEMINI_MODEL_ALIASES: dict[str, str] = {
+    "gemini-1.5-flash": "gemini-3.5-flash",
+    "gemini-1.5-flash-latest": "gemini-3.5-flash",
+    "gemini-1.5-flash-8b": "gemini-3.5-flash-lite",
+    "gemini-1.5-pro": "gemini-3.5-flash",
+    "gemini-1.5-pro-latest": "gemini-3.5-flash",
+    "gemini-2.0-flash": "gemini-3.5-flash",
+    "gemini-2.0-flash-exp": "gemini-3.5-flash",
+    "gemini-2.5-flash": "gemini-3.5-flash",
+    "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-2.5-pro": "gemini-3.5-flash",
+}
 
 
 class ModelProvider(StrEnum):
@@ -237,11 +250,11 @@ class ModelFactory:
             )
             # Gemini 1.x/2.x only understand thinking_budget.
             thinking_level = (
-                endpoint.thinking_level if supports_thinking_level(endpoint.model_name) else None
+                endpoint.thinking_level if supports_thinking_level(_GEMINI_MODEL_ALIASES.get(strip_provider_prefix(endpoint.model_name), strip_provider_prefix(endpoint.model_name))) else None
             )
 
             kwargs: dict[str, Any] = {
-                "model": endpoint.model_name,
+                "model": _GEMINI_MODEL_ALIASES.get(strip_provider_prefix(endpoint.model_name), strip_provider_prefix(endpoint.model_name)),
                 "temperature": endpoint.temperature,
                 "max_output_tokens": endpoint.max_tokens,
                 "api_key": api_key,

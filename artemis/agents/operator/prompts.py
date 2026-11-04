@@ -22,6 +22,7 @@ from typing import NamedTuple
 from jinja2 import Environment, StrictUndefined, Template
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from artemis.config.settings import is_vision_only_mode
 from artemis.tools.history import HISTORY_TOOL_NAMES
 from PIL import Image
 
@@ -380,14 +381,23 @@ class ObservationPromptComponent(PromptComponent):
         latest_screenshot_b64 = kwargs.get("latest_screenshot_b64")
         minimal_list = kwargs.get("minimal_list")
 
-        builder.add_human_content("--- Current Screenshot ---")
-        builder.add_human_content(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{latest_screenshot_b64}"},
-            }
-        )
-        builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")
+        clean_b64 = str(latest_screenshot_b64).strip() if latest_screenshot_b64 else None
+        if clean_b64:
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",", 1)[1].strip()
+            builder.add_human_content("--- Current Screenshot ---")
+            builder.add_human_content(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{clean_b64}"},
+                }
+            )
+        if is_vision_only_mode():
+            builder.add_human_content(
+                "--- Visible UI Elements ---\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
+            )
+        else:
+            builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")
 
 
 class PlanRecitationPromptComponent(PromptComponent):

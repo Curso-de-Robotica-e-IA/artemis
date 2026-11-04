@@ -35,6 +35,7 @@ from artemis.config.constants import (
     ENV_OPEN_ROUTER_API_KEY,
     ENV_OPENAI_API_KEY,
     ENV_VISION_API_KEY,
+    ENV_VISION_ONLY_MODE,
     ENV_XAI_API_KEY,
 )
 from artemis.config.paths import (
@@ -84,6 +85,7 @@ def is_placeholder_key(val: str | SecretStr | None) -> bool:
         (raw_str.startswith("your_") and raw_str.endswith("_here"))
         or (raw_str.startswith("<") and raw_str.endswith(">"))
         or (raw_str.startswith("[") and raw_str.endswith("]"))
+        or "dummy" in raw_str
     ):
         return True
     return False
@@ -182,6 +184,15 @@ class Settings(BaseSettings):
     DATA_ENGINE_DB_PATH: Path = Field(default_factory=get_data_engine_db_path)
     TEMP_PATH: Path = Field(default_factory=get_temp_dir)
 
+    # Experimentation & Ablation Studies
+    VISION_ONLY_MODE: bool = Field(
+        default=False,
+        description=(
+            "If True, prompt omits XML/UI elements list for vision-only ablation"
+            " studies while preserving DB telemetry and image data."
+        ),
+    )
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @model_validator(mode="after")
@@ -209,6 +220,8 @@ class Settings(BaseSettings):
                 self.GOOGLE_API_KEY = self.GEMINI_API_KEY
             elif self.GCP_API_KEY:
                 self.GOOGLE_API_KEY = self.GCP_API_KEY
+        if self.GOOGLE_API_KEY and not self.GEMINI_API_KEY:
+            self.GEMINI_API_KEY = self.GOOGLE_API_KEY
 
         if not self.OPENAI_BASE_URL:
             env_url = (
@@ -354,3 +367,11 @@ settings = Settings()
 # Synchronize DATA_ENGINE_DB_PATH in environment for external sub-processes/tools
 if settings.DATA_ENGINE_DB_PATH:
     os.environ[ENV_DATA_ENGINE_DB_PATH] = str(settings.DATA_ENGINE_DB_PATH)
+
+
+def is_vision_only_mode() -> bool:
+    """Check if VISION_ONLY_MODE is enabled via settings or environment."""
+    val = os.environ.get(ENV_VISION_ONLY_MODE)
+    if val is not None:
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(getattr(settings, "VISION_ONLY_MODE", False))

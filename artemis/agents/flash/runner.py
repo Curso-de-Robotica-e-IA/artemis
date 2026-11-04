@@ -65,6 +65,7 @@ from artemis.agents.validator.tool_declarations import (
     capture_screenshot_and_parse_ui,
     prune_intermediate_screenshots,
 )
+from artemis.config.settings import is_vision_only_mode
 from artemis.config import (
     MemoryRuntimeConfig,
     MemoryTranscriptConfig,
@@ -372,7 +373,14 @@ class FlashRunner:
             blocks.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
             )
-        if xml_list:
+        if is_vision_only_mode():
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"{PRO_UI_LIST_MARKER}\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)",
+                }
+            )
+        elif xml_list:
             blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{xml_list}"})
         ephemeral: list[int] = []
         # (text, ephemeral) in tail order.
