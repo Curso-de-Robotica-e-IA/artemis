@@ -136,7 +136,11 @@ async def execute_task(
         )
 
     target_serial = (
-        device_serial or settings.ADB_DEVICE_SERIAL or os.environ.get("ADB_DEVICE_SERIAL")
+        device_serial
+        or settings.ADB_DEVICE_SERIAL
+        or os.environ.get("ADB_DEVICE_SERIAL")
+        or os.environ.get("ANDROID_SERIAL")
+        or os.environ.get("ARTEMIS_DEVICE_ID")
     )
     if not target_serial:
         try:

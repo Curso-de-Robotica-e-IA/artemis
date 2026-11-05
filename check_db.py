@@ -1,4 +1,4 @@
-﻿import sqlite3, json
+import sqlite3, json
 
 conn = sqlite3.connect("traces/data_engine.db")
 cursor = conn.cursor()
@@ -16,8 +16,23 @@ else:
 
 print("\n--- 2. AUDITORIA DO PROMPT DA LLM ---")
 # Filtra apenas chamadas de decisao do agente (ignorando o visualstepsummarizer)
-cursor.execute("SELECT payload FROM traces WHERE type='llm_call' AND payload LIKE '%messages%' ORDER BY timestamp DESC LIMIT 1;")
+cursor.execute("""
+    SELECT payload FROM traces 
+    WHERE type='llm_call' 
+      AND payload LIKE '%messages%' 
+      AND payload NOT LIKE '%Step Summarizer%'
+      AND (
+          payload LIKE '%Android Device Operator%' 
+          OR payload LIKE '%Visible UI Elements%'
+          OR payload LIKE '%Vision-only mode enabled%'
+          OR parent_trace_id IN (SELECT trace_id FROM traces WHERE name IN ('operator', 'FlashRunner'))
+      )
+    ORDER BY timestamp DESC LIMIT 1;
+""")
 row_trace = cursor.fetchone()
+if not row_trace:
+    cursor.execute("SELECT payload FROM traces WHERE type='llm_call' AND payload LIKE '%messages%' AND payload NOT LIKE '%Step Summarizer%' ORDER BY timestamp DESC LIMIT 1;")
+    row_trace = cursor.fetchone()
 
 if row_trace:
     payload = json.loads(row_trace[0])

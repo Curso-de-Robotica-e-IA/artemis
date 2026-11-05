@@ -863,7 +863,11 @@ class OperatorNode:
         latest_screenshot_b64 = operator_raw_data.get("screenshot_b64")
         xml_hierarchy = operator_raw_data.get("xml_hierarchy")
         operator_raw_data.get("ocr_results")
-        fused_xml = state.latest_ui_hierarchy if hasattr(state, "latest_ui_hierarchy") else []
+        fused_xml = (
+            getattr(state, "latest_ui_hierarchy", None)
+            or operator_raw_data.get("xml_hierarchy")
+            or []
+        )
         state.latest_screenshot if hasattr(state, "latest_screenshot") else None
 
         if not latest_screenshot_b64 or xml_hierarchy is None:

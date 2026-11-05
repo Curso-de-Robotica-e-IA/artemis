@@ -121,7 +121,14 @@ class Settings(BaseSettings):
     # Android ADB Connectivity
     ADB_HOST: str | None = Field(default=DEFAULT_ADB_HOST)
     ADB_PORT: int | None = Field(default=DEFAULT_ADB_PORT)
-    ADB_DEVICE_SERIAL: str | None = None
+    ADB_DEVICE_SERIAL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ADB_DEVICE_SERIAL",
+            "ANDROID_SERIAL",
+            "ARTEMIS_DEVICE_ID",
+        ),
+    )
     # UI hierarchy backend: "auto" = Accessibility Helper with UIAutomator2
     # fallback, "helper" = helper only, "uiautomator" = UIAutomator2 only.
     ARTEMIS_HIERARCHY_BACKEND: str = Field(default="auto")
@@ -231,6 +238,17 @@ class Settings(BaseSettings):
             )
             if env_url:
                 self.OPENAI_BASE_URL = env_url
+        if self.OPENAI_BASE_URL and "192.168.155.46:11434" in str(self.OPENAI_BASE_URL):
+            import socket
+            try:
+                with socket.create_connection(("192.168.155.46", 11434), timeout=0.4):
+                    pass
+            except Exception:
+                try:
+                    with socket.create_connection(("127.0.0.1", 11434), timeout=0.4):
+                        self.OPENAI_BASE_URL = str(self.OPENAI_BASE_URL).replace("192.168.155.46:11434", "127.0.0.1:11434")
+                except Exception:
+                    pass
 
         # Fallback for OCR & Vision API keys
         if not self.OCR_API_KEY and self.VISION_API_KEY:

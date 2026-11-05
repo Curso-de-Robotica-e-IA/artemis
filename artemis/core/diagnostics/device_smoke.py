@@ -161,7 +161,10 @@ def _describe_failure(exc: BaseException) -> str:
 def _resolve_requested_serial(device_serial: str | None) -> str | None:
     """Mirror ``_get_controller``'s serial resolution (explicit arg, then env)."""
     return (
-        device_serial or os.environ.get("ARTEMIS_DEVICE_ID") or os.environ.get("ADB_DEVICE_SERIAL")
+        device_serial
+        or os.environ.get("ARTEMIS_DEVICE_ID")
+        or os.environ.get("ADB_DEVICE_SERIAL")
+        or os.environ.get("ANDROID_SERIAL")
     )
 
 

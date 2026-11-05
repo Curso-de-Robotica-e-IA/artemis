@@ -299,9 +299,9 @@ def format_minimal_list_with_points(
         return False
 
     for node in fused_xml:
-        text = node.get("text") or node.get("content-desc") or ""
-        bounds_str = node.get("bounds")
-        bounds = parse_bounds(bounds_str)
+        text = node.get("text") or node.get("content-desc") or node.get("accessibilityText") or ""
+        bounds_data = node.get("bounds") or node.get("parsed_bounds")
+        bounds = parse_bounds(bounds_data)
 
         ocr_elements = node.get("ocr_elements")
         registered = False
@@ -375,7 +375,7 @@ def format_minimal_list_with_elements(
         return False
 
     for node in fused_xml:
-        # Substitua as linhas antigas por estas:
+
         text = node.get("text") or node.get("content-desc") or node.get("accessibilityText") or ""
         bounds_data = node.get("bounds") or node.get("parsed_bounds")
         bounds = parse_bounds(bounds_data)

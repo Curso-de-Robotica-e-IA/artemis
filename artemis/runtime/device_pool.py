@@ -439,10 +439,22 @@ class DevicePool:
             selects the first ready device so the task will queue on it.
             Returns None if no devices are attached.
         """
+        if not preferred_serial:
+            preferred_serial = (
+                os.environ.get("ANDROID_SERIAL")
+                or os.environ.get("ADB_DEVICE_SERIAL")
+                or os.environ.get("ARTEMIS_DEVICE_ID")
+            )
         return self._pick_device(self.list_devices(), preferred_serial)
 
     async def select_device_async(self, preferred_serial: str | None = None) -> str | None:
         """Select a device without blocking the caller on ADB enumeration."""
+        if not preferred_serial:
+            preferred_serial = (
+                os.environ.get("ANDROID_SERIAL")
+                or os.environ.get("ADB_DEVICE_SERIAL")
+                or os.environ.get("ARTEMIS_DEVICE_ID")
+            )
         return self._pick_device(await self.list_devices_async(), preferred_serial)
 
     def _pick_device(

@@ -424,6 +424,7 @@ class AgentConfigBuilder(AgentConfigBuilderBase):
                 self._device_id
                 or os.environ.get("ARTEMIS_DEVICE_ID")
                 or os.environ.get("ADB_DEVICE_SERIAL")
+                or os.environ.get("ANDROID_SERIAL")
             ),
             "video_recording_tools_enabled": self._video_recording_tools_enabled,
             "force_web_accessibility": self._force_web_accessibility,

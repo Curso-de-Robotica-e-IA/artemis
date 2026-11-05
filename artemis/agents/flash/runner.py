@@ -380,8 +380,17 @@ class FlashRunner:
                     "text": f"{PRO_UI_LIST_MARKER}\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)",
                 }
             )
-        elif xml_list:
-            blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{xml_list}"})
+        else:
+            ui_text = xml_list
+            if not ui_text:
+                fused = getattr(state, "latest_ui_hierarchy", None) if state else None
+                if fused:
+                    from artemis.utils.visualization import format_minimal_list_with_elements
+                    ui_text, _, _ = format_minimal_list_with_elements(fused)
+            if not ui_text:
+                ui_text = "(No UI elements detected)"
+            blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{ui_text}"})
+
         ephemeral: list[int] = []
         # (text, ephemeral) in tail order.
         per_turn: list[tuple[str, bool]] = [(text, True) for text in (notices or [])]

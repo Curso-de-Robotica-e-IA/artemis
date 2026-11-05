@@ -397,7 +397,23 @@ class ObservationPromptComponent(PromptComponent):
                 "--- Visible UI Elements ---\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
             )
         else:
-            builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")
+            ui_content = minimal_list
+            if not ui_content:
+                fused = getattr(state, "latest_ui_hierarchy", None) or (
+                    getattr(state, "operator_raw_data", None) or {}
+                ).get("xml_hierarchy")
+                if fused:
+                    from artemis.utils.visualization import format_minimal_list_with_elements
+                    w = 1080
+                    h = 2400
+                    raw_data = getattr(state, "operator_raw_data", None) or {}
+                    if isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                        w = raw_data["width"]
+                        h = raw_data["height"]
+                    ui_content, _, _ = format_minimal_list_with_elements(fused, w, h)
+            if not ui_content:
+                ui_content = "(No UI elements detected)"
+            builder.add_human_content(f"--- Visible UI Elements ---\n{ui_content}")
 
 
 class PlanRecitationPromptComponent(PromptComponent):
