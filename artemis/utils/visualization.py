@@ -155,13 +155,26 @@ def draw_dots(
     img.save(output_path)
 
 
-def parse_bounds(bounds_str: str | None) -> tuple[int, int, int, int] | None:
-    """Parses standard Android '[left,top][right,bottom]' bounds string."""
-    if not bounds_str:
+from typing import Any
+import re
+
+def parse_bounds(bounds_data: Any) -> tuple[int, int, int, int] | None:
+    """Parses standard Android '[left,top][right,bottom]' bounds string or dict."""
+    if not bounds_data:
         return None
-    match = re.match(r"\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]", bounds_str)
-    if match:
-        return tuple(map(int, match.groups()))
+    if isinstance(bounds_data, dict):
+        if "left" in bounds_data and "top" in bounds_data and "right" in bounds_data and "bottom" in bounds_data:
+            return (
+                int(bounds_data["left"]),
+                int(bounds_data["top"]),
+                int(bounds_data["right"]),
+                int(bounds_data["bottom"]),
+            )
+        return None
+    if isinstance(bounds_data, str):
+        match = re.match(r"\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]", bounds_data)
+        if match:
+            return tuple(map(int, match.groups()))
     return None
 
 
@@ -362,9 +375,10 @@ def format_minimal_list_with_elements(
         return False
 
     for node in fused_xml:
-        text = node.get("text") or node.get("content-desc") or ""
-        bounds_str = node.get("bounds")
-        bounds = parse_bounds(bounds_str)
+        # Substitua as linhas antigas por estas:
+        text = node.get("text") or node.get("content-desc") or node.get("accessibilityText") or ""
+        bounds_data = node.get("bounds") or node.get("parsed_bounds")
+        bounds = parse_bounds(bounds_data)
 
         ocr_elements = node.get("ocr_elements")
         registered = False

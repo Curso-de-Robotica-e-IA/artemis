@@ -23,13 +23,17 @@ if row_trace:
     payload = json.loads(row_trace[0])
     prompt = str(payload.get("messages", []))
     
-    # 1. Valida a ocultacao da arvore XML
-    if "com.android" not in prompt and "[1] button" not in prompt:
-        print("[CONFIRMADO] Arvore XML de elementos foi ocultada da LLM!")
+    # 1. Valida a presenca/ocultacao dos marcadores reais do Artemis no prompt
+    has_xml_marker = "--- Visible UI Elements ---" in prompt or "] Text:" in prompt or "] OCR Text:" in prompt
+    has_vision_notice = "Vision-only mode enabled" in prompt
+
+    if not has_xml_marker and has_vision_notice:
+        print("[CONFIRMADO] Arvore XML de elementos foi ocultada da LLM (Modo Vision-Only ativo)!")
+    elif has_xml_marker and not has_vision_notice:
+        print("[CONFIRMADO] Arvore XML foi devidamente injetada no prompt (Modo Normal ativo)!")
+    elif has_xml_marker and has_vision_notice:
+        print("[ERRO] Inconsistencia: Notificacao de Vision-Only presente mas elementos XML ainda foram injetados!")
     else:
-        print("[ERRO] Arvore XML ainda esta presente no prompt da LLM.")
-        
-    # 2. Valida o modo Vision-Only
-    print("[CONFIRMADO] Modo Vision-Only ativado com sucesso!")
+        print("[AVISO] Nem XML nem aviso de Vision-Only foram detectados no prompt (lista chegou vazia).")
 else:
     print("[INFO] Nenhuma chamada de agente LLM encontrada no banco.")
