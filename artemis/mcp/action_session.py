@@ -178,7 +178,14 @@ class ActionSession:
         result = await self.call_raw(
             "observe_screen", {"settle_ms": settle_ms, "include_image": include_image}
         )
-        return ObserveResult.model_validate(result.structuredContent)
+        res = ObserveResult.model_validate(result.structuredContent)
+        payload = result.structuredContent or {}
+        if isinstance(payload, dict):
+            if payload.get("activity"):
+                object.__setattr__(res, "activity", payload["activity"])
+            if payload.get("package"):
+                object.__setattr__(res, "package", payload["package"])
+        return res
 
     async def screenshot_b64(self, timeout: float | None = None) -> str:
         """Returns the current screen as a base64 string (no persistence)."""

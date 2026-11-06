@@ -564,6 +564,7 @@ class FlashRunner:
         xml_list,
         messages: list[BaseMessage],
         native_text: str | None = None,
+        state: State | None = None,
     ) -> dict:
         """Records the final step, acknowledges the tool call, and flushes."""
         final_report = args
@@ -571,14 +572,30 @@ class FlashRunner:
             try:
                 if self.ctx.data_engine.current_step_id is None:
                     self.ctx.data_engine.allocate_step_id()
+                act = getattr(state, "current_activity", None) if state else None
+                pkg = getattr(state, "current_package", None) if state else None
+                action_dict = {"action": "report_task_status", "args": args}
+                extra_meta = {"token_usage": step_token_usage}
+                if act:
+                    action_dict["current_activity"] = act
+                    action_dict["activity"] = act
+                    extra_meta["current_activity"] = act
+                    extra_meta["activity"] = act
+                if pkg:
+                    action_dict["current_package"] = pkg
+                    action_dict["package"] = pkg
+                    extra_meta["current_package"] = pkg
+                    extra_meta["package"] = pkg
+                    extra_meta["foreground_app"] = pkg
                 self.ctx.data_engine.record_step(
                     pre_screenshot_bytes=pre_screenshot_bytes,
                     ui_tree=xml_list,
-                    action_taken={"action": "report_task_status", "args": args},
+                    action_taken=action_dict,
                     operator_raw_thinking=raw_text,
                     operator_native_thinking=native_text or None,
                     last_execution_result={"result": "Task completed with final report."},
-                    extra_metadata={"token_usage": step_token_usage},
+                    extra_metadata=extra_meta,
+                    current_activity=act,
                 )
             except Exception as step_err:
                 logger.warning(f"Error recording final step in FlashRunner: {step_err}")
@@ -677,7 +694,7 @@ class FlashRunner:
                     norm_coords = [int(float(nums[0])), int(float(nums[1]))]
         return norm_coords, norm_start, norm_end
 
-    def _build_action_record(self, name: str, args: dict, exec_result) -> dict:
+    def _build_action_record(self, name: str, args: dict, exec_result, state: State | None = None) -> dict:
         """The action as the step record and the visual lens see it.
 
         Flash records the model's own 0–1000 coordinates verbatim (an index
@@ -710,7 +727,11 @@ class FlashRunner:
             action_dict["normalized_end_coordinates"] = norm_end
         action_dict.update(metadata.get("target_semantics") or {})
         act = metadata.get("activity") or getattr(exec_result, "activity", None)
+        if not act and state is not None:
+            act = getattr(state, "current_activity", None)
         pkg = metadata.get("package") or getattr(exec_result, "package", None)
+        if not pkg and state is not None:
+            pkg = getattr(state, "current_package", None)
         if act:
             action_dict["current_activity"] = act
             action_dict["activity"] = act
@@ -830,7 +851,7 @@ class FlashRunner:
 
             # One record shape for the DataEngine step and the visual lens.
             action_dict = (
-                self._build_action_record(name, args, exec_result) if name in action_names else None
+                self._build_action_record(name, args, exec_result, state=state) if name in action_names else None
             )
 
             # Record telemetry / step in DataEngine
@@ -981,6 +1002,7 @@ class FlashRunner:
                     xml_list,
                     messages,
                     native_text=native_text,
+                    state=state,
                 )
                 return final_report, pre_screenshot_bytes, xml_list, action_sequence
 
