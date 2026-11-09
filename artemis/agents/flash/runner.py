@@ -65,7 +65,7 @@ from artemis.agents.validator.tool_declarations import (
     capture_screenshot_and_parse_ui,
     prune_intermediate_screenshots,
 )
-from artemis.config.settings import is_vision_only_mode
+from artemis.config.settings import is_vision_only_mode, settings
 from artemis.config import (
     MemoryRuntimeConfig,
     MemoryTranscriptConfig,
@@ -345,6 +345,7 @@ class FlashRunner:
         img_bytes,
         xml_list,
         *,
+        state: State | None = None,
         injected: UserGuidance | None = None,
         notices: list[str] | None = None,
         is_final: bool = False,
@@ -373,23 +374,36 @@ class FlashRunner:
             blocks.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
             )
-        if is_vision_only_mode():
+        vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if vision_only:
             blocks.append(
                 {
                     "type": "text",
-                    "text": f"{PRO_UI_LIST_MARKER}\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)",
+                    "text": "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)",
                 }
             )
         else:
             ui_text = xml_list
-            if not ui_text:
-                fused = getattr(state, "latest_ui_hierarchy", None) if state else None
+            if not ui_text and state is not None:
+                raw_data = getattr(state, "operator_raw_data", None) or {}
+                fused = getattr(state, "latest_ui_hierarchy", None) or (
+                    raw_data.get("xml_hierarchy") if isinstance(raw_data, dict) else None
+                )
                 if fused:
                     from artemis.utils.visualization import format_minimal_list_with_elements
-                    ui_text, _, _ = format_minimal_list_with_elements(fused)
-            if not ui_text:
+                    w = 1080
+                    h = 2400
+                    if isinstance(raw_data, dict) and isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                        w = raw_data["width"]
+                        h = raw_data["height"]
+                    try:
+                        ui_text, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    except Exception:
+                        ui_text = None
+            if not ui_text and (state is not None or xml_list is not None):
                 ui_text = "(No UI elements detected)"
-            blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{ui_text}"})
+            if ui_text:
+                blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{ui_text}"})
 
         ephemeral: list[int] = []
         # (text, ephemeral) in tail order.
@@ -1098,6 +1112,7 @@ class FlashRunner:
                 turns,
                 current_pre_screenshot_bytes,
                 current_xml_list,
+                state=state,
                 injected=injected_guidance,
                 notices=pending_notices,
                 is_final=is_final,

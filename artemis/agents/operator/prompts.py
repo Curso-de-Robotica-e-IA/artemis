@@ -22,7 +22,7 @@ from typing import NamedTuple
 from jinja2 import Environment, StrictUndefined, Template
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from artemis.config.settings import is_vision_only_mode
+from artemis.config.settings import is_vision_only_mode, settings
 from artemis.tools.history import HISTORY_TOOL_NAMES
 from PIL import Image
 
@@ -392,25 +392,29 @@ class ObservationPromptComponent(PromptComponent):
                     "image_url": {"url": f"data:image/jpeg;base64,{clean_b64}"},
                 }
             )
-        if is_vision_only_mode():
+        vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if vision_only:
             builder.add_human_content(
-                "--- Visible UI Elements ---\n(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
+                "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
             )
         else:
             ui_content = minimal_list
-            if not ui_content:
+            if not ui_content and state is not None:
+                raw_data = getattr(state, "operator_raw_data", None) or {}
                 fused = getattr(state, "latest_ui_hierarchy", None) or (
-                    getattr(state, "operator_raw_data", None) or {}
-                ).get("xml_hierarchy")
+                    raw_data.get("xml_hierarchy") if isinstance(raw_data, dict) else None
+                )
                 if fused:
                     from artemis.utils.visualization import format_minimal_list_with_elements
                     w = 1080
                     h = 2400
-                    raw_data = getattr(state, "operator_raw_data", None) or {}
-                    if isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                    if isinstance(raw_data, dict) and isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
                         w = raw_data["width"]
                         h = raw_data["height"]
-                    ui_content, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    try:
+                        ui_content, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    except Exception:
+                        ui_content = None
             if not ui_content:
                 ui_content = "(No UI elements detected)"
             builder.add_human_content(f"--- Visible UI Elements ---\n{ui_content}")
