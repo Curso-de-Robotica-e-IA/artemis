@@ -925,8 +925,8 @@ class DataEngine:
                             activity = snap_act
                         if not foreground_app and snap.get("package"):
                             foreground_app = snap.get("package")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to get activity from UI helper: %s", e)
             if not activity:
                 try:
                     adb_client = self.ctx.get_adb_client()
@@ -952,8 +952,8 @@ class DataEngine:
                                     activity = act
                                 if not foreground_app and pkg:
                                     foreground_app = pkg
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get activity from ADB client: %s", e)
 
         if activity:
             extra_metadata.setdefault("current_activity", activity)

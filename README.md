@@ -13,6 +13,7 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#python-sdk">Python SDK</a> •
   <a href="#cli-usage">CLI Usage</a> •
+  <a href="#touch-api-server">Touch API Server</a> •
   <a href="#execution-profiles">Flash vs. Pro</a> •
   <a href="#benchmarks">Benchmarks</a>
 </p>
@@ -171,6 +172,80 @@ The first task on a device automatically provisions the **Artemis Accessibility 
 * **Check status**: `uv run artemis helper status`
 * **Uninstall**: `uv run artemis helper uninstall`
 * **Use UIAutomator2 fallback**: Set `ARTEMIS_HIERARCHY_BACKEND=uiautomator` in your `.env`
+
+---
+
+<a id="touch-api-server"></a>
+## ADB Touch & Input HTTP API Server
+
+ARTEMIS includes a lightweight ASGI HTTP server (`Starlette` + `Uvicorn`) that decouples touch gestures, key presses, and text input from direct ADB execution. When enabled, actions are routed through HTTP endpoints using normalized coordinates (`0..1000`), while screen observation (screenshots and UI hierarchy) continues directly via ADB.
+
+### 1. Starting the Server
+
+Launch the server using `uv run python -m artemis.interfaces.touch_api.server` or directly through `uvicorn`:
+
+```bash
+# Start on default host and port (127.0.0.1:8001)
+uv run python -m artemis.interfaces.touch_api.server
+
+# Or with custom host and port via environment variables
+TOUCH_API_HOST=0.0.0.0 TOUCH_API_PORT=8001 uv run python -m artemis.interfaces.touch_api.server
+
+# Or launch directly with uvicorn
+uv run uvicorn artemis.interfaces.touch_api.server:app --host 127.0.0.1 --port 8001
+```
+
+### 2. Configuring ARTEMIS to Use the HTTP Backend
+
+To instruct ARTEMIS (`artemis run`, `ArtemisRunner`, or `Agent`) to route device actions through the HTTP API instead of direct ADB, configure the backend in your `.env` file or environment variables:
+
+```bash
+# Select the HTTP actuator backend (options: "adb" [default] or "http")
+ARTEMIS_ACTUATOR_BACKEND=http
+
+# Base URL and timeout for the Touch API server
+ARTEMIS_TOUCH_API_URL=http://127.0.0.1:8001
+ARTEMIS_TOUCH_API_TIMEOUT_S=30.0
+```
+
+Once set, any action (`click`, `swipe`, `input_text`, etc.) executed by ARTEMIS is automatically dispatched via HTTP to the touch server.
+
+### 3. API Endpoints & Health Check
+
+* **Health Check** (`GET /health`):
+  ```bash
+  curl http://127.0.0.1:8001/health
+  ```
+  Returns the service status and current active device info:
+  ```json
+  {
+    "status": "ok",
+    "service": "artemis-touch-api",
+    "device": {
+      "device_id": "emulator-5554",
+      "screen_width": 1080,
+      "screen_height": 2400
+    }
+  }
+  ```
+
+* **Configure Device** (`POST /device`):
+  Sets the active device serial or `IP:port`, auto-queries screen dimensions (`wm size`) via ADB, and stores them:
+  ```bash
+  curl -X POST http://127.0.0.1:8001/device \
+    -H "Content-Type: application/json" \
+    -d '{"device_id": "emulator-5554"}'
+  ```
+
+* **Action Endpoints** (accept normalized coordinates `0..1000`):
+  - `POST /tap`: Single or multi-tap (`{"nx": 500, "ny": 500, "times": 1, "delay_ms": 100}`)
+  - `POST /tap-sequence`: Multiple sequential taps (`{"points": [{"nx": 100, "ny": 200}, {"nx": 500, "ny": 500}], "delay_ms": 50}`)
+  - `POST /long-press`: Long-press gesture (`{"nx": 500, "ny": 500, "duration_ms": 1000}`)
+  - `POST /swipe`: Drag / swipe (`{"start_nx": 500, "start_ny": 800, "end_nx": 500, "end_ny": 200, "duration_ms": 400}`)
+  - `POST /input-text`: Text typing (`{"text": "Search query"}`)
+  - `POST /focus-and-clear`: Focus field and clear content (`{"nx": 500, "ny": 300}`)
+  - `POST /erase-char`: Backspace key (`{"times": 1}`)
+  - `POST /press-key`: Android key event (`{"key": "BACK"}`)
 
 ---
 

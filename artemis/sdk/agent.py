@@ -546,9 +546,8 @@ class Agent(AgentBase):
                         int(round(coords[2] * width / 1000.0)),
                         int(round(coords[3] * height / 1000.0)),
                     ]
-            except Exception:
-                pass
-            return None
+            except (TypeError, ValueError, IndexError, AttributeError):
+                return None
 
         result = []
         for s in step_records:

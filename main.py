@@ -56,8 +56,25 @@ def start_screen_mirror(
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+def get_device_serial() -> str:
+    """Retorna o serial do dispositivo conectado via ADB."""
+    try:
+        result = subprocess.run(
+            ["adb", "devices"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        lines = result.stdout.strip().splitlines()
+        for line in lines[1:]:  # Ignora a primeira linha (cabeçalho)
+            if line.strip() and "device" in line:
+                return line.split()[0]
+    except Exception as e:
+        print(f"[Erro] Não foi possível obter o serial do dispositivo: {e}")
+    return ""
 
-DEVICE_SERIAL = "0083314248"
+
+DEVICE_SERIAL = get_device_serial()
 
 # Espelha a tela em segundo plano enquanto executa o bot
 # Dica: defina auto_close=False se preferir manter a janela do scrcpy aberta após a automação
@@ -66,7 +83,7 @@ with start_screen_mirror(device_serial=DEVICE_SERIAL, auto_close=True):
         # Basic task execution
         start_time = time.time()
         result = bot.run(
-            "Open the settings menu, navigate to the 'Display' section, turn on adaptive brightness, and turn on the dark mode. Only Use the tap command to interact with the screen.",
+            "Open the settings menu, navigate to the 'Display' section, turn on adaptive brightness, and turn on the dark mode.",
             return_steps=True,
         )
         end_time = time.time()

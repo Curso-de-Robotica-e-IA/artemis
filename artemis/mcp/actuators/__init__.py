@@ -14,8 +14,30 @@
 
 """Actuator backends: pluggable implementations of the device action contract."""
 
+from artemis.config.settings import settings
+from artemis.context import ArtemisContext
+from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.actuators.base import Actuator
 from artemis.mcp.actuators.adb import AdbActuator
+from artemis.mcp.actuators.http_touch import HttpTouchActuator
 from artemis.mcp.actuators.mock import MockActuator
 
-__all__ = ["Actuator", "AdbActuator", "MockActuator"]
+
+def create_actuator(
+    ctx: ArtemisContext,
+    controller: UnifiedMobileController | None = None,
+) -> Actuator:
+    """Creates the configured Actuator backend (ADB or HTTP Touch API)."""
+    backend = getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb").lower()
+    if backend == "http":
+        return HttpTouchActuator(ctx, controller=controller)
+    return AdbActuator(ctx, controller=controller)
+
+
+__all__ = [
+    "Actuator",
+    "AdbActuator",
+    "HttpTouchActuator",
+    "MockActuator",
+    "create_actuator",
+]

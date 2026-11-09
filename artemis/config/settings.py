@@ -120,6 +120,18 @@ class Settings(BaseSettings):
     ADB_HOST: str | None = Field(default=DEFAULT_ADB_HOST)
     ADB_PORT: int | None = Field(default=DEFAULT_ADB_PORT)
     ADB_DEVICE_SERIAL: str | None = None
+    ARTEMIS_ACTUATOR_BACKEND: str = Field(
+        default="adb",
+        description="Device actuation backend: 'adb' for direct ADB, or 'http' for HTTP Touch API.",
+    )
+    ARTEMIS_TOUCH_API_URL: str = Field(
+        default="http://127.0.0.1:8001",
+        description="Base URL for the HTTP Touch API server.",
+    )
+    ARTEMIS_TOUCH_API_TIMEOUT_S: float = Field(
+        default=30.0,
+        description="Timeout in seconds for HTTP Touch API requests.",
+    )
     # UI hierarchy backend: "auto" = Accessibility Helper with UIAutomator2
     # fallback, "helper" = helper only, "uiautomator" = UIAutomator2 only.
     ARTEMIS_HIERARCHY_BACKEND: str = Field(default="auto")
