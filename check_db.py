@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 from artemis.config.paths import get_env_file
 
-# Force reload from .env so changing VISION_ONLY_MODE in .env immediately updates settings
 load_dotenv(dotenv_path=get_env_file(), override=True)
 from artemis.agents.operator.prompts import ObservationPromptComponent, PromptBuilder
 from artemis.config.settings import is_vision_only_mode, settings
@@ -71,7 +70,6 @@ else:
     print("[INFO] Nenhuma imagem com XML encontrada.")
 
 print("\n--- 2. AUDITORIA DO PROMPT DA LLM ---")
-# Filtra apenas chamadas de decisao do agente (ignorando o visualstepsummarizer)
 cursor.execute("""
     SELECT payload FROM traces 
     WHERE type='llm_call' 
@@ -94,7 +92,6 @@ if row_trace:
     payload = json.loads(row_trace[0])
     prompt = str(payload.get("messages", []))
     
-    # 1. Valida a presenca/ocultacao dos marcadores reais do Artemis no prompt
     has_xml_marker = "--- Visible UI Elements ---" in prompt or "] Text:" in prompt or "] OCR Text:" in prompt
     has_vision_notice = "Vision-only mode enabled" in prompt
 
