@@ -21,21 +21,26 @@ from artemis import _legacy_imports
 _legacy_imports.install()
 
 from artemis.drivers.base import BaseDeviceDriver
-from artemis.interfaces.sdk.task import StreamEvent, StreamEventType, Task, TaskResult
+from artemis.interfaces.sdk.client import ArtemisClient, ConcurrencyMode
+from artemis.interfaces.sdk.task import StreamEvent, StreamEventType, Task
 from artemis.runner import ArtemisRunner
-from artemis.runtime.device_lock import ConcurrencyMode
 from artemis.sdk.agent import Agent
 from artemis.sdk.builders import Builders
+from artemis_client import Capabilities, Device, TaskHandle, TaskResult
 
 __all__ = [
     "__version__",
     "Agent",
+    "ArtemisClient",
     "ArtemisRunner",
     "BaseDeviceDriver",
     "Builders",
+    "Capabilities",
     "ConcurrencyMode",
+    "Device",
     "StreamEvent",
     "StreamEventType",
     "Task",
+    "TaskHandle",
     "TaskResult",
 ]

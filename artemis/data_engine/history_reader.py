@@ -104,6 +104,17 @@ class OfflineHistoryReader:
         global_image_path = self.global_base_dir / "images" / f"{image_name}.jpg"
         if global_image_path.exists():
             return global_image_path
+        sess_name = getattr(self.base_dir, "name", "")
+        if sess_name:
+            sess_prefix = sess_name[:8]
+            try:
+                for p in self.global_base_dir.iterdir():
+                    if p.is_dir() and sess_prefix in p.name:
+                        cand = p / "images" / f"{image_name}.jpg"
+                        if cand.is_file():
+                            return cand
+            except OSError:
+                pass
         return session_image_path
 
     def get_step_image_path(self, step_number: int, which: str = "pre") -> Path | None:

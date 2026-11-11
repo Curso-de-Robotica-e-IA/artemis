@@ -862,6 +862,16 @@ class DataEngine:
         global_image_path = self.global_base_dir / "images" / f"{image_name}.jpg"
         if global_image_path.exists():
             return global_image_path
+        if self.current_session_id:
+            sess_prefix = str(self.current_session_id)[:8]
+            try:
+                for p in self.global_base_dir.iterdir():
+                    if p.is_dir() and sess_prefix in p.name:
+                        cand = p / "images" / f"{image_name}.jpg"
+                        if cand.is_file():
+                            return cand
+            except OSError:
+                pass
         return session_image_path
 
     def record_step(

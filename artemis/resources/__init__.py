@@ -31,8 +31,9 @@ def get_bundled_config_path(filename: str) -> Path | None:
 
 
 def get_bundled_showcase_dist() -> Path | None:
-    """Legacy helper maintained for backward compatibility (returns None)."""
-    return None
+    """Return the bundled Angular browser build when it is complete."""
+    candidate = _resource_path("showcase_ui")
+    return candidate if (candidate / "index.html").is_file() else None
 
 
 __all__ = ["get_bundled_config_path", "get_bundled_showcase_dist"]
