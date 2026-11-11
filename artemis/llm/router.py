@@ -111,6 +111,10 @@ class ModelEndpoint(BaseModel):
         default=False,
         description="Whether to enable Google Search grounding for Gemini endpoints",
     )
+    context_window: int | None = Field(
+        default=None,
+        description="Context window size in tokens",
+    )
 
     def cache_key(self) -> tuple:
         """Key the client cache by endpoint settings, hashing the API key."""
@@ -298,6 +302,7 @@ class ModelFactory:
                 "api_key": api_key,
                 "base_url": base_url,
                 "timeout": endpoint.timeout_seconds,
+                "stream_usage": True,
             }
             if endpoint.reasoning_effort:
                 kwargs["reasoning_effort"] = endpoint.reasoning_effort
@@ -348,6 +353,7 @@ class ModelFactory:
                 api_key=api_key,
                 base_url=endpoint.api_base or "https://openrouter.ai/api/v1",
                 timeout=endpoint.timeout_seconds,
+                stream_usage=True,
             )
 
         elif provider == ModelProvider.XAI:
@@ -364,6 +370,7 @@ class ModelFactory:
                 api_key=api_key,
                 base_url=endpoint.api_base or "https://api.x.ai/v1",
                 timeout=endpoint.timeout_seconds,
+                stream_usage=True,
             )
 
         elif provider in (ModelProvider.OLLAMA, ModelProvider.VLLM, ModelProvider.CUSTOM):
@@ -380,6 +387,7 @@ class ModelFactory:
                 "api_key": api_key,
                 "base_url": base_url,
                 "timeout": endpoint.timeout_seconds,
+                "stream_usage": True,
             }
             if endpoint.reasoning_effort:
                 kwargs["reasoning_effort"] = endpoint.reasoning_effort

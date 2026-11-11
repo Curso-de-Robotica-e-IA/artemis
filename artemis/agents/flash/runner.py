@@ -519,10 +519,21 @@ class FlashRunner:
         """Records the llm_call trace for this turn in the DataEngine."""
         if self.ctx.data_engine:
             current_step_id = getattr(self.ctx.data_engine, "current_step_id", None)
+            payload = {
+                "token_usage": step_token_usage,
+                "response": raw_text,
+                "node": "flashrunner",
+                "prompt_tokens": step_token_usage.get("prompt_tokens", 0),
+                "completion_tokens": step_token_usage.get("completion_tokens", 0),
+                "total_tokens": step_token_usage.get("total_tokens", 0),
+                "context_base_tokens": step_token_usage.get("prompt_tokens", 0),
+            }
+            if self._llm and hasattr(self._llm, "_endpoint_key"):
+                payload["source"] = self._llm._endpoint_key()
             self.ctx.data_engine.record_trace(
                 type="llm_call",
                 name="FlashRunner",
-                payload={"token_usage": step_token_usage, "response": raw_text},
+                payload=payload,
                 step_id=current_step_id,
                 status="success",
             )

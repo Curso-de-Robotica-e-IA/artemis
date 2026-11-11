@@ -61,6 +61,7 @@ def test_usage_sums_all_agents_and_tracks_latest_operator_context(tmp_path):
         "s1",
         {
             "profile": "pro",
+            "provider": "google",
             "run_tuning": {"verification_level": "checkpoints", "explorer_mode": "pro"},
         },
     )
@@ -117,3 +118,56 @@ def test_usage_route_is_registered():
 
     paths = {getattr(r, "path", None) for r in sessions.router.routes}
     assert "/api/sessions/{session_id}/usage" in paths
+
+
+def test_usage_resolves_context_window_for_local_model(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    repo = SessionRepository(db_path)
+    _insert_session(
+        db_path,
+        "s_local",
+        {
+            "profile": "flash",
+            "provider": "openai",
+            "model": "ornith-1.5:35b",
+            "context_window": 32768,
+        },
+    )
+    _insert_usage(db_path, "s_local", "t1", 1.0, _usage(4000, 100, node="flashrunner"))
+
+    usage = repo.get_session_usage("s_local")
+    assert usage["operator_context_window_tokens"] == 32768
+    assert usage["operator_context_tokens"] == 4000
+
+
+def test_usage_fallback_for_flash_runner_traces(tmp_path):
+    db_path = tmp_path / "sessions.db"
+    repo = SessionRepository(db_path)
+    _insert_session(db_path, "s_flash", {"profile": "flash", "context_window": 24000})
+    with db_session(db_path) as conn:
+        conn.execute(
+            "INSERT INTO traces (trace_id, session_id, type, name, timestamp, status, payload)"
+            " VALUES (?, ?, 'llm_call', 'FlashRunner', 1.0, 'success', ?)",
+            (
+                "t1",
+                "s_flash",
+                json.dumps({
+                    "token_usage": {
+                        "prompt_tokens": 2759,
+                        "completion_tokens": 23,
+                        "total_tokens": 2782,
+                    },
+                    "response": "ok",
+                }),
+            ),
+        )
+        conn.commit()
+
+    usage = repo.get_session_usage("s_flash")
+    assert usage["llm_calls"] == 1
+    assert usage["prompt_tokens"] == 2759
+    assert usage["completion_tokens"] == 23
+    assert usage["total_tokens"] == 2782
+    assert usage["operator_context_tokens"] == 2759
+    assert usage["operator_context_window_tokens"] == 24000
+

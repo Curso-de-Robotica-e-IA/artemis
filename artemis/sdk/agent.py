@@ -344,6 +344,13 @@ class Agent(AgentBase):
         if run_tuning:
             device_data["run_tuning"] = run_tuning
 
+        try:
+            from artemis.services.token_meter import resolve_operator_context_window
+
+            device_data["context_window"] = resolve_operator_context_window()
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            logger.debug(f"Context window resolution skipped: {exc}")
+
         context.data_engine.start_session(
             goal=task.request.goal,
             device_info=device_data,

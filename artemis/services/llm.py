@@ -632,12 +632,17 @@ class RobustChatModelWrapper:
             args, kwargs = _inject_parent_trace_id(trace_id, *args, **kwargs)
         return args, kwargs, trace_id
 
-    def _meter_usage(self, response) -> None:
+    def _meter_usage(self, response, *, messages: list[Any] | None = None) -> None:
         """Record measured token usage for this call (M0 metering, best-effort)."""
         engine = self.ctx.data_engine if self.ctx else None
         if engine is None:
             engine = _get_current_data_engine()
-        record_llm_usage(engine, response, source=self._endpoint_key())
+        record_llm_usage(
+            engine,
+            response,
+            source=self._endpoint_key(),
+            fallback_messages=messages,
+        )
 
     async def ainvoke(self, *args, **kwargs):
         args, kwargs, _ = self._traced_call(args, kwargs)
@@ -646,7 +651,8 @@ class RobustChatModelWrapper:
             provider=self._provider_value(),
             endpoint_key=self._endpoint_key(),
         )
-        self._meter_usage(response)
+        messages = args[0] if args and isinstance(args[0], list) else kwargs.get("messages")
+        self._meter_usage(response, messages=messages)
         return response
 
     async def complete(self, *args, **kwargs):
@@ -666,7 +672,8 @@ class RobustChatModelWrapper:
             provider=self._provider_value(),
             endpoint_key=self._endpoint_key(),
         )
-        self._meter_usage(response)
+        messages = args[0] if args and isinstance(args[0], list) else kwargs.get("messages")
+        self._meter_usage(response, messages=messages)
         return response
 
     def _emit_stream_delta(self, stream_exec_id, chunk) -> None:
