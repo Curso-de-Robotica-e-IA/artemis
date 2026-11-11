@@ -23,7 +23,8 @@ Quando configurado com `ARTEMIS_ACTUATOR_BACKEND=http`, o ARTEMIS instancia o [`
 | :--- | :--- | :--- | :--- |
 | `ARTEMIS_ACTUATOR_BACKEND` | `"adb"` | Cliente (ARTEMIS) | Define o backend de atuação (`"adb"` ou `"http"`). |
 | `ARTEMIS_TOUCH_API_URL` | `"http://127.0.0.1:8001"` | Cliente (`HttpTouchActuator`) | URL base da Touch API. |
-| `ARTEMIS_TOUCH_API_TIMEOUT_S` | `30.0` | Cliente (`HttpTouchActuator`) | Timeout em segundos para cada requisição HTTP. |
+| `ARTEMIS_TOUCH_API_TIMEOUT_S` | `30.0` | Cliente (`HttpTouchActuator`) | Timeout em segundos para requisições normais de ação (`/tap`, `/swipe`, etc.). |
+| `ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S` | `300.0` | Cliente (`Agent` / `HttpTouchActuator`) | Timeout em segundos exclusivo para a chamada inicial `POST /device` (no robô físico, a conexão e calibração inicial levam 3+ minutos). |
 | `TOUCH_API_HOST` | `"127.0.0.1"` | Servidor (`server.py`) | Host de bind do servidor Uvicorn de referência. |
 | `TOUCH_API_PORT` | `8001` | Servidor (`server.py`) | Porta de bind do servidor Uvicorn de referência. |
 | `ADB_DEVICE_SERIAL` | `"default"` | Servidor (`server.py`) | Serial ADB padrão caso `POST /device` não tenha sido chamado. |
@@ -86,9 +87,13 @@ Em caso de erro de validação ou falha de execução:
 
 > **Nota sobre o cliente (`HttpTouchActuator`)**: O cliente avalia prioritariamente o campo booleano `data["ok"]` da resposta JSON (usando `response.is_success` apenas como fallback caso `"ok"` seja omitido).
 
-### 2.4. Ciclo de Vida e Sincronização Automática de Dispositivo
+### 2.4. Ciclo de Vida e Chamada Obrigatória ao `POST /device` na Inicialização
 
-Antes de enviar a primeira ação de uma sessão, se o `device_id` no contexto do ARTEMIS estiver definido e for diferente de `"default"`, o `HttpTouchActuator` chama automaticamente **`POST /device`** uma única vez para sincronizar o dispositivo ativo. Se `POST /device` retornar `"ok": false`, a ação subsequente é abortada imediatamente.
+Por padrão, quando a Touch API inicia, nenhum dispositivo está conectado (`GET /` retorna `"device": null`). Portanto, **é obrigatório chamar `POST /device` antes de qualquer interação com o celular**:
+
+1. **Na inicialização do ARTEMIS (`Agent.initialize()` / `_init_internal`)**: Quando `ARTEMIS_ACTUATOR_BACKEND=http`, assim que o ARTEMIS detecta o dispositivo Android, ele chama **obrigatoriamente** `POST /device` enviando o `device_id` e aguarda a resposta antes de concluir a inicialização e antes de iniciar qualquer tarefa.
+2. **Tempo de espera para o robô físico (`ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S`)**: No robô real, essa primeira chamada ao `/device` realiza a conexão física e operações internas de calibração que levam **pelo menos 3 minutos (~180s+)**. Por isso, `POST /device` utiliza o timeout `ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S` (padrão **`300.0` segundos / 5 minutos**), enquanto as demais rotas de toque/tecla utilizam `ARTEMIS_TOUCH_API_TIMEOUT_S` (padrão `30.0` segundos).
+3. **Reaproveitamento na sessão**: Uma vez que `POST /device` retorna `"ok": true` na inicialização, o `HttpTouchActuator` registra que o endpoint já está sincronizado com aquele `device_id`, evitando repetir a espera de 3+ minutos na primeira ação da tarefa. Caso o `HttpTouchActuator` seja usado de forma avulsa (sem `Agent.initialize()`), ele também garante a chamada prévia ao `POST /device` (inclusive se `device_id` for `"default"`) com o timeout estendido antes do primeiro toque. Se `POST /device` retornar `"ok": false`, a inicialização do agente (ou a ação) falha imediatamente com `AgentError`.
 
 ---
 

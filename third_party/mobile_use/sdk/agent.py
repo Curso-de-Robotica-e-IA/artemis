@@ -54,6 +54,7 @@ from artemis.clients.screen_client_factory import (
 from artemis.config import (
     OutputConfig,
     record_events,
+    settings,
 )
 from artemis.constants import RECURSION_LIMIT
 from artemis.context import (
@@ -107,8 +108,8 @@ class AgentBase:
     _tmp_traces_dir: Path
     _initialized: bool = False
     _device_context: DeviceContext
-    _adb_client: AdbClient | None
-    _ui_adb_client: ScreenClient | Any | None
+    _adb_client: AdbClient | None = None
+    _ui_adb_client: ScreenClient | Any | None = None
     _current_task: asyncio.Task | None = None
     _task_lock: asyncio.Lock
     _cloud_mobile_id: str | None = None
@@ -195,10 +196,64 @@ class AgentBase:
         # Asynchronously pre-warm LLM connection pools in the background
         asyncio.create_task(self._prewarm_llm_connections(api_key))
 
+        # Mandatory Touch API (/device) handshake when HTTP actuator backend is enabled
+        await self._init_touch_api_device()
+
         logger.info("✅ Artemis agent initialized.")
         self._initialized = True
 
         return True
+
+    async def _init_touch_api_device(self) -> None:
+        """Mandatory HTTP Touch API (/device) initialization on agent startup.
+
+        By default the Touch API has no device connected (GET / returns device=None)
+        and requires POST /device to connect and run its internal calibration/setup.
+        On the physical robot this initial call can take 3+ minutes, so ARTEMIS
+        awaits its completion here before allowing any task execution.
+        """
+        backend = str(getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")).strip().lower()
+        if backend != "http":
+            return
+
+        from artemis.mcp.actuators.http_touch import HttpTouchActuator
+
+        device_id = self._device_context.device_id
+        touch_url = getattr(settings, "ARTEMIS_TOUCH_API_URL", "http://127.0.0.1:8001")
+        device_timeout_s = float(
+            getattr(settings, "ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S", 300.0)
+        )
+        publish_startup_progress(
+            "touch_api_device",
+            f"Connecting Touch API to device '{device_id}' ({touch_url}/device)...",
+            session_id=getattr(self, "_session_id", None),
+        )
+        logger.info(
+            f"Initializing HTTP Touch API device '{device_id}' via {touch_url}/device "
+            f"(timeout={device_timeout_s:.0f}s). Waiting for Touch API setup to finish..."
+        )
+        init_ctx = ArtemisContext(
+            device=self._device_context,
+            adb_client=getattr(self, "_adb_client", None),
+            ui_adb_client=getattr(self, "_ui_adb_client", None),
+            agent_config=self._config,
+        )
+        actuator = HttpTouchActuator(init_ctx, device_timeout_s=device_timeout_s)
+        res = await actuator.configure_device(device_id)
+        if not res.ok:
+            error_msg = (
+                f"Failed to configure device '{device_id}' on HTTP Touch API "
+                f"({touch_url}/device): {res.detail or res.message}"
+            )
+            logger.error(error_msg)
+            raise AgentError(error_msg)
+
+        logger.info(f"✅ HTTP Touch API device '{device_id}' ready: {res.message}")
+        publish_startup_progress(
+            "touch_api_ready",
+            f"Touch API ready for device '{device_id}'",
+            session_id=getattr(self, "_session_id", None),
+        )
 
     async def install_apk(self, apk_path: str | Path) -> None:
         """Install an APK on the connected device.

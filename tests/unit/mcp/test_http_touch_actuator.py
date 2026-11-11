@@ -222,3 +222,126 @@ async def test_touch_api_validation_and_error_handling(touch_app):
             data_err = resp_err.json()
             assert data_err["ok"] is False
             assert "Device offline" in (data_err["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_device_timeout_and_default_device_id_sync(touch_app):
+    """POST /device must always be called (even for 'default' device_id) and use device_timeout_s (300s default)."""
+    default_ctx = ArtemisContext(
+        device=DeviceContext(
+            host_platform=platform.os_type.name,
+            mobile_platform=DevicePlatform.ANDROID,
+            device_id="default",
+            device_width=1080,
+            device_height=2400,
+        ),
+    )
+    async with _make_client(touch_app) as http_client:
+        with patch(
+            "artemis.interfaces.touch_api.server._query_adb_screen_size",
+            new=AsyncMock(return_value=(1080, 2400)),
+        ) as mock_query:
+            actuator = HttpTouchActuator(default_ctx, client=http_client)
+            assert actuator.timeout_s == 30.0
+            assert actuator.device_timeout_s == 300.0
+
+            with patch.object(http_client, "post", wraps=http_client.post) as spy_post:
+                res = await actuator.click(500, 500)
+                assert res.ok
+                assert actuator._synced_device_id == "default"
+                mock_query.assert_awaited_once_with("default")
+
+                # First call is POST /device with 300s timeout; second call is POST /tap with 30s timeout
+                assert spy_post.await_count == 2
+                device_call = spy_post.await_args_list[0]
+                tap_call = spy_post.await_args_list[1]
+                assert device_call.args[0].endswith("/device")
+                assert device_call.kwargs["timeout"] == 300.0
+                assert tap_call.args[0].endswith("/tap")
+                assert tap_call.kwargs["timeout"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_agent_startup_mandatorily_calls_touch_api_device(monkeypatch):
+    """When ARTEMIS_ACTUATOR_BACKEND='http', Agent initialization must call POST /device and wait before completing."""
+    from artemis.mcp.action_types import ActionResult
+    from artemis.sdk.agent import Agent
+    from third_party.mobile_use.sdk.types.exceptions import AgentError
+
+    HttpTouchActuator.reset_synced_devices()
+    monkeypatch.setattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "http")
+    monkeypatch.setattr(settings, "ARTEMIS_TOUCH_API_URL", "http://127.0.0.1:8001")
+    monkeypatch.setattr(settings, "ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S", 240.0)
+    monkeypatch.setenv("ARTEMIS_FAKE_LLM", "1")
+
+    agent = Agent(device_id="robot-device-01")
+    monkeypatch.setattr("third_party.mobile_use.sdk.agent.which", lambda _cmd: "/usr/bin/adb")
+    monkeypatch.setattr(agent, "_init_clients", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        agent,
+        "_get_device_context",
+        AsyncMock(
+            return_value=DeviceContext(
+                host_platform=platform.os_type.name,
+                mobile_platform=DevicePlatform.ANDROID,
+                device_id="robot-device-01",
+                device_width=1080,
+                device_height=2400,
+            )
+        ),
+    )
+
+    recorded_timeouts: list[float | None] = []
+
+    async def _fake_post(self, path, payload, action=None, *, timeout_s=None):
+        recorded_timeouts.append(timeout_s)
+        assert path == "/device"
+        assert payload == {"device_id": "robot-device-01"}
+        return ActionResult.success(
+            action=action or "configure_device",
+            message="Device configured: robot-device-01 (1080x2400).",
+        )
+
+    with patch.object(HttpTouchActuator, "_post", new=_fake_post):
+        ok = await agent.init()
+        assert ok is True
+        assert agent._initialized is True
+        assert recorded_timeouts == [240.0]
+
+        # Subsequent HttpTouchActuator created during task execution reuses the startup sync
+        task_ctx = ArtemisContext(device=agent._device_context)
+        task_actuator = HttpTouchActuator(task_ctx)
+        assert task_actuator._synced_device_id == "robot-device-01"
+
+    await agent.clean()
+    assert HttpTouchActuator._synced_devices_by_url == {}
+
+    # Verify startup fails with AgentError if POST /device fails
+    agent_fail = Agent(device_id="robot-device-01")
+    monkeypatch.setattr(agent_fail, "_init_clients", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        agent_fail,
+        "_get_device_context",
+        AsyncMock(
+            return_value=DeviceContext(
+                host_platform=platform.os_type.name,
+                mobile_platform=DevicePlatform.ANDROID,
+                device_id="robot-device-01",
+                device_width=1080,
+                device_height=2400,
+            )
+        ),
+    )
+    with patch.object(
+        HttpTouchActuator,
+        "configure_device",
+        new=AsyncMock(
+            return_value=ActionResult.failure(
+                action="configure_device",
+                message="Robot calibration failed",
+                detail="Robot arm timeout",
+            )
+        ),
+    ):
+        with pytest.raises(AgentError, match="Failed to configure device 'robot-device-01'"):
+            await agent_fail.init()

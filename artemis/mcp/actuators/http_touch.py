@@ -34,12 +34,15 @@ class HttpTouchActuator(AdbActuator):
     handled directly via ADB through :class:`AdbActuator`.
     """
 
+    _synced_devices_by_url: dict[str, str] = {}
+
     def __init__(
         self,
         ctx: ArtemisContext,
         controller: UnifiedMobileController | None = None,
         base_url: str | None = None,
         timeout_s: float | None = None,
+        device_timeout_s: float | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         super().__init__(ctx, controller=controller)
@@ -48,24 +51,46 @@ class HttpTouchActuator(AdbActuator):
         else:
             default_base_url = getattr(settings, "ARTEMIS_TOUCH_API_URL", "http://127.0.0.1:8001")
         self.base_url = (base_url or default_base_url).rstrip("/")
-        self.timeout_s = timeout_s or float(
-            getattr(settings, "ARTEMIS_TOUCH_API_TIMEOUT_S", 30.0)
+        self.timeout_s = timeout_s or float(getattr(settings, "ARTEMIS_TOUCH_API_TIMEOUT_S", 30.0))
+        self.device_timeout_s = device_timeout_s or max(
+            self.timeout_s,
+            float(getattr(settings, "ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S", 300.0)),
         )
         self._external_client = client
-        self._synced_device_id: str | None = None
+        self._synced_device_id: str | None = (
+            self._synced_devices_by_url.get(self.base_url)
+            if self._external_client is None
+            else None
+        )
+
+    @classmethod
+    def reset_synced_devices(cls) -> None:
+        """Clears cached device synchronization state across URLs."""
+        cls._synced_devices_by_url.clear()
+
+    def _resolve_device_id(self) -> str:
+        if self.ctx and self.ctx.device and self.ctx.device.device_id:
+            return str(self.ctx.device.device_id)
+        return str(getattr(settings, "ADB_DEVICE_SERIAL", None) or "default")
 
     async def _post(
-        self, path: str, payload: dict[str, Any], action: str | None = None
+        self,
+        path: str,
+        payload: dict[str, Any],
+        action: str | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> ActionResult:
         action_name = action or path.lstrip("/").replace("-", "_")
         url = f"{self.base_url}{path}"
+        effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
         try:
             if self._external_client is not None:
                 response = await self._external_client.post(
-                    url, json=payload, timeout=self.timeout_s
+                    url, json=payload, timeout=effective_timeout
                 )
             else:
-                async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                async with httpx.AsyncClient(timeout=effective_timeout) as client:
                     response = await client.post(url, json=payload)
 
             data = response.json()
@@ -91,25 +116,34 @@ class HttpTouchActuator(AdbActuator):
             )
 
     async def _ensure_device_configured(self) -> ActionResult | None:
-        device_id = self.ctx.device.device_id if (self.ctx and self.ctx.device) else None
-        if not device_id or device_id == "default":
-            return None
+        device_id = self._resolve_device_id()
         if self._synced_device_id == device_id:
             return None
 
-        res = await self._post("/device", {"device_id": device_id}, action="configure_device")
+        res = await self.configure_device(device_id)
         if res.ok:
-            self._synced_device_id = device_id
             return None
         return res
 
-    async def configure_device(self, device_id: str) -> ActionResult:
-        """Explicitly configures the target device on the Touch API server."""
-        res = await self._post("/device", {"device_id": device_id}, action="configure_device")
+    async def configure_device(self, device_id: str | None = None) -> ActionResult:
+        """Explicitly configures the target device on the Touch API server (/device).
+
+        Uses ``self.device_timeout_s`` (default 300s) because on the physical
+        robot this initial connection and calibration call takes 3+ minutes.
+        """
+        target_device_id = device_id or self._resolve_device_id()
+        res = await self._post(
+            "/device",
+            {"device_id": target_device_id},
+            action="configure_device",
+            timeout_s=self.device_timeout_s,
+        )
         if res.ok:
-            self._synced_device_id = device_id
+            self._synced_device_id = target_device_id
+            if self._external_client is None:
+                self._synced_devices_by_url[self.base_url] = target_device_id
             if self.ctx and self.ctx.device:
-                self.ctx.device.device_id = device_id
+                self.ctx.device.device_id = target_device_id
         return res
 
     async def click(

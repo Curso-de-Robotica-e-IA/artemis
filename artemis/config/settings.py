@@ -132,6 +132,13 @@ class Settings(BaseSettings):
         default=30.0,
         description="Timeout in seconds for HTTP Touch API requests.",
     )
+    ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S: float = Field(
+        default=300.0,
+        description=(
+            "Timeout in seconds for the initial POST /device handshake on the HTTP Touch API "
+            "(real robot connection and internal setup typically takes 3+ minutes)."
+        ),
+    )
     # UI hierarchy backend: "auto" = Accessibility Helper with UIAutomator2
     # fallback, "helper" = helper only, "uiautomator" = UIAutomator2 only.
     ARTEMIS_HIERARCHY_BACKEND: str = Field(default="auto")

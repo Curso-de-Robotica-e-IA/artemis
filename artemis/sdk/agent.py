@@ -205,6 +205,9 @@ class Agent(AgentBase):
 
         if self._ui_adb_client is not None:
             await asyncio.to_thread(self._ui_adb_client.disconnect)
+        from artemis.mcp.actuators.http_touch import HttpTouchActuator
+
+        HttpTouchActuator.reset_synced_devices()
         self._initialized = False
         logger.info("✅ Artemis agent stopped.")
 
