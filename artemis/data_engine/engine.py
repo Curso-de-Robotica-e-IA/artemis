@@ -407,6 +407,7 @@ class DataEngine:
         self.storage = StorageManager(self.db_path, self.global_base_dir)
 
         self.current_session_id: UUID | None = None
+        self._session_dir_override: Path | None = None
         self.session_start_time: float | None = None
         self.current_step_id: UUID | None = None
         self.last_recorded_step_id: UUID | None = None
@@ -513,6 +514,9 @@ class DataEngine:
 
     @property
     def base_dir(self) -> Path:
+        override = getattr(self, "_session_dir_override", None)
+        if override is not None:
+            return Path(override)
         if self.current_session_id:
             return self.global_base_dir / str(self.current_session_id)
         return self.global_base_dir
@@ -609,7 +613,7 @@ class DataEngine:
             device_info=device_info or {},
             pid=os.getpid(),
         )
-        self.storage.create_session(session)
+        self.storage.create_session(session, session_dir=self.base_dir)
         try:
             from artemis.runtime import DeviceExecutionLock
 
@@ -645,6 +649,10 @@ class DataEngine:
         """End the current session, updating its status and end time."""
         if not self.current_session_id:
             return
+
+        for thread in list(getattr(self, "_pending_threads", [])):
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout=5.0)
 
         # Session-level terminal statuses are canonically "completed" /
         # "failed" / "cancelled"; "success" is a legacy alias some callers
@@ -820,6 +828,13 @@ class DataEngine:
         hasher.update(image_bytes)
         image_name = hasher.hexdigest()
 
+        images_dir = self.base_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        file_path = images_dir / f"{image_name}.jpg"
+        if not file_path.exists():
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+
         image_record = self.storage.get_image(image_name)
         if image_record:
             # If the image exists but is missing OCR or UI tree, and we now have them, update the record.
@@ -828,13 +843,6 @@ class DataEngine:
             ):
                 self.storage.update_image_data(image_name, ocr_result, ui_tree)
             return image_name
-
-        images_dir = self.global_base_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        file_path = images_dir / f"{image_name}.jpg"
-
-        with open(file_path, "wb") as f:
-            f.write(image_bytes)
 
         new_record = ImageRecord(
             image_name=image_name,
@@ -848,7 +856,13 @@ class DataEngine:
 
     def get_image_path(self, image_name: str) -> Path:
         """Get the absolute file path of an image by its name/hash."""
-        return self.global_base_dir / "images" / f"{image_name}.jpg"
+        session_image_path = self.base_dir / "images" / f"{image_name}.jpg"
+        if session_image_path.exists():
+            return session_image_path
+        global_image_path = self.global_base_dir / "images" / f"{image_name}.jpg"
+        if global_image_path.exists():
+            return global_image_path
+        return session_image_path
 
     def record_step(
         self,
@@ -1309,7 +1323,6 @@ class DataEngine:
             if self.base_dir:
                 step_dir = self.base_dir / "steps" / str(step_id)
                 self.current_step_dir = step_dir
-                step_dir.mkdir(parents=True, exist_ok=True)
             else:
                 step_dir = None
 
@@ -1567,7 +1580,6 @@ class DataEngine:
         self.current_step_id = uuid4()
         if self.base_dir:
             self.current_step_dir = self.base_dir / "steps" / str(self.current_step_id)
-            self.current_step_dir.mkdir(parents=True, exist_ok=True)
         return self.current_step_id
 
     def get_agent_friendly_steps(self) -> list[dict[str, Any]]:

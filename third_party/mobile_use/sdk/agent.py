@@ -23,6 +23,7 @@ environment preparation, cancellation watching and UI hierarchy backend reportin
 """
 
 import asyncio
+import json
 import os
 
 try:
@@ -886,6 +887,9 @@ class AgentBase:
 
     async def _finalize_tracing(self, task: Task, context: ArtemisContext):
         if context.data_engine:
+            pending_tasks = list(getattr(context.data_engine, "_pending_tasks", ()))
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
             session_status = "completed"
             if task.status == "failed":
                 session_status = "failed"
@@ -921,6 +925,23 @@ class AgentBase:
         logger.info(f"[{task_name}] Compiling trace FROM FOLDER: " + str(temp_trace_path))
         create_gif_from_trace_folder(temp_trace_path)
         create_steps_json_from_trace_folder(temp_trace_path)
+        steps_json_path = temp_trace_path / "steps.json"
+        if context.data_engine and hasattr(context.data_engine, "get_agent_friendly_steps"):
+            try:
+                existing_steps_raw = (
+                    steps_json_path.read_text(encoding="utf-8").strip()
+                    if steps_json_path.exists()
+                    else "[]"
+                )
+                if existing_steps_raw in ("", "[]"):
+                    engine_steps = context.data_engine.get_agent_friendly_steps()
+                    if isinstance(engine_steps, list) and engine_steps:
+                        steps_json_path.write_text(
+                            json.dumps(engine_steps, default=str, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+            except (OSError, TypeError, ValueError) as exc:
+                logger.debug(f"[{task_name}] Could not export DataEngine steps to steps.json: {exc}")
 
         logger.info(f"[{task_name}] Video created, removing dust...")
         remove_images_from_trace_folder(temp_trace_path)
@@ -928,6 +949,8 @@ class AgentBase:
         logger.info(f"[{task_name}] 📽️ Trace compiled, moving to output path 📽️")
 
         output_folder_path = temp_trace_path.rename(traces_output_path / new_name).resolve()
+        if context.data_engine:
+            context.data_engine._session_dir_override = output_folder_path
         logger.info(f"[{task_name}] 📂✅ Traces located in: {output_folder_path}")
 
         new_video_path = output_folder_path / "recording.mp4"

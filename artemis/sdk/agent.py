@@ -282,6 +282,27 @@ class Agent(AgentBase):
 
     def _prepare_tracing(self, task: Task, context: ArtemisContext):
         """Prepare tracing and data engine setup."""
+        target_sid = (
+            self._session_id
+            or os.getenv("ARTEMIS_SESSION_ID")
+            or os.getenv("ARTEMIS_CLOUD_SESSION_ID")
+            or getattr(getattr(task, "request", None), "task_name", None)
+            or getattr(task, "id", None)
+        )
+        sess_uuid = None
+        if target_sid:
+            try:
+                sess_uuid = uuid.UUID(str(target_sid))
+            except ValueError:
+                sess_uuid = str(target_sid)
+
+        if (
+            getattr(task, "request", None) is not None
+            and not getattr(task.request, "task_name", None)
+            and sess_uuid is not None
+        ):
+            task.request.task_name = str(sess_uuid)
+
         task_name = self._prepare_trace_paths(task)
 
         context.execution_setup = ExecutionSetup(
@@ -312,26 +333,13 @@ class Agent(AgentBase):
         )
 
         context.data_engine = DataEngine(ctx=context)
+        context.data_engine._session_dir_override = (self._tmp_traces_dir / task_name).resolve()
         device_data = context.device.model_dump() if context.device else {}
         if task.request.profile:
             device_data["profile"] = task.request.profile
         run_tuning = run_tuning_summary(self._config, task.request.profile)
         if run_tuning:
             device_data["run_tuning"] = run_tuning
-
-        target_sid = (
-            self._session_id
-            or os.getenv("ARTEMIS_SESSION_ID")
-            or os.getenv("ARTEMIS_CLOUD_SESSION_ID")
-            or getattr(task, "id", None)
-            or getattr(getattr(task, "request", None), "task_name", None)
-        )
-        sess_uuid = None
-        if target_sid:
-            try:
-                sess_uuid = uuid.UUID(str(target_sid))
-            except Exception:
-                sess_uuid = str(target_sid)
 
         context.data_engine.start_session(
             goal=task.request.goal,

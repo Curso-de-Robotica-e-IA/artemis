@@ -272,7 +272,7 @@ class StorageManager:
             conn.commit()
         logger.info(f"Database initialized at {self.db_path}")
 
-    def create_session(self, session: SessionMetadata):
+    def create_session(self, session: SessionMetadata, session_dir: Path | None = None):
         """Insert a new session record."""
         with self._get_connection() as conn:
             conn.execute(
@@ -294,9 +294,9 @@ class StorageManager:
             conn.commit()
 
         # Create session directory
-        session_dir = self.base_trace_dir / str(session.session_id)
-        session_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Session directory created at {session_dir}")
+        target_session_dir = session_dir or (self.base_trace_dir / str(session.session_id))
+        target_session_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Session directory created at {target_session_dir}")
 
     def update_session(self, session: SessionMetadata):
         """Update an existing session record."""

@@ -142,3 +142,66 @@ async def test_agent_inherits_session_id_from_env_and_propagates_to_tracing(monk
         mock_data_engine.start_session.assert_called_once()
         call_kwargs = mock_data_engine.start_session.call_args.kwargs
         assert call_kwargs["session_id"] == uuid.UUID(canonical_sid)
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_finalize_tracing_groups_all_run_files_in_single_folder(tmp_path):
+    from datetime import datetime
+    from artemis.context import ArtemisContext
+    from artemis.data_engine.history_reader import OfflineHistoryReader
+
+    agent = Agent()
+    agent._tmp_traces_dir = tmp_path
+
+    task = MagicMock()
+    task.id = "11111111-2222-3333-4444-555555555555"
+    task.status = "completed"
+    task.created_at = datetime(2026, 11, 11, 9, 30, 0)
+    task.request.goal = "open settings"
+    task.request.profile = "flash"
+    task.request.task_name = None
+    task.request.record_trace = True
+    task.request.enable_remote_tracing = False
+    task.request.trace_path = str(tmp_path)
+    task.get_name.side_effect = lambda: task.request.task_name or task.id
+
+    context = MagicMock(spec=ArtemisContext)
+    context.device = None
+    context.run_outcome = None
+
+    agent._prepare_tracing(task=task, context=context)
+
+    # Pre-allocate step ID and record a step with a screenshot during the run
+    context.data_engine.allocate_step_id()
+    img_bytes = b"run_screenshot_jpeg_bytes"
+    context.data_engine.record_step(
+        pre_screenshot_bytes=img_bytes,
+        summary="Opened settings",
+        action_taken={"action": "click", "target": [500, 500]},
+    )
+
+    # Finalize tracing (which flushes threads, exports steps.json, and renames the folder)
+    await agent._finalize_tracing(task=task, context=context)
+
+    # No loose images directory at root of traces
+    assert not (tmp_path / "images").exists()
+
+    # Exactly one finalized run directory should exist (besides data_engine.db)
+    run_dirs = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    final_dir = run_dirs[0]
+    assert final_dir.name == f"{task.id}_PASS_2026-11-11T09-30-00"
+    assert not (final_dir / "steps").exists()
+
+    # Screenshots and compiled steps.json live inside the finalized run directory
+    saved_images = list((final_dir / "images").glob("*.jpg"))
+    assert len(saved_images) == 1
+    assert (final_dir / "steps.json").exists()
+    assert "Opened settings" in (final_dir / "steps.json").read_text(encoding="utf-8")
+
+    # OfflineHistoryReader resolves the finalized directory and its images
+    reader = OfflineHistoryReader(
+        tmp_path / "data_engine.db", tmp_path, context.data_engine.current_session_id
+    )
+    assert reader.base_dir == final_dir
+    assert reader.get_step_image_path(1, "pre") == saved_images[0]

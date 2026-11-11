@@ -207,30 +207,22 @@ def get_pause_file() -> Path:
 
 def get_replay_dir() -> Path:
     """Returns the central step replay directory."""
-    replay_dir = get_default_traces_path() / REPLAY_DIRNAME
-    replay_dir.mkdir(parents=True, exist_ok=True)
-    return replay_dir
+    return get_default_traces_path() / REPLAY_DIRNAME
 
 
 def get_test_data_dir() -> Path:
     """Returns the test replay data directory."""
-    d = get_replay_dir() / TEST_DATA_DIRNAME
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return get_replay_dir() / TEST_DATA_DIRNAME
 
 
 def get_test_outputs_dir() -> Path:
     """Returns the test replay outputs directory."""
-    d = get_replay_dir() / TEST_OUTPUTS_DIRNAME
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return get_replay_dir() / TEST_OUTPUTS_DIRNAME
 
 
 def get_images_dir() -> Path:
     """Returns the traces images directory."""
-    d = get_default_traces_path() / IMAGES_DIRNAME
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return get_default_traces_path() / IMAGES_DIRNAME
 
 
 # Module-level convenience constants & backward-compatible aliases

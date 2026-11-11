@@ -84,7 +84,12 @@ class ImageProcessor:
         except Exception:
             llm = get_llm(self.ctx, name="operator")
 
-        base_dir = settings.TRACES_PATH
+        raw_base_dir = (
+            getattr(self.ctx.data_engine, "base_dir", None)
+            if getattr(self.ctx, "data_engine", None)
+            else None
+        )
+        base_dir = Path(raw_base_dir) if isinstance(raw_base_dir, (str, Path)) else Path(settings.TRACES_PATH)
         image_processor_dir = base_dir / "images" / "image_processor"
         image_processor_dir.mkdir(parents=True, exist_ok=True)
         intermediate_artifact_save_path = image_processor_dir / f"intermediates_{int(time.time())}"

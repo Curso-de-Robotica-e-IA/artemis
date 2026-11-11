@@ -916,7 +916,18 @@ class ScreenshotSimilarityPromptComponent(PromptComponent):
         history_steps = [s for s in steps if s.get("post_image_name") or s.get("pre_image_name")]
         recent_steps = history_steps[-self.NUM_STEPS_BACK :]
         matched_step_nums = []
-        images_dir = Path(ctx.data_engine.global_base_dir) / "images"
+        raw_base_dir = getattr(ctx.data_engine, "base_dir", None)
+        if not isinstance(raw_base_dir, (str, Path)):
+            raw_base_dir = getattr(ctx.data_engine, "global_base_dir", None)
+        if not isinstance(raw_base_dir, (str, Path)):
+            return
+        images_dir = Path(raw_base_dir) / "images"
+        global_base_dir = getattr(ctx.data_engine, "global_base_dir", None)
+        fallback_images_dir = (
+            Path(global_base_dir) / "images"
+            if isinstance(global_base_dir, (str, Path))
+            else None
+        )
         # 3. Compare current image with each past step's post-action screenshot
         for step_rec in recent_steps:
             step_num = step_rec.get("step_number")
@@ -928,6 +939,8 @@ class ScreenshotSimilarityPromptComponent(PromptComponent):
             if not image_name:
                 continue
             image_path = images_dir / f"{image_name}.jpg"
+            if not image_path.exists() and fallback_images_dir is not None:
+                image_path = fallback_images_dir / f"{image_name}.jpg"
             if not image_path.exists():
                 continue
             try:

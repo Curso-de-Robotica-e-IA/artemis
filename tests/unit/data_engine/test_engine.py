@@ -629,3 +629,32 @@ def test_pro_pixel_record_is_normalized_exactly_once(tmp_path):
 
     again = normalize_any_structure(row["action_taken"], 1080, 2400)
     assert again == row["action_taken"]
+
+
+def test_session_images_are_grouped_inside_session_directory(tmp_path):
+    """Screenshots must be stored inside the session folder (<traces>/<session_id>/images/)
+    rather than scattered in the root <traces>/images/ folder, and repeated hashes across
+    sessions must still materialize the image file in each session's folder."""
+    mock_ctx = MagicMock(spec=ArtemisContext)
+    mock_execution_setup = MagicMock()
+    mock_execution_setup.traces_path = str(tmp_path)
+    mock_ctx.execution_setup = mock_execution_setup
+    mock_ctx.device = None
+
+    image_bytes = b"shared_screenshot_bytes_across_runs"
+
+    engine1 = DataEngine(mock_ctx)
+    sid1 = engine1.start_session("First run")
+    img_hash1 = engine1.get_or_create_image(image_bytes)
+    session1_img = tmp_path / str(sid1) / "images" / f"{img_hash1}.jpg"
+    assert session1_img.exists()
+    assert engine1.get_image_path(img_hash1) == session1_img
+    assert not (tmp_path / "images" / f"{img_hash1}.jpg").exists()
+
+    engine2 = DataEngine(mock_ctx)
+    sid2 = engine2.start_session("Second run")
+    img_hash2 = engine2.get_or_create_image(image_bytes)
+    session2_img = tmp_path / str(sid2) / "images" / f"{img_hash2}.jpg"
+    assert img_hash1 == img_hash2
+    assert session2_img.exists()
+    assert engine2.get_image_path(img_hash2) == session2_img
