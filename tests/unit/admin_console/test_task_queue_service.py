@@ -1111,3 +1111,29 @@ async def test_enqueue_tasks_debounces_rapid_identical_submissions():
         )
         assert len(state.queue_items) == 1
         assert res2["enqueued_count"] == 0
+
+
+def test_consolidate_trace_artifacts(tmp_path, monkeypatch):
+    from artemis.runtime import trace_store
+
+    monkeypatch.setattr(trace_store, "TRACES_DIR", str(tmp_path))
+    sess_id = "test-session-1234-5678"
+    run_key = sess_id
+
+    # Create redundant source folder with stdout.log
+    source_dir = tmp_path / sess_id
+    source_dir.mkdir()
+    (source_dir / "stdout.log").write_text("worker output line\n", encoding="utf-8")
+
+    # Create finalized worker output folder
+    target_dir = tmp_path / f"web_999_{sess_id[:8]}_PASS_2026-11-12"
+    target_dir.mkdir()
+    (target_dir / "steps.json").write_text("[]", encoding="utf-8")
+
+    TaskQueueService._consolidate_trace_artifacts(sess_id, run_key)
+
+    # Redundant source dir removed and stdout.log consolidated into target_dir
+    assert not source_dir.exists()
+    assert (target_dir / "stdout.log").exists()
+    assert (target_dir / "stdout.log").read_text(encoding="utf-8") == "worker output line\n"
+    assert (target_dir / "steps.json").exists()

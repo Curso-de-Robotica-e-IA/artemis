@@ -156,6 +156,7 @@ async def on_startup():
     # Workers killed together with a previous daemon never remuxed their
     # recordings; publish whatever raw files they left behind.
     asyncio.create_task(asyncio.to_thread(task_queue_service.recover_orphaned_recordings_on_launch))
+    asyncio.create_task(asyncio.to_thread(task_queue_service.cleanup_empty_traces_on_launch))
 
     await ipc_service.start_server()
     state.worker_task = asyncio.create_task(task_queue_service.queue_worker())

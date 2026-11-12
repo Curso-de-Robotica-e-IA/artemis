@@ -228,3 +228,46 @@ def test_trace_paths(temp_trace_env):
     assert trace_store.get_trace_notes_dir(trace_id) == os.path.join(trace_dir, "notes")
     assert trace_store.get_trace_stdout_log_path(trace_id) == os.path.join(trace_dir, "stdout.log")
     assert trace_store.get_trace_stderr_log_path(trace_id) == os.path.join(trace_dir, "stderr.log")
+
+
+def test_get_trace_dir_dynamic_matching(temp_trace_env):
+    trace_id = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"
+    # When direct folder exists, returns it
+    direct = os.path.join(temp_trace_env, trace_id)
+    os.makedirs(direct)
+    assert trace_store.get_trace_dir(trace_id) == direct
+    os.rmdir(direct)
+
+    # When suffixed folder exists, returns it
+    suffixed = os.path.join(temp_trace_env, f"web_123_{trace_id[:8]}_PASS_2026-11-12")
+    os.makedirs(suffixed)
+    assert trace_store.get_trace_dir(trace_id) == suffixed
+
+
+def test_cleanup_empty_trace_dirs(temp_trace_env):
+    # Empty dir
+    empty_dir = os.path.join(temp_trace_env, "empty-trace")
+    os.makedirs(empty_dir)
+
+    # Dir with empty 0-byte log
+    zero_log_dir = os.path.join(temp_trace_env, "zero-log-trace")
+    os.makedirs(zero_log_dir)
+    open(os.path.join(zero_log_dir, "stdout.log"), "w").close()
+
+    # Dir with real content (must be preserved)
+    real_dir = os.path.join(temp_trace_env, "real-trace")
+    os.makedirs(real_dir)
+    with open(os.path.join(real_dir, "steps.json"), "w") as f:
+        f.write("[]")
+
+    # Protected dir (must be preserved)
+    replay_dir = os.path.join(temp_trace_env, "replay")
+    os.makedirs(replay_dir)
+
+    removed = trace_store.cleanup_empty_trace_dirs()
+    assert "empty-trace" in removed
+    assert "zero-log-trace" in removed
+    assert not os.path.exists(empty_dir)
+    assert not os.path.exists(zero_log_dir)
+    assert os.path.exists(real_dir)
+    assert os.path.exists(replay_dir)

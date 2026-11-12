@@ -114,13 +114,14 @@ async def test_locked_work_profile_does_not_block_unlocked_device_owner():
 
 
 @pytest.mark.asyncio
-async def test_agent_inherits_session_id_from_env_and_propagates_to_tracing(monkeypatch):
+async def test_agent_inherits_session_id_from_env_and_propagates_to_tracing(monkeypatch, tmp_path):
     import uuid
 
     canonical_sid = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"
     monkeypatch.setenv("ARTEMIS_SESSION_ID", canonical_sid)
 
     agent = Agent()
+    agent._tmp_traces_dir = tmp_path
     assert agent._session_id == canonical_sid
 
     task = MagicMock()
@@ -129,7 +130,7 @@ async def test_agent_inherits_session_id_from_env_and_propagates_to_tracing(monk
     task.request.goal = "test goal"
     task.request.profile = "flash"
     task.request.task_name = "task-name"
-    task.request.trace_path = "traces"
+    task.request.trace_path = str(tmp_path)
 
     context = MagicMock()
     context.device = None

@@ -82,16 +82,22 @@ class OfflineHistoryReader:
 
     def _resolve_base_dir(self, session: Any) -> Path:
         default_dir = self.global_base_dir / self.session_id
-        if default_dir.exists():
+        if default_dir.exists() and any(
+            (default_dir / sub).exists() for sub in ("images", "steps.json", "notes")
+        ):
             return default_dir
         if session is not None and getattr(session, "video_filepath", None):
             video_parent = Path(session.video_filepath).parent
             if video_parent.exists():
                 return video_parent
         if self.global_base_dir.exists():
-            prefix = f"{self.session_id}_"
+            s_prefix = self.session_id[:8] if len(self.session_id) >= 8 else self.session_id
             for candidate in self.global_base_dir.iterdir():
-                if candidate.is_dir() and candidate.name.startswith(prefix):
+                if (
+                    candidate.is_dir()
+                    and candidate != default_dir
+                    and (self.session_id in candidate.name or s_prefix in candidate.name)
+                ):
                     return candidate
         return default_dir
 

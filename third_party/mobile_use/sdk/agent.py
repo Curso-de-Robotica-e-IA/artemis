@@ -930,10 +930,9 @@ class AgentBase:
     def _prepare_trace_paths(self, task: Task) -> str:
         """Create the temp (and, when recording, output) trace directories; return the task name."""
         task_name = task.get_name()
-        temp_trace_path = Path(self._tmp_traces_dir / task_name).resolve()
-        temp_trace_path.mkdir(parents=True, exist_ok=True)
-
         if task.request.record_trace:
+            temp_trace_path = Path(self._tmp_traces_dir / task_name).resolve()
+            temp_trace_path.mkdir(parents=True, exist_ok=True)
             traces_output_path = Path(task.request.trace_path).resolve()
             logger.info(f"[{task_name}] 📂 Traces output path: {traces_output_path}")
             logger.info(f"[{task_name}] 📄📂 Traces temp path: {temp_trace_path}")
@@ -967,9 +966,24 @@ class AgentBase:
                 if temp_trace_path.exists():
                     shutil.rmtree(temp_trace_path)
                     logger.info(f"[{task_name}] Cleaned up temporary trace folder.")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"[{task_name}] Failed to clean up temp trace folder: {e}")
             return
+
+        # If the temporary trace folder is completely empty (no artifacts recorded),
+        # remove it rather than renaming an empty directory.
+        if temp_trace_path.exists():
+            try:
+                has_content = any(temp_trace_path.iterdir())
+            except OSError:
+                has_content = False
+            if not has_content:
+                try:
+                    temp_trace_path.rmdir()
+                    logger.info(f"[{task_name}] Cleaned up empty temporary trace folder.")
+                except OSError as e:
+                    logger.debug(f"[{task_name}] Failed to remove empty temp trace folder: {e}")
+                return
 
         status = resolve_trace_suffix(task.status, getattr(context, "run_outcome", None))
         ts = task.created_at.strftime("%Y-%m-%dT%H-%M-%S")

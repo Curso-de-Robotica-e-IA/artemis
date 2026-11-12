@@ -675,16 +675,37 @@ class MediaService:
 
         return p, media_type
 
-    @staticmethod
-    def get_task_plan_content(session_id: str) -> str:
-        plan_path = TRACES_PATH / session_id / "notes" / "task_plan.md"
+    @classmethod
+    def resolve_session_dir(cls, session_id: str) -> Path:
+        """Find the trace directory for a session_id, matching direct, suffixed, or web-prefixed folders."""
+        s_id = str(session_id).strip()
+        direct = TRACES_PATH / s_id
+        if direct.is_dir() and any(
+            (direct / sub).exists() for sub in ("notes", "check_ledger.jsonl", "images", "steps.json")
+        ):
+            return direct
+
+        s_prefix = s_id[:8] if len(s_id) >= 8 else s_id
+        if TRACES_PATH.is_dir():
+            try:
+                for folder in TRACES_PATH.iterdir():
+                    if folder.is_dir() and (s_id in folder.name or s_prefix in folder.name):
+                        return folder
+            except OSError:
+                pass
+        return direct
+
+    @classmethod
+    def get_task_plan_content(cls, session_id: str) -> str:
+        session_dir = cls.resolve_session_dir(session_id)
+        plan_path = session_dir / "notes" / "task_plan.md"
         if not plan_path.exists():
             plan_path = TRACES_PATH / "notes" / "task_plan.md"
 
         if plan_path.exists():
             try:
                 return plan_path.read_text(encoding="utf-8")
-            except Exception as e:
+            except OSError as e:
                 return f"Error reading task plan: {e}"
         return "No task plan created yet."
 
@@ -708,8 +729,8 @@ class MediaService:
             logger.warning(f"Failed to read {label} for {session_id}: {e}")
         return records
 
-    @staticmethod
-    def get_session_checks(session_id: str) -> dict[str, Any]:
+    @classmethod
+    def get_session_checks(cls, session_id: str) -> dict[str, Any]:
         """Checker material of one session for UI backfill: the append-only
         verdict ledger (``check_ledger.jsonl``), the per-attempt transcripts of
         the Checker's streamed reasoning (``check_streams.jsonl``: one record
@@ -718,7 +739,7 @@ class MediaService:
         ``artemis.graph.checkpoints``. Missing files mean "no checks ran"
         (sessions recorded before transcripts existed simply have no streams).
         """
-        session_dir = TRACES_PATH / session_id
+        session_dir = cls.resolve_session_dir(session_id)
         records = MediaService._read_jsonl_records(
             session_dir / "check_ledger.jsonl", "check ledger", session_id
         )
@@ -738,9 +759,10 @@ class MediaService:
 
         return {"records": records, "streams": streams, "run_outcome": run_outcome}
 
-    @staticmethod
-    def get_session_notes_content(session_id: str) -> dict[str, str]:
-        notes_dir = TRACES_PATH / session_id / "notes"
+    @classmethod
+    def get_session_notes_content(cls, session_id: str) -> dict[str, str]:
+        session_dir = cls.resolve_session_dir(session_id)
+        notes_dir = session_dir / "notes"
         notes_content = {}
 
         if notes_dir.exists() and notes_dir.is_dir():
@@ -748,7 +770,7 @@ class MediaService:
                 if file.is_file() and file.suffix in [".md", ".txt", ".json", ".yaml"]:
                     try:
                         notes_content[file.name] = file.read_text(encoding="utf-8")
-                    except Exception as e:
+                    except OSError as e:
                         notes_content[file.name] = f"Error reading file: {e}"
 
         if not notes_content:

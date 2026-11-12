@@ -194,8 +194,67 @@ def _status_lock(path: str):
 
 
 def get_trace_dir(trace_id: str) -> str:
-    """Returns the absolute path to the directory for a given trace_id."""
-    return os.path.join(TRACES_DIR, trace_id)
+    """Returns the absolute path to the directory for a given trace_id.
+
+    Resolves directly to TRACES_DIR/trace_id if it exists, or dynamically
+    finds the consolidated/finalized directory (e.g. trace_id_PASS_..., web_*_prefix_...)
+    to prevent directory duplication.
+    """
+    direct = os.path.join(TRACES_DIR, trace_id)
+    if os.path.isdir(direct):
+        return direct
+
+    s_prefix = trace_id[:8] if len(trace_id) >= 8 else trace_id
+    try:
+        if os.path.isdir(TRACES_DIR):
+            for entry in os.listdir(TRACES_DIR):
+                if (trace_id in entry or s_prefix in entry) and os.path.isdir(
+                    os.path.join(TRACES_DIR, entry)
+                ):
+                    return os.path.join(TRACES_DIR, entry)
+    except OSError:
+        pass
+    return direct
+
+
+def cleanup_empty_trace_dirs() -> list[str]:
+    """Scans TRACES_DIR for orphaned empty directories and removes them.
+
+    Directories containing 0 items, or directories containing only a 0-byte
+    log file, are safely removed.
+    Returns the list of cleaned-up directory names.
+    """
+    removed: list[str] = []
+    if not os.path.isdir(TRACES_DIR):
+        return removed
+
+    try:
+        entries = os.listdir(TRACES_DIR)
+    except OSError:
+        return removed
+
+    for name in entries:
+        dir_path = os.path.join(TRACES_DIR, name)
+        if not os.path.isdir(dir_path):
+            continue
+        # Preserve specialized data directories
+        if name in ("replay", "data", "temp_traces"):
+            continue
+        try:
+            items = os.listdir(dir_path)
+            if not items:
+                os.rmdir(dir_path)
+                removed.append(name)
+            elif items == ["stdout.log"] or items == ["stderr.log"]:
+                log_file = os.path.join(dir_path, items[0])
+                if os.path.isfile(log_file) and os.path.getsize(log_file) == 0:
+                    os.unlink(log_file)
+                    os.rmdir(dir_path)
+                    removed.append(name)
+        except OSError:
+            continue
+
+    return removed
 
 
 def get_status_path(trace_id: str) -> str:

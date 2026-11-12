@@ -898,8 +898,64 @@ class TaskQueueService:
                     )
         finally:
             await cls._finish_output_forwarder(output_task)
+            if sess_id:
+                cls._consolidate_trace_artifacts(str(sess_id), run_key)
             # 5. Clean up the finished task and release this run's scheduling slot
             cls._release_run_slot(sess_id, run_key, proc)
+
+    @classmethod
+    def _consolidate_trace_artifacts(cls, sess_id: str, run_key: str) -> None:
+        """Consolidate stdout.log and trace files into a single directory, removing redundancies."""
+        try:
+            traces_root = Path(trace_store.TRACES_DIR)
+            if not traces_root.is_dir():
+                return
+
+            sess_dir = traces_root / sess_id
+            s_prefix = sess_id[:8] if len(sess_id) >= 8 else sess_id
+            run_prefix = run_key[:8] if len(run_key) >= 8 else run_key
+
+            # Look for finalized worker directory matching run_prefix or sess_id
+            target_dir: Path | None = None
+            for item in traces_root.iterdir():
+                if not item.is_dir() or item == sess_dir:
+                    continue
+                if (
+                    run_prefix in item.name
+                    or sess_id in item.name
+                    or s_prefix in item.name
+                ):
+                    target_dir = item
+                    break
+
+            if target_dir is not None and sess_dir.is_dir():
+                for log_name in ("stdout.log", "stderr.log", "status.json"):
+                    src = sess_dir / log_name
+                    dst = target_dir / log_name
+                    if src.is_file() and not dst.is_file():
+                        try:
+                            shutil.move(str(src), str(dst))
+                        except OSError:
+                            pass
+                try:
+                    remaining = list(sess_dir.iterdir())
+                    if not remaining:
+                        sess_dir.rmdir()
+                except OSError:
+                    pass
+            elif sess_dir.is_dir():
+                try:
+                    items = list(sess_dir.iterdir())
+                    if not items:
+                        sess_dir.rmdir()
+                    elif len(items) == 1 and items[0].name in ("stdout.log", "stderr.log"):
+                        if items[0].stat().st_size == 0:
+                            items[0].unlink()
+                            sess_dir.rmdir()
+                except OSError:
+                    pass
+        except OSError as exc:
+            logger.debug(f"[QueueWorker] Trace consolidation skipped for {sess_id}: {exc}")
 
     @classmethod
     def _find_duplicate_submission(
@@ -1714,6 +1770,19 @@ class TaskQueueService:
                 f"Warning: Failed to verify chunks during server launch: {e}",
                 file=sys.stderr,
             )
+
+
+    @staticmethod
+    def cleanup_empty_traces_on_launch() -> int:
+        """Removes orphaned empty trace folders on server launch."""
+        try:
+            removed = trace_store.cleanup_empty_trace_dirs()
+            if removed:
+                print(f"[QueueWorker] Cleaned up {len(removed)} empty trace directories on launch.")
+            return len(removed)
+        except OSError as e:
+            logger.debug(f"[QueueWorker] Trace cleanup on launch skipped: {e}")
+            return 0
 
 
 task_queue_service = TaskQueueService()
