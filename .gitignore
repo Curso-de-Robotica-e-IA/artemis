@@ -20,6 +20,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# Frontend & Node
+node_modules/
+.angular/
+apps/showcase_ui/dist/
+
 # Virtual environments
 .venv/
 venv/
@@ -88,6 +93,7 @@ scratch/
 data_engine.db
 data_engine.db-journal
 .ipc_port
+.artemis_ipc_port
 
 # Cython / Compiled outputs
 build/
