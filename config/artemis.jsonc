@@ -7,11 +7,11 @@
   // ------------------------------------------------------------------------------
   "default": {
     "provider": "openai",
-    "model": "ornith-1.5:35b",
+    "model": "qwen3.8:27b",
     "thinking_level": "medium",
     "fallback": {
       "provider": "openai",
-      "model": "ornith-1.5:35b",
+      "model": "qwen3.8:27b",
       "thinking_level": "medium"
     }
   },
@@ -121,7 +121,7 @@
       "explorer_mode": "flash",
       "step_summarizer": {
         "enabled": true,
-        "model": "ornith-1.5:35b",
+        "model": "qwen3.8:27b",
         "prune_history_xml": true
       }
     },
@@ -205,7 +205,7 @@
         // call each); milestone closes are exempt, the hard line waives it.
         "min_steps": 3,
         "target_source_tokens": 2000,
-        "model": "ornith-1.5:35b",
+        "model": "qwen3.8:27b",
         "max_chunks": 8
         // "max_eras": 8 // independent era cap; omitted = follows max_chunks
       },

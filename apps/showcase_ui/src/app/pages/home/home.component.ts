@@ -18,7 +18,7 @@ import { Component, signal, computed, effect, inject, OnInit, OnDestroy, ChangeD
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AgentService } from '../../services/agent.service';
-import { SystemService } from '../../services/system.service';
+import { CustomEndpointModel, SystemService } from '../../services/system.service';
 import {
   AdbServerConnectionResult,
   AdbServerDevice,
@@ -128,6 +128,39 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   // Model & Environment configuration from backend
   public modelConfigEnv = computed(() => this.systemService.modelConfigEnv());
+
+  // Custom / Ollama model discovery & selection state
+  public customBaseUrlInput = signal<string>('');
+  public isCustomBaseUrlEdited = signal<boolean>(false);
+  public selectedCustomProvider = signal<string>('openai');
+  public selectedCustomModel = signal<string>('');
+  public isCustomSelectionEdited = signal<boolean>(false);
+  public customModels = computed(() => this.systemService.customModels());
+  public customModelsEndpointUsed = signal<string | null>(null);
+  public isLoadingCustomModels = signal<boolean>(false);
+  public customModelsError = signal<string | null>(null);
+  public isSavingCustomModel = signal<boolean>(false);
+  public customModelSaveMessage = signal<string | null>(null);
+  public customModelSaveError = signal<string | null>(null);
+  private hasAutoFetchedCustomModels = false;
+  public savedCustomBaseUrl = computed<string>(() => {
+    const vars = this.modelConfigEnv()?.env_vars || [];
+    const entry = vars.find(v => v.name === 'OPENAI_BASE_URL');
+    return entry?.is_set && entry.preview ? entry.preview : '';
+  });
+  public isCustomModelDirty = computed<boolean>(() => {
+    const activeProvider = this.modelConfigEnv()?.default_model?.provider || '';
+    const activeModel = this.modelConfigEnv()?.default_model?.model || '';
+    const chosenModel = this.selectedCustomModel().trim();
+    const chosenProvider = this.selectedCustomProvider().trim();
+    const baseUrl = this.customBaseUrlInput().trim();
+    if (!chosenModel) return false;
+    return (
+      chosenModel !== activeModel ||
+      chosenProvider !== activeProvider ||
+      (!!baseUrl && baseUrl !== this.savedCustomBaseUrl())
+    );
+  });
 
   // Google Gemini API Key State
   public geminiKeyInput = signal<string>('');
@@ -533,6 +566,26 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.ocrKeyInput.set(ocrKey);
       }
     });
+
+    effect(() => {
+      const cfg = this.modelConfigEnv();
+      const baseUrlFromEnv = this.savedCustomBaseUrl();
+      if (!this.isCustomBaseUrlEdited() && baseUrlFromEnv) {
+        this.customBaseUrlInput.set(baseUrlFromEnv);
+      }
+      if (!this.isCustomSelectionEdited() && cfg?.default_model) {
+        if (cfg.default_model.model) {
+          this.selectedCustomModel.set(cfg.default_model.model);
+        }
+        if (cfg.default_model.provider) {
+          this.selectedCustomProvider.set(cfg.default_model.provider);
+        }
+      }
+      if (this.modelSetupMode() === 'custom' && baseUrlFromEnv && !this.hasAutoFetchedCustomModels) {
+        this.hasAutoFetchedCustomModels = true;
+        this.fetchCustomModels(true);
+      }
+    });
   }
 
   ngOnInit(): void {
@@ -585,10 +638,133 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.modelSetupMode.set(mode);
     if (mode === 'custom') {
       this.systemService.setSkipCredentialsCheck(true);
-      this.systemService.fetchModelConfigEnv().subscribe();
+      this.systemService.fetchModelConfigEnv().subscribe({
+        next: () => {
+          const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
+          if (url && !this.isLoadingCustomModels() && this.customModels().length === 0) {
+            this.hasAutoFetchedCustomModels = true;
+            this.fetchCustomModels(true);
+          }
+        }
+      });
     } else {
       this.systemService.setSkipCredentialsCheck(false);
     }
+  }
+
+  public onCustomBaseUrlChange(val: string): void {
+    this.customBaseUrlInput.set(val);
+    this.isCustomBaseUrlEdited.set(true);
+    this.customModelsError.set(null);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+  }
+
+  public onCustomProviderChange(val: string): void {
+    this.selectedCustomProvider.set(val);
+    this.isCustomSelectionEdited.set(true);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+  }
+
+  public onCustomModelSelectChange(val: string): void {
+    this.selectedCustomModel.set(val);
+    this.isCustomSelectionEdited.set(true);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+  }
+
+  public fetchCustomModels(silentIfEmptyUrl: boolean = false): void {
+    const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
+    if (!url) {
+      if (!silentIfEmptyUrl) {
+        this.customModelsError.set(
+          'Enter your Ollama / OpenAI-compatible URL (e.g. http://192.168.155.5:11434/v1).'
+        );
+      }
+      return;
+    }
+
+    this.isLoadingCustomModels.set(true);
+    this.customModelsError.set(null);
+    this.systemService.fetchCustomModels(url).subscribe({
+      next: (res) => {
+        this.isLoadingCustomModels.set(false);
+        this.customModelsEndpointUsed.set(res.endpoint_used || null);
+        const models = res.models || [];
+        if (models.length === 0) {
+          this.customModelsError.set(
+            `No models found at ${res.endpoint_used || url}. Pull a model in Ollama first.`
+          );
+          return;
+        }
+        // Switch provider away from 'google' automatically when pulling from Ollama/OpenAI endpoint
+        const currentProv = this.selectedCustomProvider().trim().toLowerCase();
+        if (!currentProv || currentProv === 'google') {
+          this.selectedCustomProvider.set('openai');
+        }
+        const currentModel = this.selectedCustomModel().trim();
+        const hasMatch = models.some(m => m.id === currentModel);
+        if (!hasMatch) {
+          this.selectedCustomModel.set(models[0].id);
+        }
+      },
+      error: (err) => {
+        this.isLoadingCustomModels.set(false);
+        this.customModelsEndpointUsed.set(null);
+        this.customModelsError.set(
+          err?.error?.detail || err?.message || 'Failed to fetch models from endpoint.'
+        );
+      }
+    });
+  }
+
+  public saveSelectedCustomModel(): void {
+    const model = this.selectedCustomModel().trim();
+    const provider = (this.selectedCustomProvider() || 'openai').trim();
+    const baseUrl = this.customBaseUrlInput().trim();
+    if (!model) {
+      this.customModelSaveError.set('Select a model before applying.');
+      return;
+    }
+
+    this.isSavingCustomModel.set(true);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+
+    const shouldPersistBaseUrl = !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
+    this.systemService.updateDefaultModel({
+      provider,
+      model,
+      update_fallback: true,
+      base_url: shouldPersistBaseUrl ? baseUrl : undefined,
+      persist_base_url: shouldPersistBaseUrl
+    }).subscribe({
+      next: (res) => {
+        this.isSavingCustomModel.set(false);
+        this.isCustomBaseUrlEdited.set(false);
+        this.isCustomSelectionEdited.set(false);
+        this.customModelSaveMessage.set(res?.message || `✓ Default model set to ${provider}/${model}.`);
+        setTimeout(() => this.customModelSaveMessage.set(null), 5000);
+      },
+      error: (err) => {
+        this.isSavingCustomModel.set(false);
+        this.customModelSaveError.set(
+          err?.error?.detail || err?.message || 'Failed to update default model.'
+        );
+      }
+    });
+  }
+
+  public formatCustomModelOption(model: CustomEndpointModel): string {
+    const meta: string[] = [];
+    if (model.parameter_size) meta.push(model.parameter_size);
+    if (model.quantization_level) meta.push(model.quantization_level);
+    if (typeof model.size_bytes === 'number' && model.size_bytes > 0) {
+      const gb = model.size_bytes / (1024 ** 3);
+      meta.push(`${gb.toFixed(1)} GB`);
+    }
+    return meta.length > 0 ? `${model.id} (${meta.join(' · ')})` : model.id;
   }
 
   public toggleFullConfigFile(): void {

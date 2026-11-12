@@ -493,6 +493,86 @@ async def get_model_config_and_env():
     }
 
 
+class UpdateDefaultModelRequest(BaseModel):
+    """Payload to update the global default model in artemis.jsonc."""
+
+    provider: str = Field(default="openai", description="LLM provider identifier")
+    model: str = Field(description="Selected model ID from Ollama / OpenAI-compatible server")
+    update_fallback: bool = Field(
+        default=True,
+        description="Whether to keep default.fallback synced to the selected provider/model",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="Optional custom OpenAI/Ollama base URL to save alongside the model",
+    )
+    persist_base_url: bool = Field(
+        default=True,
+        description="Whether to persist base_url to OPENAI_BASE_URL in .env when provided",
+    )
+
+
+@router.get("/custom-models")
+async def list_custom_endpoint_models(request: Request, base_url: str | None = None):
+    """Fetch available models from the configured Ollama / OpenAI-compatible endpoint."""
+    try:
+        from apps.admin_console.services.custom_model_service import list_custom_models
+    except ImportError:
+        from admin_console.services.custom_model_service import list_custom_models
+
+    _require_local_admin_request(request)
+
+    try:
+        return await list_custom_models(base_url=base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/model-config/default")
+async def update_default_model_endpoint(request: Request, payload: UpdateDefaultModelRequest):
+    """Update the default provider/model in artemis.jsonc and optionally OPENAI_BASE_URL."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_default_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_default_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_default_model_config(
+            provider=payload.provider,
+            model=payload.model,
+            update_fallback=payload.update_fallback,
+            base_url=payload.base_url,
+            persist_base_url=payload.persist_base_url,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    updated_default = result["default_model"]
+    return {
+        "status": "success",
+        "message": (
+            f"Default model updated to {updated_default.get('provider')}/"
+            f"{updated_default.get('model')}."
+        ),
+        "default_model": updated_default,
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
 @router.get("/server-status")
 async def get_server_runtime_status():
     """Retrieve runtime status, PID, port, and uptime of the Artemis server.

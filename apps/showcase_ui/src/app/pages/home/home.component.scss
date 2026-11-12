@@ -1565,6 +1565,195 @@ $text-light: #94a3b8;
             }
           }
 
+          .custom-model-picker {
+            border-top: 1px solid $card-border;
+            background: #f8fafc;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+
+            .picker-row {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 10px;
+
+              &.model-select-row {
+                align-items: flex-end;
+              }
+            }
+
+            .picker-field {
+              display: flex;
+              flex-direction: column;
+              gap: 4px;
+              flex: 1 1 220px;
+
+              &.provider-field {
+                flex: 0 1 210px;
+              }
+
+              &.model-field {
+                flex: 2 1 280px;
+              }
+
+              .picker-label {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                color: $text-secondary;
+
+                code {
+                  font-family: $font-mono;
+                  font-size: 10.5px;
+                  color: $primary-dark;
+                  background: $primary-light;
+                  padding: 1px 5px;
+                  border-radius: 4px;
+                }
+
+                .picker-count-badge {
+                  font-size: 10px;
+                  font-weight: 700;
+                  color: $emerald-dark;
+                  background: $emerald-light;
+                  border: 1px solid $emerald-border;
+                  border-radius: 999px;
+                  padding: 1px 6px;
+                }
+              }
+            }
+
+            .picker-input-group {
+              display: flex;
+              align-items: stretch;
+              gap: 8px;
+              flex-wrap: wrap;
+
+              .picker-input,
+              .picker-select {
+                flex: 1 1 200px;
+              }
+            }
+
+            .picker-input,
+            .picker-select {
+              height: 34px;
+              padding: 0 10px;
+              background: #ffffff;
+              border: 1px solid $card-border-hover;
+              border-radius: 7px;
+              font-family: $font-mono;
+              font-size: 12px;
+              color: $text-main;
+              transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+              &:focus {
+                outline: none;
+                border-color: $primary;
+                box-shadow: 0 0 0 3px rgba($primary, 0.12);
+              }
+            }
+
+            .picker-select {
+              font-family: $font-sans;
+              cursor: pointer;
+            }
+
+            .btn-picker-secondary,
+            .btn-picker-primary {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              gap: 5px;
+              height: 34px;
+              padding: 0 12px;
+              border-radius: 7px;
+              font-family: $font-sans;
+              font-size: 12px;
+              font-weight: 600;
+              cursor: pointer;
+              white-space: nowrap;
+              transition: all 0.15s ease;
+
+              .material-symbols-outlined {
+                font-size: 15px;
+
+                &.spinning {
+                  animation: spin 1s linear infinite;
+                }
+              }
+
+              &:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+              }
+            }
+
+            .btn-picker-secondary {
+              @include glass-secondary-btn;
+            }
+
+            .btn-picker-primary {
+              background: $primary;
+              color: #ffffff;
+              border: 1px solid $primary;
+
+              &:hover:not(:disabled) {
+                background: $primary-dark;
+                border-color: $primary-dark;
+              }
+            }
+
+            .picker-hint {
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              font-size: 11.5px;
+              color: $text-muted;
+
+              .material-symbols-outlined {
+                font-size: 14px;
+                color: $emerald;
+              }
+
+              code {
+                font-family: $font-mono;
+                font-size: 11px;
+                color: $text-secondary;
+              }
+            }
+
+            .picker-feedback {
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              padding: 7px 10px;
+              border-radius: 7px;
+              font-size: 12px;
+              font-weight: 500;
+
+              .material-symbols-outlined {
+                font-size: 15px;
+                flex-shrink: 0;
+              }
+
+              &.success {
+                background: $emerald-light;
+                border: 1px solid $emerald-border;
+                color: $emerald-dark;
+              }
+
+              &.error {
+                background: $rose-light;
+                border: 1px solid $rose-border;
+                color: $rose-dark;
+              }
+            }
+          }
+
           .jsonc-viewer-box {
             border-top: 1px solid $card-border;
             background: #0f172a;

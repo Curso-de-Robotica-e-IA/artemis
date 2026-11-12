@@ -15,7 +15,7 @@
  */
 
 import { Injectable, signal, computed, inject, DestroyRef, NgZone } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, finalize, shareReplay, tap } from 'rxjs';
 import {
   AdbServerConnectionResponse,
@@ -525,6 +525,54 @@ export class SystemService {
   });
 
   public modelConfigEnv = signal<ModelConfigEnvResponse | null>(null);
+  public customModels = signal<CustomEndpointModel[]>([]);
+
+  /**
+   * Fetch available models from an Ollama or OpenAI-compatible custom endpoint.
+   */
+  public fetchCustomModels(baseUrl?: string): Observable<CustomModelsResponse> {
+    let params = new HttpParams();
+    const cleaned = (baseUrl || '').trim();
+    if (cleaned) {
+      params = params.set('base_url', cleaned);
+    }
+    return this.http.get<CustomModelsResponse>('/api/system/custom-models', { params }).pipe(
+      tap({
+        next: (data) => {
+          this.customModels.set(data.models || []);
+        },
+        error: (err) => {
+          console.error('Failed to fetch custom endpoint models:', err);
+        }
+      })
+    );
+  }
+
+  /**
+   * Persist the default provider/model in artemis.jsonc (and optional OPENAI_BASE_URL).
+   */
+  public updateDefaultModel(payload: {
+    provider: string;
+    model: string;
+    update_fallback?: boolean;
+    base_url?: string;
+    persist_base_url?: boolean;
+  }): Observable<UpdateDefaultModelResponse> {
+    return this.http.post<UpdateDefaultModelResponse>('/api/system/model-config/default', payload).pipe(
+      tap({
+        next: (res) => {
+          if (res?.model_config_env) {
+            this.modelConfigEnv.set(res.model_config_env);
+          } else {
+            this.fetchModelConfigEnv().subscribe();
+          }
+        },
+        error: (err) => {
+          console.error('Failed to update default model configuration:', err);
+        }
+      })
+    );
+  }
 
   /**
    * Fetch current model configuration (artemis.jsonc) and environment (.env) status
@@ -606,5 +654,29 @@ export interface ModelConfigEnvResponse {
     preview: string | null;
     description: string;
   }>;
+}
+
+export interface CustomEndpointModel {
+  id: string;
+  name: string;
+  owned_by?: string | null;
+  parameter_size?: string | null;
+  quantization_level?: string | null;
+  size_bytes?: number | null;
+}
+
+export interface CustomModelsResponse {
+  base_url: string;
+  endpoint_used: string;
+  source: string;
+  models: CustomEndpointModel[];
+}
+
+export interface UpdateDefaultModelResponse {
+  status: string;
+  message: string;
+  default_model: ModelConfigEnvResponse['default_model'];
+  config_path: string;
+  model_config_env?: ModelConfigEnvResponse;
 }
 

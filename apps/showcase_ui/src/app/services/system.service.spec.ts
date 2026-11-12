@@ -170,4 +170,62 @@ describe('SystemService readiness polling', () => {
     expect(service.isRemoteAdbServer()).toBeFalse();
     expect(service.adbServerStatus()?.endpoint.port).toBe(5037);
   });
+
+  it('fetches available models from a custom Ollama endpoint', () => {
+    service.fetchCustomModels('http://192.168.155.5:11434/v1').subscribe();
+
+    const request = http.expectOne(req =>
+      req.url === '/api/system/custom-models' &&
+      req.params.get('base_url') === 'http://192.168.155.5:11434/v1'
+    );
+    request.flush({
+      base_url: 'http://192.168.155.5:11434/v1',
+      endpoint_used: 'http://192.168.155.5:11434/v1/models',
+      source: 'ollama',
+      models: [
+        { id: 'qwen3.8:27b', name: 'qwen3.8:27b', owned_by: 'library', parameter_size: '27B' }
+      ]
+    });
+
+    expect(service.customModels().length).toBe(1);
+    expect(service.customModels()[0].id).toBe('qwen3.8:27b');
+  });
+
+  it('updates default model configuration and refreshes modelConfigEnv', () => {
+    service.updateDefaultModel({
+      provider: 'openai',
+      model: 'qwen3.8:27b',
+      update_fallback: true,
+      base_url: 'http://192.168.155.5:11434/v1',
+      persist_base_url: true
+    }).subscribe();
+
+    const request = http.expectOne('/api/system/model-config/default');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({
+      provider: 'openai',
+      model: 'qwen3.8:27b',
+      update_fallback: true,
+      base_url: 'http://192.168.155.5:11434/v1',
+      persist_base_url: true
+    });
+    request.flush({
+      status: 'success',
+      message: 'Default model updated to openai/qwen3.8:27b.',
+      default_model: { provider: 'openai', model: 'qwen3.8:27b' },
+      config_path: 'config/artemis.jsonc',
+      model_config_env: {
+        config_path: 'config/artemis.jsonc',
+        config_filename: 'artemis.jsonc',
+        config_content: '{}',
+        default_model: { provider: 'openai', model: 'qwen3.8:27b' },
+        presets: {},
+        env_path: '.env',
+        env_filename: '.env',
+        env_vars: []
+      }
+    });
+
+    expect(service.modelConfigEnv()?.default_model?.model).toBe('qwen3.8:27b');
+  });
 });
