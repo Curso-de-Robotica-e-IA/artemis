@@ -102,6 +102,9 @@ build/
 *.html
 !docs/assets/*
 !templates/**/*.html
+!apps/showcase_ui/src/**/*.html
+!apps/admin_console/**/*.html
+!artemis/resources/showcase_ui/**/*.html
 
 # APK and Android build outputs
 packages/artemis-accessibility-helper/.gradle/
