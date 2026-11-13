@@ -21,9 +21,87 @@ from typing import Any
 
 from PIL import Image
 
+from third_party.mobile_use.utils.file import load_jsonc
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_IMAGE_MAX_DIM = 1280
+_ENV_IMAGE_MAX_DIM_KEYS = (
+    "ARTEMIS_IMAGE_MAX_DIM",
+    "IMAGE_MAX_DIM",
+    "ARTEMIS_SCREENSHOT_MAX_DIM",
+)
+
+
+def parse_image_max_dim(value: object) -> int | None:
+    """Parse a non-negative integer pixel limit, rejecting booleans and invalid values."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = int(stripped)
+        except ValueError:
+            return None
+        return parsed if parsed >= 0 else None
+    return None
+
+
+def extract_image_max_dim_from_config(config_data: Any) -> int | None:
+    """Extract ``image_max_dim`` from parsed ``artemis.jsonc`` data if explicitly set."""
+    if not isinstance(config_data, dict):
+        return None
+
+    agent_block = config_data.get("agent")
+    if isinstance(agent_block, dict) and "image_max_dim" in agent_block:
+        parsed = parse_image_max_dim(agent_block.get("image_max_dim"))
+        if parsed is not None:
+            return parsed
+
+    if "image_max_dim" in config_data:
+        parsed = parse_image_max_dim(config_data.get("image_max_dim"))
+        if parsed is not None:
+            return parsed
+
+    return None
+
+
+def resolve_image_max_dim() -> int:
+    """Resolve active ``image_max_dim`` dynamically from ``artemis.jsonc``.
+
+    Reads the active configuration file on every call so changes saved via the
+    UI take effect immediately without restarting the server. Falls back to
+    ``os.getenv("ARTEMIS_IMAGE_MAX_DIM")`` (and legacy aliases) only when
+    ``image_max_dim`` is omitted from ``artemis.jsonc``, then defaults to 1280.
+    """
+    from artemis.config import paths as artemis_paths
+
+    for candidate in ("artemis.jsonc", "artemis.json"):
+        try:
+            config_path = artemis_paths.get_config_path(candidate)
+        except FileNotFoundError:
+            continue
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                data = load_jsonc(f)
+        except (OSError, ValueError):
+            break
+        configured = extract_image_max_dim_from_config(data)
+        if configured is not None:
+            return configured
+        break
+
+    for env_key in _ENV_IMAGE_MAX_DIM_KEYS:
+        env_parsed = parse_image_max_dim(os.getenv(env_key))
+        if env_parsed is not None:
+            return env_parsed
+
+    return DEFAULT_IMAGE_MAX_DIM
 
 
 def encode_image_for_llm(
@@ -39,8 +117,9 @@ def encode_image_for_llm(
     Args:
         image_input: Raw image bytes, base64 string, or PIL Image.
         max_dim: Maximum dimension (width or height) in pixels. Defaults to
-            settings.ARTEMIS_IMAGE_MAX_DIM or ARTEMIS_IMAGE_MAX_DIM env var (default 1280).
-            If <= 0, downscaling is bypassed.
+            ``agent.image_max_dim`` read dynamically from ``artemis.jsonc``,
+            with ``ARTEMIS_IMAGE_MAX_DIM`` env var as secondary fallback
+            (default 1280). If <= 0, downscaling is bypassed.
         quality: JPEG compression quality (default 80).
 
     Returns:
@@ -50,15 +129,7 @@ def encode_image_for_llm(
         return ""
 
     if max_dim is None:
-        try:
-            from artemis.config import settings
-
-            max_dim = settings.ARTEMIS_IMAGE_MAX_DIM
-        except Exception:
-            try:
-                max_dim = int(os.environ.get("ARTEMIS_IMAGE_MAX_DIM", "1280"))
-            except ValueError:
-                max_dim = 1280
+        max_dim = resolve_image_max_dim()
 
     # Extract raw bytes from input
     raw_bytes: bytes

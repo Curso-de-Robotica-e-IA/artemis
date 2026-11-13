@@ -224,6 +224,28 @@ export class HomeComponent implements OnInit, OnDestroy {
     );
   });
 
+  // Screenshot Resolution (agent.image_max_dim) state
+  public readonly imageMaxDimPresets: ReadonlyArray<{ value: number; label: string }> = [
+    { value: 720, label: '720' },
+    { value: 1024, label: '1024' },
+    { value: 1280, label: '1280' },
+    { value: 1600, label: '1600' },
+    { value: 1920, label: '1920' },
+    { value: 0, label: 'Original' }
+  ];
+  public activeImageMaxDim = computed<number>(() => {
+    const val = this.modelConfigEnv()?.image_max_dim;
+    return typeof val === 'number' && Number.isFinite(val) && val >= 0 ? Math.trunc(val) : 1280;
+  });
+  public selectedImageMaxDim = signal<number>(1280);
+  public isImageMaxDimPresetValid = computed<boolean>(() =>
+    this.imageMaxDimPresets.some(preset => preset.value === this.selectedImageMaxDim())
+  );
+  public isImageMaxDimEdited = signal<boolean>(false);
+  public isSavingImageMaxDim = signal<boolean>(false);
+  public imageMaxDimSaveMessage = signal<string | null>(null);
+  public imageMaxDimSaveError = signal<string | null>(null);
+
   // Google Gemini API Key State
   public geminiKeyInput = signal<string>('');
   public showGeminiKey = signal<boolean>(false);
@@ -659,6 +681,9 @@ export class HomeComponent implements OnInit, OnDestroy {
           return next;
         });
       }
+      if (!this.isImageMaxDimEdited() && typeof cfg?.image_max_dim === 'number') {
+        this.selectedImageMaxDim.set(Math.trunc(cfg.image_max_dim));
+      }
       if (this.modelSetupMode() === 'custom' && !this.hasAutoFetchedCustomModels) {
         const provider = this.selectedCustomProvider().trim().toLowerCase();
         if (!this.isLocalCompatProvider(provider) || baseUrlFromEnv) {
@@ -1052,6 +1077,54 @@ export class HomeComponent implements OnInit, OnDestroy {
           isResetting: false,
           saveError: err?.error?.detail || err?.message || 'Failed to reset target override.'
         });
+      }
+    });
+  }
+
+  public formatImageMaxDimBadge(val: number): string {
+    return val === 0 ? 'Original' : `${val} px`;
+  }
+
+  public selectImageMaxDimPreset(value: number, event?: MouseEvent): void {
+    // Blur after pointer clicks so no lingering focus ring competes with active styling.
+    if (event && event.detail > 0 && event.currentTarget instanceof HTMLButtonElement) {
+      event.currentTarget.blur();
+    }
+    this.selectedImageMaxDim.set(value);
+    this.isImageMaxDimEdited.set(true);
+    this.imageMaxDimSaveError.set(null);
+    this.imageMaxDimSaveMessage.set(null);
+  }
+
+  public saveImageMaxDim(event?: MouseEvent): void {
+    if (event && event.detail > 0 && event.currentTarget instanceof HTMLButtonElement) {
+      event.currentTarget.blur();
+    }
+    const selected = this.selectedImageMaxDim();
+    if (!this.isImageMaxDimPresetValid()) {
+      this.imageMaxDimSaveError.set('Select one of the available resolution options.');
+      return;
+    }
+
+    this.isSavingImageMaxDim.set(true);
+    this.imageMaxDimSaveError.set(null);
+    this.imageMaxDimSaveMessage.set(null);
+
+    this.systemService.updateImageResolution(selected).subscribe({
+      next: (res) => {
+        this.isSavingImageMaxDim.set(false);
+        this.isImageMaxDimEdited.set(false);
+        this.selectedImageMaxDim.set(Math.trunc(res.image_max_dim));
+        this.imageMaxDimSaveMessage.set(
+          res?.message || `Screenshot resolution updated to ${this.formatImageMaxDimBadge(res.image_max_dim)}.`
+        );
+        setTimeout(() => this.imageMaxDimSaveMessage.set(null), 5000);
+      },
+      error: (err) => {
+        this.isSavingImageMaxDim.set(false);
+        this.imageMaxDimSaveError.set(
+          err?.error?.detail || err?.message || 'Failed to update screenshot resolution.'
+        );
       }
     });
   }

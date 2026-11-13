@@ -352,4 +352,46 @@ describe('SystemService readiness polling', () => {
 
     expect(service.modelConfigEnv()?.pro_targets?.[0].is_inheriting_default).toBeTrue();
   });
+
+  it('fetches and updates screenshot max dimension (image_max_dim)', () => {
+    service.fetchImageResolution().subscribe(res => {
+      expect(res.image_max_dim).toBe(1280);
+      expect(res.source).toBe('artemis.jsonc');
+    });
+
+    const getReq = http.expectOne('/api/system/image-resolution');
+    expect(getReq.request.method).toBe('GET');
+    getReq.flush({
+      image_max_dim: 1280,
+      source: 'artemis.jsonc',
+      config_path: 'config/artemis.jsonc'
+    });
+
+    service.updateImageResolution(1600).subscribe(res => {
+      expect(res.image_max_dim).toBe(1600);
+    });
+
+    const postReq = http.expectOne('/api/system/image-resolution');
+    expect(postReq.request.method).toBe('POST');
+    expect(postReq.request.body).toEqual({ image_max_dim: 1600 });
+    postReq.flush({
+      status: 'success',
+      message: 'Screenshot resolution updated to 1600 px.',
+      image_max_dim: 1600,
+      config_path: 'config/artemis.jsonc',
+      model_config_env: {
+        config_path: 'config/artemis.jsonc',
+        config_filename: 'artemis.jsonc',
+        config_content: '{}',
+        image_max_dim: 1600,
+        default_model: { provider: 'ollama', model: 'qwen3.8:27b' },
+        presets: {},
+        env_path: '.env',
+        env_filename: '.env',
+        env_vars: []
+      }
+    });
+
+    expect(service.modelConfigEnv()?.image_max_dim).toBe(1600);
+  });
 });

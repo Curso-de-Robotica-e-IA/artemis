@@ -179,6 +179,8 @@
     // ==========================================================================
     // 🌐 4.3 Shared Capabilities & Global Overrides
     // ==========================================================================
+    // 🖼️ Screenshot Resolution: Maximum pixel dimension (longest side) sent to vision models (0 = original/unscaled)
+    "image_max_dim": 720,
     // Shared step memory and history compression
     // Transcript ledger + layered compression for the Pro operator.
     "memory": {

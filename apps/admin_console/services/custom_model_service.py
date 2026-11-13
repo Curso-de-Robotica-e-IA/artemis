@@ -42,6 +42,11 @@ from artemis.config.paths import (
 )
 from artemis.config.settings import is_placeholder_key, settings
 from artemis.core.diagnostics import readiness_engine
+from artemis.utils.image_scaling import (
+    DEFAULT_IMAGE_MAX_DIM,
+    extract_image_max_dim_from_config,
+    parse_image_max_dim,
+)
 from third_party.mobile_use.utils.file import load_jsonc
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -251,7 +256,8 @@ def _parse_ollama_tags_payload(payload: Any) -> list[dict[str, Any]]:
         model_id = str(entry.get("model") or entry.get("name") or "").strip()
         if not model_id:
             continue
-        details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+        raw_details = entry.get("details")
+        details: dict[str, Any] = raw_details if isinstance(raw_details, dict) else {}
         param_size = details.get("parameter_size")
         quant = details.get("quantization_level")
         size_val = entry.get("size")
@@ -1084,6 +1090,55 @@ def update_target_model_in_jsonc_text(
     return _apply_text_edits(raw_text, edits)
 
 
+def update_image_max_dim_in_jsonc_text(raw_text: str, image_max_dim: int) -> str:
+    """Update ``agent.image_max_dim`` in artemis.jsonc while preserving comments."""
+    if isinstance(image_max_dim, bool) or not isinstance(image_max_dim, int) or image_max_dim < 0:
+        raise ValueError("image_max_dim must be a non-negative integer (>= 0).")
+
+    root_open, root_close = _navigate_jsonc_object(raw_text, ())
+    root_entries = _find_object_entries(raw_text, root_open, root_close)
+    if "agent" in root_entries:
+        agent_open, agent_close = _navigate_jsonc_object(raw_text, ("agent",))
+        edits = _collect_object_field_updates(
+            raw_text, agent_open, agent_close, {"image_max_dim": image_max_dim}
+        )
+    else:
+        edits = _collect_object_field_updates(
+            raw_text, root_open, root_close, {"agent": {"image_max_dim": image_max_dim}}
+        )
+    return _apply_text_edits(raw_text, edits)
+
+
+def get_image_max_dim_state(
+    parsed_config: dict[str, Any] | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    """Return active screenshot max dimension state without mutating config files."""
+    cfg = parsed_config if isinstance(parsed_config, dict) else _load_active_artemis_jsonc()
+    configured = extract_image_max_dim_from_config(cfg)
+    if configured is not None:
+        return {
+            "image_max_dim": configured,
+            "source": "artemis.jsonc",
+            "config_path": config_path or "config/artemis.jsonc",
+        }
+
+    for env_key in ("ARTEMIS_IMAGE_MAX_DIM", "IMAGE_MAX_DIM", "ARTEMIS_SCREENSHOT_MAX_DIM"):
+        env_parsed = parse_image_max_dim(os.getenv(env_key))
+        if env_parsed is not None:
+            return {
+                "image_max_dim": env_parsed,
+                "source": f"env:{env_key}",
+                "config_path": config_path or "config/artemis.jsonc",
+            }
+
+    return {
+        "image_max_dim": DEFAULT_IMAGE_MAX_DIM,
+        "source": "default",
+        "config_path": config_path or "config/artemis.jsonc",
+    }
+
+
 def reset_target_model_in_jsonc_text(raw_text: str, target_key: str) -> str:
     """Clear explicit model/provider/fallback overrides on a Pro Mode target."""
     if target_key not in PRO_MODE_TARGETS:
@@ -1276,4 +1331,23 @@ def reset_pro_target_model_config(target: str) -> dict[str, Any]:
         "config_content": updated_text,
         "target": target_state,
         "pro_targets": pro_targets,
+    }
+
+
+def update_image_max_dim_config(image_max_dim: int) -> dict[str, Any]:
+    """Validate and persist ``agent.image_max_dim`` in artemis.jsonc."""
+    if isinstance(image_max_dim, bool) or not isinstance(image_max_dim, int) or image_max_dim < 0:
+        raise ValueError("image_max_dim must be a non-negative integer (>= 0).")
+
+    config_path = resolve_writable_artemis_config_path()
+    raw_text = config_path.read_text(encoding="utf-8")
+    updated_text = update_image_max_dim_in_jsonc_text(raw_text, image_max_dim=image_max_dim)
+    parsed = _validate_and_write_artemis_jsonc(config_path, updated_text)
+    resolved_dim = extract_image_max_dim_from_config(parsed)
+    effective_dim = resolved_dim if resolved_dim is not None else image_max_dim
+
+    return {
+        "config_path": str(config_path),
+        "config_content": updated_text,
+        "image_max_dim": effective_dim,
     }

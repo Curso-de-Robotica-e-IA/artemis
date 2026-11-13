@@ -90,3 +90,67 @@ def test_encode_image_empty_and_fallback():
     assert encode_image_for_llm(None) == ""
     assert encode_image_for_llm(b"") == ""
     assert encode_image_for_llm("") == ""
+
+
+def test_encode_image_reads_dynamic_artemis_jsonc_without_restart(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "artemis.jsonc"
+    cfg_file.write_text(
+        """{
+  // Screenshot dim comment
+  "default": {"provider": "google", "model": "gemini-3.8-flash"},
+  "agent": {
+    "image_max_dim": 1600
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("artemis.config.paths.get_config_path", lambda name, *a, **kw: cfg_file)
+    monkeypatch.setenv("ARTEMIS_IMAGE_MAX_DIM", "640")
+
+    raw = _create_test_image_bytes(1000, 2000)
+
+    # First read picks 1600 from artemis.jsonc (takes precedence over env var).
+    b64_1600 = encode_image_for_llm(raw)
+    with Image.open(io.BytesIO(base64.b64decode(b64_1600))) as im:
+        assert max(im.width, im.height) == 1600
+
+    # Updating artemis.jsonc takes effect immediately on the next call.
+    cfg_file.write_text(
+        '{"default": {"provider": "google", "model": "gemini-3.8-flash"}, "agent": {"image_max_dim": 720}}',
+        encoding="utf-8",
+    )
+    b64_720 = encode_image_for_llm(raw)
+    with Image.open(io.BytesIO(base64.b64decode(b64_720))) as im:
+        assert max(im.width, im.height) == 720
+
+    # 0 disables downscaling even if ARTEMIS_IMAGE_MAX_DIM env var is still set.
+    cfg_file.write_text(
+        '{"default": {"provider": "google", "model": "gemini-3.8-flash"}, "agent": {"image_max_dim": 0}}',
+        encoding="utf-8",
+    )
+    b64_orig = encode_image_for_llm(raw)
+    with Image.open(io.BytesIO(base64.b64decode(b64_orig))) as im:
+        assert (im.width, im.height) == (1000, 2000)
+
+
+def test_encode_image_falls_back_to_env_when_omitted_in_jsonc(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "artemis.jsonc"
+    cfg_file.write_text(
+        '{"default": {"provider": "google", "model": "gemini-3.8-flash"}, "agent": {}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("artemis.config.paths.get_config_path", lambda name, *a, **kw: cfg_file)
+    monkeypatch.setenv("ARTEMIS_IMAGE_MAX_DIM", "800")
+
+    raw = _create_test_image_bytes(1000, 2000)
+    b64_env = encode_image_for_llm(raw)
+    with Image.open(io.BytesIO(base64.b64decode(b64_env))) as im:
+        assert max(im.width, im.height) == 800
+
+    monkeypatch.delenv("ARTEMIS_IMAGE_MAX_DIM", raising=False)
+    monkeypatch.delenv("IMAGE_MAX_DIM", raising=False)
+    monkeypatch.delenv("ARTEMIS_SCREENSHOT_MAX_DIM", raising=False)
+    b64_default = encode_image_for_llm(raw)
+    with Image.open(io.BytesIO(base64.b64decode(b64_default))) as im:
+        assert max(im.width, im.height) == 1280

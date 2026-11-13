@@ -886,6 +886,15 @@ class ProProfileConfig(BaseModel):
 class AgentGlobalConfig(BaseModel):
     """Global configuration parsed from artemis.jsonc / agent_config.json."""
 
+    image_max_dim: int = Field(
+        default=1280,
+        ge=0,
+        description=(
+            "Maximum dimension in pixels (longest side) for screenshots sent to vision LLMs. "
+            "Preserves aspect ratio; 0 disables downscaling."
+        ),
+    )
+
     # ⚡ Profile-categorized configurations
     flash: FlashProfileConfig = Field(
         default_factory=FlashProfileConfig,

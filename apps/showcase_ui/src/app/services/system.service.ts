@@ -631,6 +631,35 @@ export class SystemService {
   }
 
   /**
+   * Fetch current screenshot resolution setting (agent.image_max_dim) from artemis.jsonc.
+   */
+  public fetchImageResolution(): Observable<ImageResolutionResponse> {
+    return this.http.get<ImageResolutionResponse>('/api/system/image-resolution');
+  }
+
+  /**
+   * Persist screenshot max dimension (agent.image_max_dim) in artemis.jsonc without restart.
+   */
+  public updateImageResolution(imageMaxDim: number): Observable<UpdateImageResolutionResponse> {
+    return this.http.post<UpdateImageResolutionResponse>('/api/system/image-resolution', {
+      image_max_dim: imageMaxDim
+    }).pipe(
+      tap({
+        next: (res) => {
+          if (res?.model_config_env) {
+            this.modelConfigEnv.set(res.model_config_env);
+          } else {
+            this.fetchModelConfigEnv().subscribe();
+          }
+        },
+        error: (err) => {
+          console.error('Failed to update screenshot resolution configuration:', err);
+        }
+      })
+    );
+  }
+
+  /**
    * Fetch current model configuration (artemis.jsonc) and environment (.env) status
    */
   public fetchModelConfigEnv(): Observable<ModelConfigEnvResponse> {
@@ -711,6 +740,7 @@ export interface ModelConfigEnvResponse {
   config_path: string;
   config_filename: string;
   config_content: string;
+  image_max_dim?: number;
   default_model: {
     provider?: string;
     model?: string;
@@ -773,6 +803,20 @@ export interface UpdateTargetModelResponse {
   message: string;
   target: ProModelTargetState;
   pro_targets: ProModelTargetState[];
+  config_path: string;
+  model_config_env?: ModelConfigEnvResponse;
+}
+
+export interface ImageResolutionResponse {
+  image_max_dim: number;
+  source: string;
+  config_path: string;
+}
+
+export interface UpdateImageResolutionResponse {
+  status: string;
+  message: string;
+  image_max_dim: number;
   config_path: string;
   model_config_env?: ModelConfigEnvResponse;
 }

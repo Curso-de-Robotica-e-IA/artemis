@@ -20,7 +20,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from artemis.core.diagnostics import readiness_engine
 from artemis.core.diagnostics.adb_server_connection import (
@@ -485,18 +485,23 @@ async def get_model_config_and_env():
         from apps.admin_console.services.custom_model_service import (
             SUPPORTED_PROVIDER_OPTIONS,
             build_pro_targets_state,
+            get_image_max_dim_state,
         )
     except ImportError:
         from admin_console.services.custom_model_service import (
             SUPPORTED_PROVIDER_OPTIONS,
             build_pro_targets_state,
+            get_image_max_dim_state,
         )
+
+    image_res_state = get_image_max_dim_state(parsed_config=parsed_config, config_path=config_path)
 
     return {
         "config_path": config_path or "config/artemis.jsonc",
         "config_filename": "artemis.jsonc",
         "config_content": config_content,
         "default_model": parsed_config.get("default", {}),
+        "image_max_dim": image_res_state["image_max_dim"],
         "pro_targets": build_pro_targets_state(parsed_config),
         "supported_providers": SUPPORTED_PROVIDER_OPTIONS,
         "presets": parsed_config.get("presets", {}),
@@ -549,6 +554,37 @@ class ResetTargetModelRequest(BaseModel):
     target: str = Field(
         description=("Target identifier (object_detector, hopper, step_summarizer, or chunking)")
     )
+
+
+class UpdateImageResolutionRequest(BaseModel):
+    """Payload to update the global screenshot max dimension in artemis.jsonc."""
+
+    image_max_dim: int = Field(
+        description=(
+            "Maximum pixel dimension (longest side) for screenshots sent to vision models "
+            "(>= 0; 0 disables downscaling)"
+        )
+    )
+
+    @field_validator("image_max_dim", mode="before")
+    @classmethod
+    def _reject_booleans_and_non_integers(cls, value: object) -> int:
+        if isinstance(value, bool):
+            raise ValueError("image_max_dim must be an integer, not a boolean.")
+        if isinstance(value, float):
+            raise ValueError("image_max_dim must be a whole integer.")
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("image_max_dim cannot be empty.")
+            parsed = int(stripped)
+        elif isinstance(value, int):
+            parsed = value
+        else:
+            raise ValueError("image_max_dim must be an integer >= 0.")
+        if parsed < 0:
+            raise ValueError("image_max_dim must be >= 0 (0 disables downscaling).")
+        return parsed
 
 
 @router.get("/custom-models")
@@ -690,6 +726,72 @@ async def reset_target_model_endpoint(request: Request, payload: ResetTargetMode
         ),
         "target": target_state,
         "pro_targets": result["pro_targets"],
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.get("/image-resolution")
+async def get_image_resolution_endpoint():
+    """Retrieve the active screenshot resolution limit (image_max_dim) from artemis.jsonc."""
+    from artemis.config.paths import get_config_path
+    from third_party.mobile_use.utils.file import load_jsonc
+
+    try:
+        from apps.admin_console.services.custom_model_service import get_image_max_dim_state
+    except ImportError:
+        from admin_console.services.custom_model_service import get_image_max_dim_state
+
+    config_path: str | None = None
+    parsed_config: dict | None = None
+    try:
+        config_path_obj = get_config_path("artemis.jsonc")
+        config_path = str(config_path_obj)
+        with open(config_path_obj, encoding="utf-8") as f:
+            loaded = load_jsonc(f)
+            if isinstance(loaded, dict):
+                parsed_config = loaded
+    except (FileNotFoundError, OSError, ValueError):
+        parsed_config = None
+
+    return get_image_max_dim_state(parsed_config=parsed_config, config_path=config_path)
+
+
+@router.post("/image-resolution")
+async def update_image_resolution_endpoint(
+    request: Request,
+    payload: UpdateImageResolutionRequest,
+):
+    """Update agent.image_max_dim in artemis.jsonc for dynamic screenshot scaling."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_image_max_dim_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_image_max_dim_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_image_max_dim_config(payload.image_max_dim)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    updated_dim = result["image_max_dim"]
+    status_msg = (
+        "Screenshot downscaling disabled (Original resolution active)."
+        if updated_dim == 0
+        else f"Screenshot resolution updated to {updated_dim} px."
+    )
+    return {
+        "status": "success",
+        "message": status_msg,
+        "image_max_dim": updated_dim,
         "config_path": result["config_path"],
         "model_config_env": refreshed_env,
     }

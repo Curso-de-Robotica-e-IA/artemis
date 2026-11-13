@@ -519,3 +519,71 @@ def test_real_bundled_artemis_jsonc_roundtrip_preserves_comments(tmp_path: Path,
     assert parsed["nodes"]["hopper"] == {}
     assert "model" not in parsed["agent"]["flash"]["step_summarizer"]
     assert "model" not in parsed["agent"]["memory"]["chunking"]
+
+
+@pytest.mark.asyncio
+async def test_image_resolution_endpoints_update_jsonc_and_apply_dynamically(
+    tmp_path: Path, monkeypatch
+):
+    """Updating image_max_dim preserves all JSONC comments and affects scaling immediately."""
+    import base64
+    from PIL import Image
+    from artemis.utils.image_scaling import encode_image_for_llm
+
+    bundled = Path("artemis/resources/config/artemis.jsonc")
+    assert bundled.is_file()
+    cfg_file = tmp_path / "artemis.jsonc"
+    original_text = bundled.read_text(encoding="utf-8")
+    cfg_file.write_text(original_text, encoding="utf-8")
+
+    monkeypatch.setattr(
+        custom_model_service, "resolve_writable_artemis_config_path", lambda: cfg_file
+    )
+    monkeypatch.setattr(custom_model_service, "get_config_path", lambda *a, **kw: cfg_file)
+    monkeypatch.setattr("artemis.config.paths.get_config_path", lambda *a, **kw: cfg_file)
+
+    raw_buf = io.BytesIO()
+    Image.new("RGB", (1000, 2000), (0, 128, 255)).save(raw_buf, format="JPEG")
+    raw_bytes = raw_buf.getvalue()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as ac:
+        res_initial = await ac.get("/api/system/image-resolution")
+        assert res_initial.status_code == 200
+        assert res_initial.json()["image_max_dim"] == 1280
+        assert res_initial.json()["source"] == "artemis.jsonc"
+
+        res_env = await ac.get("/api/system/model-config-env")
+        assert res_env.status_code == 200
+        assert res_env.json()["image_max_dim"] == 1280
+
+        res_720 = await ac.post("/api/system/image-resolution", json={"image_max_dim": 720})
+        assert res_720.status_code == 200
+        assert res_720.json()["image_max_dim"] == 720
+        assert res_720.json()["model_config_env"]["image_max_dim"] == 720
+
+        encoded_720 = encode_image_for_llm(raw_bytes)
+        with Image.open(io.BytesIO(base64.b64decode(encoded_720))) as im:
+            assert max(im.width, im.height) == 720
+
+        res_zero = await ac.post("/api/system/image-resolution", json={"image_max_dim": 0})
+        assert res_zero.status_code == 200
+        assert res_zero.json()["image_max_dim"] == 0
+        assert res_zero.json()["model_config_env"]["image_max_dim"] == 0
+
+        encoded_orig = encode_image_for_llm(raw_bytes)
+        with Image.open(io.BytesIO(base64.b64decode(encoded_orig))) as im:
+            assert (im.width, im.height) == (1000, 2000)
+
+        for bad_payload in (
+            {"image_max_dim": -10},
+            {"image_max_dim": True},
+            {"image_max_dim": 12.5},
+        ):
+            bad_res = await ac.post("/api/system/image-resolution", json=bad_payload)
+            assert bad_res.status_code in (400, 422)
+
+    final_text = cfg_file.read_text(encoding="utf-8")
+    for line in original_text.splitlines():
+        if line.lstrip().startswith("//"):
+            assert line in final_text
+    assert '"image_max_dim": 0' in final_text
