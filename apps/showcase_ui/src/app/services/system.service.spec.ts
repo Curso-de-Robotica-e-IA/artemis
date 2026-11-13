@@ -394,4 +394,125 @@ describe('SystemService readiness polling', () => {
 
     expect(service.modelConfigEnv()?.image_max_dim).toBe(1600);
   });
+
+  it('evaluates isCredentialsReady dynamically for local-only, cloud, and Pro Mode providers', () => {
+    // 1. Fallback before modelConfigEnv loads relies on llmProbe status.
+    expect(service.isCredentialsReady()).toBeFalse();
+    service.readinessReport.set({
+      overall_ready: true,
+      blocker_count: 3,
+      passed_blocker_count: 3,
+      probes: [
+        {
+          id: 'gemini_api_key',
+          category: 'auth',
+          title: 'Multimodal LLM API Key',
+          status: 'pass',
+          is_blocker: true,
+          summary: 'Active',
+          description: 'Ready',
+          metadata: { api_keys: { google: 'AIza-test' } },
+          actions: []
+        }
+      ],
+      active_device: null,
+      os_type: 'linux',
+      timestamp: 1
+    });
+    expect(service.isCredentialsReady()).toBeTrue();
+
+    // 2. Local-only configuration (ollama default + local/inheriting Pro targets) is ready without API keys.
+    service.readinessReport.set({
+      overall_ready: false,
+      blocker_count: 3,
+      passed_blocker_count: 2,
+      probes: [
+        {
+          id: 'gemini_api_key',
+          category: 'auth',
+          title: 'Multimodal LLM API Key',
+          status: 'fail',
+          is_blocker: true,
+          summary: 'Missing',
+          description: 'No key set',
+          metadata: { api_keys: {} },
+          actions: []
+        }
+      ],
+      active_device: null,
+      os_type: 'linux',
+      timestamp: 2
+    });
+    service.modelConfigEnv.set({
+      config_path: 'config/artemis.jsonc',
+      config_filename: 'artemis.jsonc',
+      config_content: '{}',
+      default_model: { provider: 'ollama', model: 'qwen3.8:27b' },
+      pro_targets: [
+        {
+          key: 'object_detector',
+          label: 'Object Detector',
+          config_path: 'nodes.object_detector',
+          description: 'Detector',
+          supports_fallback: true,
+          effective_provider: 'ollama',
+          effective_model: 'qwen3.8:27b',
+          is_inheriting_default: true,
+          active_badge: 'Inheriting Default'
+        },
+        {
+          key: 'hopper',
+          label: 'Hopper',
+          config_path: 'nodes.hopper',
+          description: 'Hopper',
+          supports_fallback: true,
+          effective_provider: 'vllm',
+          effective_model: 'local-model',
+          is_inheriting_default: false,
+          active_badge: 'vllm/local-model'
+        }
+      ],
+      presets: {},
+      env_path: '.env',
+      env_filename: '.env',
+      env_vars: [
+        { name: 'GEMINI_API_KEY', provider: 'google', is_set: false, preview: '', description: '' },
+        { name: 'OPENAI_BASE_URL', provider: 'custom', is_set: false, preview: '', description: '' }
+      ]
+    });
+    expect(service.isCredentialsReady()).toBeTrue();
+
+    // 3. Hybrid setup: local default + active cloud Pro Mode override requires that cloud provider key.
+    service.modelConfigEnv.update((current) => ({
+      ...current!,
+      pro_targets: [
+        {
+          key: 'object_detector',
+          label: 'Object Detector',
+          config_path: 'nodes.object_detector',
+          description: 'Detector',
+          supports_fallback: true,
+          effective_provider: 'openai',
+          effective_model: 'gpt-4o',
+          is_inheriting_default: false,
+          active_badge: 'openai/gpt-4o'
+        }
+      ],
+      env_vars: [
+        { name: 'GEMINI_API_KEY', provider: 'google', is_set: true, preview: 'AIza...1', description: '' },
+        { name: 'OPENAI_API_KEY', provider: 'openai', is_set: false, preview: '', description: '' }
+      ]
+    }));
+    expect(service.isCredentialsReady()).toBeFalse();
+
+    // Setting OPENAI_API_KEY satisfies readiness.
+    service.modelConfigEnv.update((current) => ({
+      ...current!,
+      env_vars: [
+        { name: 'GEMINI_API_KEY', provider: 'google', is_set: true, preview: 'AIza...1', description: '' },
+        { name: 'OPENAI_API_KEY', provider: 'openai', is_set: true, preview: 'sk-...9', description: '' }
+      ]
+    }));
+    expect(service.isCredentialsReady()).toBeTrue();
+  });
 });

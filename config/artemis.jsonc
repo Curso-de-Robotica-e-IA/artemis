@@ -74,7 +74,14 @@
     // CRITICAL REQUIREMENT: Standard LLMs (including standard Gemini Flash, GPT-4o, Claude 3.7) lack sub-pixel spatial coordinate fine-tuning.
     // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
     // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
-    "object_detector": {},
+    "object_detector": {
+      "provider": "ollama",
+      "model": "qwen3-vl:32b",
+      "fallback": {
+        "provider": "ollama",
+        "model": "qwen3-vl:32b"
+      }
+    },
 
     // 🔍 Explorer: Deep element grounding and multi-candidate visual search
     // NOTE:
@@ -180,7 +187,7 @@
     // 🌐 4.3 Shared Capabilities & Global Overrides
     // ==========================================================================
     // 🖼️ Screenshot Resolution: Maximum pixel dimension (longest side) sent to vision models (0 = original/unscaled)
-    "image_max_dim": 720,
+    "image_max_dim": 1024,
     // Shared step memory and history compression
     // Transcript ledger + layered compression for the Pro operator.
     "memory": {

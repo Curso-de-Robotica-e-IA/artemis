@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { Component, signal, computed, effect, inject, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { Component, signal, computed, effect, inject, untracked, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AgentService } from '../../services/agent.service';
@@ -165,8 +165,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   public activeAdbGuideTab = signal<AdbGuideTab>('emulator');
   public emulatorSetupMode = signal<'studio' | 'cli'>('studio');
 
-  // Interactive guide tab for LLM / OCR credentials: 'gemini' | 'ocr'
-  public modelSetupMode = signal<'gemini' | 'custom'>('gemini');
+  // Collapsible Vision OCR & full config viewer toggles
   public showOcrConfig = signal<boolean>(false);
   public showFullConfigFile = signal<boolean>(false);
 
@@ -205,6 +204,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   public customModelSaveMessage = signal<string | null>(null);
   public customModelSaveError = signal<string | null>(null);
   private hasAutoFetchedCustomModels = false;
+  private hasPrefetchedProTargets = false;
   public savedCustomBaseUrl = computed<string>(() => {
     const vars = this.modelConfigEnv()?.env_vars || [];
     const entry = vars.find(v => v.name === 'OPENAI_BASE_URL');
@@ -482,7 +482,6 @@ export class HomeComponent implements OnInit, OnDestroy {
   // Step-level readiness
   public isEnvironmentReady = computed(() => this.systemService.isEnvironmentReady());
   public isCredentialsReady = computed(() => this.systemService.isCredentialsReady());
-  public isSkipCredentialsCheck = computed(() => this.systemService.isSkipCredentialsCheck());
   public isDeviceReady = computed(() => this.systemService.isDeviceReady());
 
   // Device information
@@ -605,6 +604,31 @@ export class HomeComponent implements OnInit, OnDestroy {
     return this.ocrKeyInput().trim() !== this.savedOcrKey().trim();
   });
 
+  public geminiEnvItem = computed(
+    () => (this.modelConfigEnv()?.env_vars || []).find(v => v.name === 'GEMINI_API_KEY') ?? null
+  );
+
+  public ocrEnvItem = computed(
+    () =>
+      (this.modelConfigEnv()?.env_vars || []).find(
+        v => v.name === 'VISION_API_KEY' || v.name === 'OCR_API_KEY'
+      ) ?? null
+  );
+
+  public isGeminiConfigured = computed<boolean>(() => {
+    return !!this.savedGeminiKey().trim() || !!this.geminiEnvItem()?.is_set;
+  });
+
+  public isOcrKeyConfigured = computed<boolean>(() => {
+    return this.isOcrConfigured() || !!this.savedOcrKey().trim() || !!this.ocrEnvItem()?.is_set;
+  });
+
+  public otherEnvVars = computed(() =>
+    (this.modelConfigEnv()?.env_vars || []).filter(
+      v => v.name !== 'GEMINI_API_KEY' && v.name !== 'VISION_API_KEY' && v.name !== 'OCR_API_KEY'
+    )
+  );
+
   // Rich Smart Suggestions Library (Device-Aware, Flash vs Pro Tailored)
   public readonly allSuggestions = this.taskRecService.allTasks;
 
@@ -643,10 +667,10 @@ export class HomeComponent implements OnInit, OnDestroy {
       const current = this.systemService.currentApiKey();
       const googleKey = keys['google'] || current || '';
       const ocrKey = keys['ocr'] || '';
-      if (!this.isGeminiKeyEdited()) {
+      if (!untracked(() => this.isGeminiKeyEdited())) {
         this.geminiKeyInput.set(googleKey);
       }
-      if (!this.isOcrKeyEdited()) {
+      if (!untracked(() => this.isOcrKeyEdited())) {
         this.ocrKeyInput.set(ocrKey);
       }
     });
@@ -654,10 +678,10 @@ export class HomeComponent implements OnInit, OnDestroy {
     effect(() => {
       const cfg = this.modelConfigEnv();
       const baseUrlFromEnv = this.savedCustomBaseUrl();
-      if (!this.isCustomBaseUrlEdited() && baseUrlFromEnv) {
+      if (!untracked(() => this.isCustomBaseUrlEdited()) && baseUrlFromEnv) {
         this.customBaseUrlInput.set(baseUrlFromEnv);
       }
-      if (!this.isCustomSelectionEdited() && cfg?.default_model) {
+      if (!untracked(() => this.isCustomSelectionEdited()) && cfg?.default_model) {
         if (cfg.default_model.model) {
           this.selectedCustomModel.set(cfg.default_model.model);
         }
@@ -681,15 +705,35 @@ export class HomeComponent implements OnInit, OnDestroy {
           return next;
         });
       }
-      if (!this.isImageMaxDimEdited() && typeof cfg?.image_max_dim === 'number') {
+      if (!untracked(() => this.isImageMaxDimEdited()) && typeof cfg?.image_max_dim === 'number') {
         this.selectedImageMaxDim.set(Math.trunc(cfg.image_max_dim));
       }
-      if (this.modelSetupMode() === 'custom' && !this.hasAutoFetchedCustomModels) {
-        const provider = this.selectedCustomProvider().trim().toLowerCase();
-        if (!this.isLocalCompatProvider(provider) || baseUrlFromEnv) {
-          this.hasAutoFetchedCustomModels = true;
-          this.fetchCustomModels(true);
-        }
+      if (cfg) {
+        untracked(() => {
+          const provider = (
+            cfg.default_model?.provider ||
+            this.selectedCustomProvider() ||
+            'google'
+          )
+            .trim()
+            .toLowerCase();
+          let startedDefaultFetch = false;
+          if (!this.hasAutoFetchedCustomModels) {
+            if (!this.isLocalCompatProvider(provider) || baseUrlFromEnv) {
+              this.hasAutoFetchedCustomModels = true;
+              startedDefaultFetch = true;
+              this.fetchCustomModels(true);
+            }
+          }
+          if (cfg.pro_targets?.length && !this.hasPrefetchedProTargets) {
+            this.hasPrefetchedProTargets = true;
+            this.prefetchProTargetProviders(
+              cfg.pro_targets,
+              baseUrlFromEnv,
+              startedDefaultFetch ? provider : undefined
+            );
+          }
+        });
       }
     });
   }
@@ -740,30 +784,6 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.emulatorSetupMode.set(mode);
   }
 
-  public setModelSetupMode(mode: 'gemini' | 'custom'): void {
-    this.modelSetupMode.set(mode);
-    if (mode === 'custom') {
-      this.systemService.setSkipCredentialsCheck(true);
-      this.systemService.fetchModelConfigEnv().subscribe({
-        next: (envCfg) => {
-          const provider = this.selectedCustomProvider().trim().toLowerCase();
-          const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
-          if (
-            (!this.isLocalCompatProvider(provider) || url) &&
-            !this.isLoadingCustomModels() &&
-            this.defaultProviderModels().length === 0
-          ) {
-            this.hasAutoFetchedCustomModels = true;
-            this.fetchCustomModels(true);
-          }
-          this.prefetchProTargetProviders(envCfg.pro_targets || [], url);
-        }
-      });
-    } else {
-      this.systemService.setSkipCredentialsCheck(false);
-    }
-  }
-
   public isLocalCompatProvider(provider: string | null | undefined): boolean {
     const clean = (provider || '').trim().toLowerCase();
     return clean === 'ollama' || clean === 'vllm' || clean === 'custom';
@@ -785,11 +805,16 @@ export class HomeComponent implements OnInit, OnDestroy {
     return cached;
   }
 
-  private prefetchProTargetProviders(targets: ProModelTargetState[], baseUrl: string): void {
+  private prefetchProTargetProviders(
+    targets: ProModelTargetState[],
+    baseUrl: string,
+    skipProvider?: string
+  ): void {
     const providers = new Set<string>();
+    const cleanedSkip = (skipProvider || '').trim().toLowerCase();
     for (const target of targets) {
       const p = (target.effective_provider || '').trim().toLowerCase();
-      if (p) {
+      if (p && p !== cleanedSkip) {
         providers.add(p);
       }
     }
@@ -1170,6 +1195,37 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.ocrSaveMessage.set(null);
   }
 
+  private isGoogleProviderSelected(): boolean {
+    const defaultProvider = (this.selectedCustomProvider() || '').trim().toLowerCase();
+    if (defaultProvider === 'google' || defaultProvider === 'gemini') {
+      return true;
+    }
+    const drafts = this.proTargetDrafts();
+    return Object.values(drafts).some((draft) => {
+      const p = (draft?.provider || '').trim().toLowerCase();
+      return p === 'google' || p === 'gemini';
+    });
+  }
+
+  private refreshGoogleModelsIfSelected(): void {
+    if (!this.isGoogleProviderSelected()) {
+      return;
+    }
+    this.systemService.fetchCustomModels(undefined, 'google').subscribe({
+      next: (res) => {
+        const defaultProvider = (this.selectedCustomProvider() || '').trim().toLowerCase();
+        if (defaultProvider === 'google' || defaultProvider === 'gemini') {
+          const models = res.models || [];
+          const currentModel = this.selectedCustomModel().trim();
+          if (models.length > 0 && (!currentModel || !models.some(m => m.id === currentModel))) {
+            this.selectedCustomModel.set(models[0].id);
+          }
+        }
+      },
+      error: () => {}
+    });
+  }
+
   public saveGeminiKey(): void {
     const key = this.geminiKeyInput().trim();
     if (!key) return;
@@ -1182,6 +1238,7 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.isSavingGeminiKey.set(false);
         this.isGeminiKeyEdited.set(false);
         this.geminiSaveMessage.set(res?.message || '✓ Gemini API key verified & saved successfully.');
+        this.refreshGoogleModelsIfSelected();
         setTimeout(() => this.geminiSaveMessage.set(null), 5000);
       },
       error: (err) => {
@@ -1192,17 +1249,19 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public clearGeminiKey(): void {
+    const hadConfiguredKey = this.isGeminiConfigured();
     this.geminiKeyInput.set('');
     this.isGeminiKeyEdited.set(false);
     this.geminiSaveError.set(null);
     this.geminiSaveMessage.set(null);
 
-    if (this.savedGeminiKey().trim()) {
+    if (hadConfiguredKey) {
       this.isSavingGeminiKey.set(true);
       this.systemService.updateApiKey('google', '', true).subscribe({
         next: (res) => {
           this.isSavingGeminiKey.set(false);
           this.geminiSaveMessage.set(res?.message || '✓ Gemini API key cleared.');
+          this.refreshGoogleModelsIfSelected();
           setTimeout(() => this.geminiSaveMessage.set(null), 5000);
         },
         error: (err) => {
@@ -1238,12 +1297,13 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public clearOcrKey(): void {
+    const hadConfiguredKey = this.isOcrKeyConfigured();
     this.ocrKeyInput.set('');
     this.isOcrKeyEdited.set(false);
     this.ocrSaveError.set(null);
     this.ocrSaveMessage.set(null);
 
-    if (this.savedOcrKey().trim()) {
+    if (hadConfiguredKey) {
       this.isSavingOcrKey.set(true);
       this.systemService.updateApiKey('ocr', '', true).subscribe({
         next: (res) => {
@@ -1335,10 +1395,6 @@ export class HomeComponent implements OnInit, OnDestroy {
       default:
         return 'Configure your API key or use environment definitions.';
     }
-  }
-
-  public skipCredentialsCheck(): void {
-    this.systemService.skipCredentialsCheck();
   }
 
   public getApiKeyPlaceholder(tab: string): string {

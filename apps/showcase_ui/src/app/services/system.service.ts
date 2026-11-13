@@ -73,14 +73,75 @@ export class SystemService {
     return pyOk && cfgOk && adbInstalled && tcOk;
   });
 
-  public isSkipCredentialsCheck = signal<boolean>(false);
+  private readonly localCompatProviders = new Set(['ollama', 'vllm', 'custom', 'local']);
 
-  public isCredentialsReady = computed(() => {
-    if (this.isSkipCredentialsCheck()) {
+  private normalizeProviderId(provider: string | null | undefined): string {
+    const clean = (provider || '').trim().toLowerCase();
+    if (!clean) return '';
+    return clean === 'gemini' ? 'google' : clean;
+  }
+
+  private hasProviderCredential(
+    provider: string,
+    keysMap: Record<string, string>,
+    envVars: ModelConfigEnvResponse['env_vars']
+  ): boolean {
+    const normalized = this.normalizeProviderId(provider);
+    if (!normalized) return false;
+
+    if ((keysMap[normalized] || '').trim()) {
       return true;
     }
-    const llm = this.llmProbe();
-    return llm?.status === 'pass';
+    if (normalized === 'google' && (keysMap['gemini'] || '').trim()) {
+      return true;
+    }
+
+    const matchingEnv = (envVars || []).find((entry) => {
+      const envProvider = this.normalizeProviderId(entry.provider);
+      return envProvider === normalized;
+    });
+    return !!matchingEnv?.is_set;
+  }
+
+  public isCredentialsReady = computed(() => {
+    const cfg = this.modelConfigEnv();
+    if (!cfg) {
+      return this.llmProbe()?.status === 'pass';
+    }
+
+    const activeProviders = new Set<string>();
+    const defaultProvider = this.normalizeProviderId(cfg.default_model?.provider);
+    if (defaultProvider) {
+      activeProviders.add(defaultProvider);
+    }
+
+    for (const target of cfg.pro_targets || []) {
+      if (target && target.is_inheriting_default === false) {
+        const overrideProvider = this.normalizeProviderId(
+          target.effective_provider || target.explicit_provider
+        );
+        if (overrideProvider) {
+          activeProviders.add(overrideProvider);
+        }
+      }
+    }
+
+    if (activeProviders.size === 0) {
+      return this.llmProbe()?.status === 'pass';
+    }
+
+    const cloudProviders = Array.from(activeProviders).filter(
+      (provider) => !this.localCompatProviders.has(provider)
+    );
+    if (cloudProviders.length === 0) {
+      return true;
+    }
+
+    const keysMap = this.apiKeysMap();
+    const envVars = cfg.env_vars || [];
+    return cloudProviders.every((provider) =>
+      this.hasProviderCredential(provider, keysMap, envVars)
+    );
   });
 
   public isDeviceReady = computed(() => {
@@ -112,15 +173,6 @@ export class SystemService {
     if (raw === 'darwin' || raw === 'macos' || raw === 'mac') return 'darwin';
     return 'linux';
   });
-
-  public skipCredentialsCheck(): void {
-    this.isSkipCredentialsCheck.set(true);
-  }
-
-  public setSkipCredentialsCheck(skip: boolean): void {
-    this.isSkipCredentialsCheck.set(skip);
-  }
-
 
   // Device list from metadata
   public connectedDevices = computed<DeviceInfo[]>(() => {

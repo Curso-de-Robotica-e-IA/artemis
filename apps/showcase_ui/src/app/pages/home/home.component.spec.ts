@@ -99,7 +99,6 @@ describe('HomeComponent Screenshot Resolution Card', () => {
     const fixture = TestBed.createComponent(HomeComponent);
     const component = fixture.componentInstance;
     component.activeTab.set('diagnostics');
-    component.modelSetupMode.set('custom');
     fixture.detectChanges();
 
     flushInitialModelConfig(1280);
@@ -169,6 +168,250 @@ describe('HomeComponent Screenshot Resolution Card', () => {
 
     expect(badge?.textContent?.trim()).toBe('Original');
     expect(badge?.classList.contains('is-original')).toBeTrue();
+
+    fixture.destroy();
+  });
+
+  it('renders unified AI Model Setup panel without mode cards and auto-fetches active provider models', () => {
+    const fixture = TestBed.createComponent(HomeComponent);
+    const component = fixture.componentInstance;
+    component.activeTab.set('diagnostics');
+    fixture.detectChanges();
+
+    const envReq = http.expectOne('/api/system/model-config-env');
+    envReq.flush({
+      ...buildMockConfig(1280),
+      pro_targets: [
+        {
+          key: 'object_detector',
+          label: 'Object Detector',
+          config_path: 'nodes.object_detector',
+          description: 'Detects UI elements',
+          supports_fallback: true,
+          explicit_provider: 'openai',
+          explicit_model: 'gpt-4o',
+          effective_provider: 'openai',
+          effective_model: 'gpt-4o',
+          is_inheriting_default: false,
+          active_badge: 'openai/gpt-4o'
+        }
+      ],
+      env_vars: [
+        {
+          name: 'GEMINI_API_KEY',
+          provider: 'google',
+          is_set: false,
+          preview: '',
+          description: 'Gemini key'
+        },
+        {
+          name: 'VISION_API_KEY',
+          provider: 'ocr',
+          is_set: false,
+          preview: '',
+          description: 'OCR key'
+        }
+      ]
+    });
+    drainNonSaveRequests();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.model-choice-cards-row')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.custom-config-inspector')).toBeTruthy();
+
+    // Auto-fetched default provider ('google') and Pro Mode target provider ('openai')
+    const googleModelsReq = http.expectOne(
+      r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'google'
+    );
+    googleModelsReq.flush({
+      provider: 'google',
+      models: [{ id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'google' }]
+    });
+
+    const openaiModelsReq = http.expectOne(
+      r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'openai'
+    );
+    openaiModelsReq.flush({
+      provider: 'openai',
+      models: [{ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' }]
+    });
+
+    fixture.destroy();
+  });
+
+  it('supports editing, testing, and clearing GEMINI_API_KEY and VISION_API_KEY in unified panel', () => {
+    const fixture = TestBed.createComponent(HomeComponent);
+    const component = fixture.componentInstance;
+    component.activeTab.set('diagnostics');
+    fixture.detectChanges();
+
+    const initialConfig = {
+      ...buildMockConfig(1280),
+      env_vars: [
+        {
+          name: 'GEMINI_API_KEY',
+          provider: 'google',
+          is_set: false,
+          preview: '',
+          description: 'Gemini key'
+        },
+        {
+          name: 'VISION_API_KEY',
+          provider: 'ocr',
+          is_set: false,
+          preview: '',
+          description: 'OCR key'
+        }
+      ]
+    };
+
+    http.expectOne('/api/system/model-config-env').flush(initialConfig);
+    drainNonSaveRequests();
+    fixture.detectChanges();
+
+    // Flush the automatic initial model discovery for default provider ('google')
+    http
+      .expectOne(r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'google')
+      .flush({ provider: 'google', models: [] });
+
+    // Test GEMINI_API_KEY
+    component.onGeminiKeyChange('AIza-test-gemini-1234');
+    fixture.detectChanges();
+
+    const testGeminiBtn = fixture.nativeElement.querySelector(
+      '[data-action="test-gemini-key"]'
+    ) as HTMLButtonElement;
+    testGeminiBtn.click();
+
+    const testGeminiReq = http.expectOne('/api/system/credentials/test');
+    expect(testGeminiReq.request.body).toEqual({
+      provider: 'google',
+      api_key: 'AIza-test-gemini-1234',
+      base_url: undefined
+    });
+    testGeminiReq.flush({ valid: true, provider: 'google', message: 'Valid key' });
+    fixture.detectChanges();
+
+    // Save GEMINI_API_KEY -> refreshes env and reloads Google model list
+    const saveGeminiBtn = fixture.nativeElement.querySelector(
+      '[data-action="save-gemini-key"]'
+    ) as HTMLButtonElement;
+    saveGeminiBtn.click();
+
+    const saveGeminiReq = http.expectOne('/api/system/credentials');
+    expect(saveGeminiReq.request.body).toEqual({
+      provider: 'google',
+      api_key: 'AIza-test-gemini-1234',
+      persist_to_env: true
+    });
+    saveGeminiReq.flush({ status: 'success', message: 'Saved' });
+
+    const refreshedEnvAfterSave = http.expectOne('/api/system/model-config-env');
+    refreshedEnvAfterSave.flush({
+      ...initialConfig,
+      env_vars: [
+        {
+          name: 'GEMINI_API_KEY',
+          provider: 'google',
+          is_set: true,
+          preview: 'AIza...1234',
+          description: 'Gemini key'
+        },
+        initialConfig.env_vars[1]
+      ]
+    });
+
+    const reloadModelsReq = http.expectOne(
+      r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'google'
+    );
+    reloadModelsReq.flush({
+      provider: 'google',
+      models: [{ id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'google' }]
+    });
+    fixture.detectChanges();
+    expect(component.isCredentialsReady()).toBeTrue();
+
+    // Clear GEMINI_API_KEY -> refreshes env and reloads Google model list
+    const clearGeminiBtn = fixture.nativeElement.querySelector(
+      '[data-action="clear-gemini-key"]'
+    ) as HTMLButtonElement;
+    clearGeminiBtn.click();
+
+    const clearGeminiReq = http.expectOne('/api/system/credentials');
+    expect(clearGeminiReq.request.body).toEqual({
+      provider: 'google',
+      api_key: '',
+      persist_to_env: true
+    });
+    clearGeminiReq.flush({ status: 'success', message: 'Cleared' });
+
+    http.expectOne('/api/system/model-config-env').flush(initialConfig);
+    http
+      .expectOne(r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'google')
+      .flush({ provider: 'google', models: [] });
+    fixture.detectChanges();
+    expect(component.isCredentialsReady()).toBeFalse();
+
+    // Expand Optional Vision OCR row and save/test/clear OCR key
+    const ocrToggle = fixture.nativeElement.querySelector('.ocr-card-toggle-bar') as HTMLElement;
+    ocrToggle.click();
+    fixture.detectChanges();
+
+    component.onOcrKeyChange('AIza-test-ocr-9999');
+    fixture.detectChanges();
+
+    const saveOcrBtn = fixture.nativeElement.querySelector(
+      '[data-action="save-ocr-key"]'
+    ) as HTMLButtonElement;
+    saveOcrBtn.click();
+
+    const saveOcrReq = http.expectOne('/api/system/credentials');
+    expect(saveOcrReq.request.body).toEqual({
+      provider: 'ocr',
+      api_key: 'AIza-test-ocr-9999',
+      persist_to_env: true
+    });
+    saveOcrReq.flush({ status: 'success', message: 'OCR Saved' });
+    http.expectOne('/api/system/model-config-env').flush({
+      ...initialConfig,
+      env_vars: [
+        initialConfig.env_vars[0],
+        {
+          name: 'VISION_API_KEY',
+          provider: 'ocr',
+          is_set: true,
+          preview: 'AIza...9999',
+          description: 'OCR key'
+        }
+      ]
+    });
+    fixture.detectChanges();
+
+    const testOcrBtn = fixture.nativeElement.querySelector(
+      '[data-action="test-ocr-key"]'
+    ) as HTMLButtonElement;
+    testOcrBtn.click();
+    const testOcrReq = http.expectOne('/api/system/credentials/test');
+    expect(testOcrReq.request.body).toEqual({
+      provider: 'ocr',
+      api_key: 'AIza-test-ocr-9999',
+      base_url: undefined
+    });
+    testOcrReq.flush({ valid: true, provider: 'ocr', message: 'Valid OCR key' });
+    fixture.detectChanges();
+
+    const clearOcrBtn = fixture.nativeElement.querySelector(
+      '[data-action="clear-ocr-key"]'
+    ) as HTMLButtonElement;
+    clearOcrBtn.click();
+    const clearOcrReq = http.expectOne('/api/system/credentials');
+    expect(clearOcrReq.request.body).toEqual({
+      provider: 'ocr',
+      api_key: '',
+      persist_to_env: true
+    });
+    clearOcrReq.flush({ status: 'success', message: 'OCR Cleared' });
+    http.expectOne('/api/system/model-config-env').flush(initialConfig);
 
     fixture.destroy();
   });
