@@ -901,6 +901,55 @@ def get_google_llm(
     return ModelFactory.create_model(ep)
 
 
+def _resolve_provider_credentials(
+    provider_val: str, cfg: Any = None
+) -> tuple[str | None, str | None]:
+    """Resolve explicit or environment-configured ``(api_base, api_key)`` for a provider."""
+
+    def _get_val(obj: Any, attr: str, expected_type: type) -> Any:
+        val = getattr(obj, attr, None)
+        return val if isinstance(val, expected_type) else None
+
+    api_base_val = _get_val(cfg, "api_base", str) or _get_val(cfg, "base_url", str)
+    if not api_base_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_base_val = (
+            str(settings.OPENAI_BASE_URL)
+            if settings.OPENAI_BASE_URL
+            else os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE")
+        )
+
+    api_key_val = _get_val(cfg, "api_key", str)
+    if not api_key_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_key_val = (
+            settings.OPENAI_API_KEY.get_secret_value()
+            if settings.OPENAI_API_KEY
+            else os.environ.get("OPENAI_API_KEY")
+        )
+    return api_base_val, api_key_val
+
+
+def build_chat_model(
+    provider: str,
+    model_name: str,
+    *,
+    temperature: float = 0.0,
+    timeout: float = 60.0,
+) -> BaseChatModel:
+    """Instantiate a chat model via ``ModelFactory`` for any supported provider."""
+    api_base_val, api_key_val = _resolve_provider_credentials(provider)
+    endpoint = ModelEndpoint(
+        provider=ModelProvider.from_string(provider),
+        model_name=model_name,
+        api_base=api_base_val,
+        api_key=api_key_val,
+        temperature=temperature,
+        timeout_seconds=timeout,
+    )
+    return ModelFactory.get_model(endpoint)
+
+
 def _resolve_endpoint(
     ctx: ArtemisContext,
     name: str,
@@ -937,23 +986,7 @@ def _resolve_endpoint(
     raw_model = getattr(cfg, "model", "gemini-2.5-flash")
     model_val = str(raw_model) if isinstance(raw_model, str) else "gemini-2.5-flash"
 
-    api_base_val = _get_val(cfg, "api_base", str) or _get_val(cfg, "base_url", str)
-    if not api_base_val and provider_val in ("openai", "ollama", "vllm", "custom"):
-        api_base_val = (
-            str(settings.OPENAI_BASE_URL)
-            if settings.OPENAI_BASE_URL
-            else os.environ.get("OPENAI_BASE_URL")
-            or os.environ.get("OPENAI_API_BASE_URL")
-            or os.environ.get("OPENAI_API_BASE")
-        )
-
-    api_key_val = _get_val(cfg, "api_key", str)
-    if not api_key_val and provider_val in ("openai", "ollama", "vllm", "custom"):
-        api_key_val = (
-            settings.OPENAI_API_KEY.get_secret_value()
-            if settings.OPENAI_API_KEY
-            else os.environ.get("OPENAI_API_KEY")
-        )
+    api_base_val, api_key_val = _resolve_provider_credentials(provider_val, cfg)
 
     return ModelEndpoint(
         provider=ModelProvider.from_string(provider_val),
@@ -977,14 +1010,22 @@ def _get_llm(
     use_fallback: bool = False,
     temperature: float | None = None,
     model_name: str | None = None,
+    provider: str | None = None,
 ) -> BaseChatModel:
     """Resolves and instantiates the appropriate LLM wrapper for the given agent role."""
     endpoint = _resolve_endpoint(ctx, name, is_utils=is_utils, use_fallback=use_fallback)
-    updates = {}
+    updates: dict[str, Any] = {}
     if temperature is not None:
         updates["temperature"] = temperature
     if model_name is not None:
         updates["model_name"] = model_name
+    if provider is not None:
+        target_provider = ModelProvider.from_string(provider)
+        if target_provider != endpoint.provider:
+            api_base_val, api_key_val = _resolve_provider_credentials(provider)
+            updates["provider"] = target_provider
+            updates["api_base"] = api_base_val
+            updates["api_key"] = api_key_val
     if updates:
         endpoint = endpoint.model_copy(update=updates)
     raw_model = ModelFactory.get_model(endpoint)

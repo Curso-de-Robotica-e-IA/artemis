@@ -228,4 +228,128 @@ describe('SystemService readiness polling', () => {
 
     expect(service.modelConfigEnv()?.default_model?.model).toBe('qwen3.8:27b');
   });
+
+  it('fetches provider models and caches them per provider', () => {
+    service.fetchCustomModels(undefined, 'google').subscribe();
+
+    const request = http.expectOne(req =>
+      req.url === '/api/system/custom-models' &&
+      req.params.get('provider') === 'google' &&
+      !req.params.has('base_url')
+    );
+    request.flush({
+      provider: 'google',
+      base_url: null,
+      endpoint_used: 'https://generativelanguage.googleapis.com/v1beta/models',
+      source: 'google',
+      fallback_used: false,
+      models: [
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', owned_by: 'google' }
+      ]
+    });
+
+    expect(service.providerModelsCache()['google']?.models.length).toBe(1);
+    expect(service.providerModelsCache()['google']?.models[0].id).toBe('gemini-2.5-flash');
+  });
+
+  it('updates and resets a Pro Mode target model configuration', () => {
+    service.updateTargetModel({
+      target: 'object_detector',
+      provider: 'google',
+      model: 'gemini-robotics-er-2-preview'
+    }).subscribe();
+
+    const applyReq = http.expectOne('/api/system/model-config/target');
+    expect(applyReq.request.method).toBe('POST');
+    expect(applyReq.request.body).toEqual({
+      target: 'object_detector',
+      provider: 'google',
+      model: 'gemini-robotics-er-2-preview'
+    });
+    applyReq.flush({
+      status: 'success',
+      message: 'Updated nodes.object_detector',
+      target: {
+        key: 'object_detector',
+        label: 'Object Detector',
+        config_path: 'nodes.object_detector',
+        description: 'Locates UI elements',
+        supports_fallback: true,
+        effective_provider: 'google',
+        effective_model: 'gemini-robotics-er-2-preview',
+        is_inheriting_default: false,
+        active_badge: 'google / gemini-robotics-er-2-preview'
+      },
+      pro_targets: [],
+      config_path: 'config/artemis.jsonc',
+      model_config_env: {
+        config_path: 'config/artemis.jsonc',
+        config_filename: 'artemis.jsonc',
+        config_content: '{}',
+        default_model: { provider: 'ollama', model: 'qwen3.8:27b' },
+        pro_targets: [{
+          key: 'object_detector',
+          label: 'Object Detector',
+          config_path: 'nodes.object_detector',
+          description: 'Locates UI elements',
+          supports_fallback: true,
+          effective_provider: 'google',
+          effective_model: 'gemini-robotics-er-2-preview',
+          is_inheriting_default: false,
+          active_badge: 'google / gemini-robotics-er-2-preview'
+        }],
+        presets: {},
+        env_path: '.env',
+        env_filename: '.env',
+        env_vars: []
+      }
+    });
+
+    expect(service.modelConfigEnv()?.pro_targets?.[0].is_inheriting_default).toBeFalse();
+
+    service.resetTargetModel('object_detector').subscribe();
+    const resetReq = http.expectOne('/api/system/model-config/target/reset');
+    expect(resetReq.request.method).toBe('POST');
+    expect(resetReq.request.body).toEqual({ target: 'object_detector' });
+    resetReq.flush({
+      status: 'success',
+      message: 'Reset nodes.object_detector',
+      target: {
+        key: 'object_detector',
+        label: 'Object Detector',
+        config_path: 'nodes.object_detector',
+        description: 'Locates UI elements',
+        supports_fallback: true,
+        effective_provider: 'ollama',
+        effective_model: 'qwen3.8:27b',
+        is_inheriting_default: true,
+        active_badge: 'Inheriting Default'
+      },
+      pro_targets: [],
+      config_path: 'config/artemis.jsonc',
+      model_config_env: {
+        config_path: 'config/artemis.jsonc',
+        config_filename: 'artemis.jsonc',
+        config_content: '{}',
+        default_model: { provider: 'ollama', model: 'qwen3.8:27b' },
+        pro_targets: [{
+          key: 'object_detector',
+          label: 'Object Detector',
+          config_path: 'nodes.object_detector',
+          description: 'Locates UI elements',
+          supports_fallback: true,
+          effective_provider: 'ollama',
+          effective_model: 'qwen3.8:27b',
+          is_inheriting_default: true,
+          active_badge: 'Inheriting Default'
+        }],
+        presets: {},
+        env_path: '.env',
+        env_filename: '.env',
+        env_vars: []
+      }
+    });
+
+    expect(service.modelConfigEnv()?.pro_targets?.[0].is_inheriting_default).toBeTrue();
+  });
 });

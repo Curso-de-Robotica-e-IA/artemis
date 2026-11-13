@@ -481,11 +481,24 @@ async def get_model_config_and_env():
         },
     ]
 
+    try:
+        from apps.admin_console.services.custom_model_service import (
+            SUPPORTED_PROVIDER_OPTIONS,
+            build_pro_targets_state,
+        )
+    except ImportError:
+        from admin_console.services.custom_model_service import (
+            SUPPORTED_PROVIDER_OPTIONS,
+            build_pro_targets_state,
+        )
+
     return {
         "config_path": config_path or "config/artemis.jsonc",
         "config_filename": "artemis.jsonc",
         "config_content": config_content,
         "default_model": parsed_config.get("default", {}),
+        "pro_targets": build_pro_targets_state(parsed_config),
+        "supported_providers": SUPPORTED_PROVIDER_OPTIONS,
         "presets": parsed_config.get("presets", {}),
         "env_path": str(env_path),
         "env_filename": ".env",
@@ -497,7 +510,7 @@ class UpdateDefaultModelRequest(BaseModel):
     """Payload to update the global default model in artemis.jsonc."""
 
     provider: str = Field(default="openai", description="LLM provider identifier")
-    model: str = Field(description="Selected model ID from Ollama / OpenAI-compatible server")
+    model: str = Field(description="Selected model ID from the selected provider")
     update_fallback: bool = Field(
         default=True,
         description="Whether to keep default.fallback synced to the selected provider/model",
@@ -512,18 +525,48 @@ class UpdateDefaultModelRequest(BaseModel):
     )
 
 
+class UpdateTargetModelRequest(BaseModel):
+    """Payload to update a Pro Mode target override in artemis.jsonc."""
+
+    target: str = Field(
+        description=("Target identifier (object_detector, hopper, step_summarizer, or chunking)")
+    )
+    provider: str = Field(description="LLM provider identifier")
+    model: str = Field(description="Selected model ID for this target")
+    base_url: str | None = Field(
+        default=None,
+        description="Optional custom OpenAI/Ollama base URL to save alongside the model",
+    )
+    persist_base_url: bool = Field(
+        default=False,
+        description="Whether to persist base_url to OPENAI_BASE_URL in .env when provided",
+    )
+
+
+class ResetTargetModelRequest(BaseModel):
+    """Payload to clear a Pro Mode target override so it inherits default."""
+
+    target: str = Field(
+        description=("Target identifier (object_detector, hopper, step_summarizer, or chunking)")
+    )
+
+
 @router.get("/custom-models")
-async def list_custom_endpoint_models(request: Request, base_url: str | None = None):
-    """Fetch available models from the configured Ollama / OpenAI-compatible endpoint."""
+async def list_custom_endpoint_models(
+    request: Request,
+    base_url: str | None = None,
+    provider: str | None = None,
+):
+    """Fetch available models for the selected provider or OpenAI-compatible endpoint."""
     try:
-        from apps.admin_console.services.custom_model_service import list_custom_models
+        from apps.admin_console.services.custom_model_service import list_models_for_provider
     except ImportError:
-        from admin_console.services.custom_model_service import list_custom_models
+        from admin_console.services.custom_model_service import list_models_for_provider
 
     _require_local_admin_request(request)
 
     try:
-        return await list_custom_models(base_url=base_url)
+        return await list_models_for_provider(provider=provider, base_url=base_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TimeoutError as exc:
@@ -568,6 +611,85 @@ async def update_default_model_endpoint(request: Request, payload: UpdateDefault
             f"{updated_default.get('model')}."
         ),
         "default_model": updated_default,
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.post("/model-config/target")
+async def update_target_model_endpoint(request: Request, payload: UpdateTargetModelRequest):
+    """Apply an explicit provider/model override to a Pro Mode target in artemis.jsonc."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_pro_target_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_pro_target_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_pro_target_model_config(
+            target=payload.target,
+            provider=payload.provider,
+            model=payload.model,
+            base_url=payload.base_url,
+            persist_base_url=payload.persist_base_url,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    target_state = result["target"]
+    return {
+        "status": "success",
+        "message": (
+            f"Updated {target_state['config_path']} to "
+            f"{target_state['effective_provider']}/{target_state['effective_model']}."
+        ),
+        "target": target_state,
+        "pro_targets": result["pro_targets"],
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.post("/model-config/target/reset")
+async def reset_target_model_endpoint(request: Request, payload: ResetTargetModelRequest):
+    """Clear explicit overrides on a Pro Mode target so it inherits default."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import reset_pro_target_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import reset_pro_target_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = reset_pro_target_model_config(target=payload.target)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    target_state = result["target"]
+    return {
+        "status": "success",
+        "message": (
+            f"Reset {target_state['config_path']} to inherit default "
+            f"({target_state['effective_provider'] or 'default'}/"
+            f"{target_state['effective_model'] or 'unset'})."
+        ),
+        "target": target_state,
+        "pro_targets": result["pro_targets"],
         "config_path": result["config_path"],
         "model_config_env": refreshed_env,
     }

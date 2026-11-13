@@ -526,23 +526,33 @@ export class SystemService {
 
   public modelConfigEnv = signal<ModelConfigEnvResponse | null>(null);
   public customModels = signal<CustomEndpointModel[]>([]);
+  public providerModelsCache = signal<Record<string, CustomModelsResponse>>({});
 
   /**
-   * Fetch available models from an Ollama or OpenAI-compatible custom endpoint.
+   * Fetch available models for the given provider or OpenAI-compatible base URL.
    */
-  public fetchCustomModels(baseUrl?: string): Observable<CustomModelsResponse> {
+  public fetchCustomModels(baseUrl?: string, provider?: string): Observable<CustomModelsResponse> {
     let params = new HttpParams();
     const cleaned = (baseUrl || '').trim();
+    const cleanedProvider = (provider || '').trim().toLowerCase();
     if (cleaned) {
       params = params.set('base_url', cleaned);
+    }
+    if (cleanedProvider) {
+      params = params.set('provider', cleanedProvider);
     }
     return this.http.get<CustomModelsResponse>('/api/system/custom-models', { params }).pipe(
       tap({
         next: (data) => {
           this.customModels.set(data.models || []);
+          const cacheKey = cleanedProvider || (data.provider || data.source || 'custom').toLowerCase();
+          this.providerModelsCache.update(prev => ({
+            ...prev,
+            [cacheKey]: data
+          }));
         },
         error: (err) => {
-          console.error('Failed to fetch custom endpoint models:', err);
+          console.error('Failed to fetch provider models:', err);
         }
       })
     );
@@ -569,6 +579,52 @@ export class SystemService {
         },
         error: (err) => {
           console.error('Failed to update default model configuration:', err);
+        }
+      })
+    );
+  }
+
+  /**
+   * Persist a provider/model override for a Pro Mode target in artemis.jsonc.
+   */
+  public updateTargetModel(payload: {
+    target: ProModelTargetKey;
+    provider: string;
+    model: string;
+    base_url?: string;
+    persist_base_url?: boolean;
+  }): Observable<UpdateTargetModelResponse> {
+    return this.http.post<UpdateTargetModelResponse>('/api/system/model-config/target', payload).pipe(
+      tap({
+        next: (res) => {
+          if (res?.model_config_env) {
+            this.modelConfigEnv.set(res.model_config_env);
+          } else {
+            this.fetchModelConfigEnv().subscribe();
+          }
+        },
+        error: (err) => {
+          console.error(`Failed to update target '${payload.target}' model configuration:`, err);
+        }
+      })
+    );
+  }
+
+  /**
+   * Clear explicit model/provider/fallback overrides for a Pro Mode target so it inherits default.
+   */
+  public resetTargetModel(target: ProModelTargetKey): Observable<UpdateTargetModelResponse> {
+    return this.http.post<UpdateTargetModelResponse>('/api/system/model-config/target/reset', { target }).pipe(
+      tap({
+        next: (res) => {
+          if (res?.model_config_env) {
+            this.modelConfigEnv.set(res.model_config_env);
+          } else {
+            this.fetchModelConfigEnv().subscribe();
+          }
+        },
+        error: (err) => {
+          console.error(`Failed to reset target '${target}' model configuration:`, err);
         }
       })
     );
@@ -626,6 +682,31 @@ export class SystemService {
   }
 }
 
+export type ProModelTargetKey = 'object_detector' | 'hopper' | 'step_summarizer' | 'chunking';
+
+export interface SupportedProviderOption {
+  id: string;
+  label: string;
+  uses_base_url: boolean;
+  env_key?: string | null;
+}
+
+export interface ProModelTargetState {
+  key: ProModelTargetKey;
+  label: string;
+  config_path: string;
+  description: string;
+  supports_fallback: boolean;
+  requires_vision_note?: string | null;
+  explicit_provider?: string | null;
+  explicit_model?: string | null;
+  explicit_fallback?: { provider?: string; model?: string } | null;
+  effective_provider?: string | null;
+  effective_model?: string | null;
+  is_inheriting_default: boolean;
+  active_badge: string;
+}
+
 export interface ModelConfigEnvResponse {
   config_path: string;
   config_filename: string;
@@ -640,6 +721,8 @@ export interface ModelConfigEnvResponse {
       thinking_level?: string;
     };
   };
+  pro_targets?: ProModelTargetState[];
+  supported_providers?: SupportedProviderOption[];
   presets: Record<string, {
     provider: string;
     model: string;
@@ -659,16 +742,21 @@ export interface ModelConfigEnvResponse {
 export interface CustomEndpointModel {
   id: string;
   name: string;
+  provider?: string | null;
   owned_by?: string | null;
+  source?: string | null;
   parameter_size?: string | null;
   quantization_level?: string | null;
   size_bytes?: number | null;
 }
 
 export interface CustomModelsResponse {
-  base_url: string;
+  provider?: string;
+  base_url: string | null;
   endpoint_used: string;
   source: string;
+  fallback_used?: boolean;
+  warning?: string | null;
   models: CustomEndpointModel[];
 }
 
@@ -676,6 +764,15 @@ export interface UpdateDefaultModelResponse {
   status: string;
   message: string;
   default_model: ModelConfigEnvResponse['default_model'];
+  config_path: string;
+  model_config_env?: ModelConfigEnvResponse;
+}
+
+export interface UpdateTargetModelResponse {
+  status: string;
+  message: string;
+  target: ProModelTargetState;
+  pro_targets: ProModelTargetState[];
   config_path: string;
   model_config_env?: ModelConfigEnvResponse;
 }

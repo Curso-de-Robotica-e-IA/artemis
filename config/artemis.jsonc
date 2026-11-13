@@ -74,13 +74,7 @@
     // CRITICAL REQUIREMENT: Standard LLMs (including standard Gemini Flash, GPT-4o, Claude 3.7) lack sub-pixel spatial coordinate fine-tuning.
     // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
     // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
-    "object_detector": {
-      "model": "gemini-robotics-er-2-preview",
-      "fallback": {
-        "provider": "google",
-        "model": "gemini-robotics-er-2-preview"
-      }
-    },
+    "object_detector": {},
 
     // 🔍 Explorer: Deep element grounding and multi-candidate visual search
     // NOTE:
@@ -94,13 +88,7 @@
     "summarizer": {},
 
     // 🔽 Hopper: Fast lightweight package name locator
-    "hopper": {
-      "model": "gemini-3.5-flash-lite",
-      "fallback": {
-        "provider": "google",
-        "model": "gemini-3.1-flash-lite"
-      }
-    },
+    "hopper": {},
 
     // 📝 Outputter: Synthesizes execution trace into final output report
     "outputter": {},
@@ -145,7 +133,6 @@
       // replacing images only after strictly objective, high-density summaries are ready.
       "step_summarizer": {
         "enabled": true, // Whether background step summarization is active
-        "model": "gemini-3.5-flash-lite", // Lightweight model for fast background inference
         "prune_history_xml": true // Prune outdated heavy XML trees from historical steps
       }
     },
@@ -246,7 +233,6 @@
         // call each); milestone closes are exempt, the hard line waives it.
         "min_steps": 3,
         "target_source_tokens": 2000,
-        "model": "gemini-3.8-flash",
         "max_chunks": 8
         // "max_eras": 8 // independent era cap; omitted = follows max_chunks
       },

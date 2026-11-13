@@ -39,7 +39,13 @@ from artemis.config import settings
 from artemis.context import ArtemisContext
 from artemis.memory.step_memory import JobKey, StepMemoryService
 from artemis.utils.image_scaling import encode_image_for_llm
-from artemis.services.llm import RobustChatModelWrapper, get_google_llm, get_llm
+from artemis.llm.google import is_google_provider
+from artemis.services.llm import (
+    RobustChatModelWrapper,
+    build_chat_model,
+    get_google_llm,
+    get_llm,
+)
 from artemis.services.token_meter import record_llm_usage
 from artemis.utils.task_tree import format_actions_clean
 from artemis.utils.visualization import draw_action_overlay_on_image
@@ -154,6 +160,7 @@ class VisualStepSummarizer(StepMemoryService):
         model_name: str | None = None,
         retry_limit: int = 3,
         *,
+        provider: str | None = None,
         max_concurrency: int = 1,
         flush_timeout_s: float = 30.0,
     ):
@@ -164,8 +171,21 @@ class VisualStepSummarizer(StepMemoryService):
             flush_timeout_s=flush_timeout_s,
         )
 
-        # Initialize lightweight VLM: prioritize configured summarizer node
-        target_model = model_name or "gemini-2.5-flash-lite"
+        # Initialize lightweight VLM: prioritize explicit summarizer override,
+        # otherwise inherit from default/summarizer node configuration.
+        resolved_provider = provider if isinstance(provider, str) and provider else None
+        resolved_model = model_name if isinstance(model_name, str) and model_name else None
+        if resolved_model is None:
+            llm_cfg = getattr(ctx, "llm_config", None) if ctx is not None else None
+            default_cfg = getattr(llm_cfg, "default", None)
+            def_provider = getattr(default_cfg, "provider", None)
+            def_model = getattr(default_cfg, "model", None)
+            if isinstance(def_model, str) and def_model:
+                resolved_model = def_model
+                if resolved_provider is None and isinstance(def_provider, str) and def_provider:
+                    resolved_provider = def_provider
+
+        target_model = resolved_model or "gemini-2.5-flash-lite"
         self._model_name = target_model
         try:
             self._llm = get_llm(
@@ -173,11 +193,13 @@ class VisualStepSummarizer(StepMemoryService):
                 name="summarizer",
                 is_utils=False,
                 temperature=0.0,
-                model_name=model_name,
+                model_name=resolved_model,
+                provider=resolved_provider,
             )
         except Exception as exc:
             logger.debug(
-                f"Could not initialize primary summarizer LLM ({model_name}); attempting fallback: {exc}"
+                f"Could not initialize primary summarizer LLM ({resolved_model}); "
+                f"attempting fallback: {exc}"
             )
             try:
                 self._llm = get_llm(
@@ -188,9 +210,14 @@ class VisualStepSummarizer(StepMemoryService):
                     temperature=0.0,
                 )
             except Exception:
-                target_model = model_name or "gemini-2.5-flash-lite"
+                target_model = resolved_model or "gemini-2.5-flash-lite"
                 try:
-                    self._llm = get_google_llm(model_name=target_model, temperature=0.0)
+                    if resolved_provider and not is_google_provider(resolved_provider):
+                        self._llm = build_chat_model(
+                            resolved_provider, target_model, temperature=0.0
+                        )
+                    else:
+                        self._llm = get_google_llm(model_name=target_model, temperature=0.0)
                 except Exception:
                     logger.warning(
                         f"Could not initialize summarizer LLM; step summarizer will be inactive: {exc}"
@@ -198,7 +225,9 @@ class VisualStepSummarizer(StepMemoryService):
                     self._llm = None
         try:
             if self._llm is not None:
-                configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
+                configured = getattr(self._llm, "model", None) or getattr(
+                    self._llm, "model_name", None
+                )
                 if isinstance(configured, str) and configured:
                     self._model_name = configured
         except Exception as exc:

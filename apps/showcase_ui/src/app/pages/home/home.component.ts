@@ -18,7 +18,13 @@ import { Component, signal, computed, effect, inject, OnInit, OnDestroy, ChangeD
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AgentService } from '../../services/agent.service';
-import { CustomEndpointModel, SystemService } from '../../services/system.service';
+import {
+  CustomEndpointModel,
+  ProModelTargetKey,
+  ProModelTargetState,
+  SupportedProviderOption,
+  SystemService
+} from '../../services/system.service';
 import {
   AdbServerConnectionResult,
   AdbServerDevice,
@@ -44,6 +50,44 @@ import {
 } from '../../core/models/pro-tuning.model';
 
 export type TuningKind = 'verify' | 'explore';
+
+export interface TargetDraftState {
+  provider: string;
+  model: string;
+  edited: boolean;
+  isSaving: boolean;
+  isResetting: boolean;
+  isFetching: boolean;
+  saveMessage: string | null;
+  saveError: string | null;
+  fetchWarning: string | null;
+}
+
+const DEFAULT_PROVIDER_OPTIONS: SupportedProviderOption[] = [
+  { id: 'ollama', label: 'Ollama (Local)', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'google', label: 'Google Gemini', uses_base_url: false, env_key: 'GEMINI_API_KEY' },
+  { id: 'openai', label: 'OpenAI', uses_base_url: false, env_key: 'OPENAI_API_KEY' },
+  { id: 'openrouter', label: 'OpenRouter', uses_base_url: false, env_key: 'OPEN_ROUTER_API_KEY' },
+  { id: 'anthropic', label: 'Anthropic', uses_base_url: false, env_key: 'ANTHROPIC_API_KEY' },
+  { id: 'xai', label: 'xAI (Grok)', uses_base_url: false, env_key: 'XAI_API_KEY' },
+  { id: 'vllm', label: 'vLLM (Local)', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'custom', label: 'Custom OpenAI-Compatible', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'vertexai', label: 'Google Vertex AI', uses_base_url: false, env_key: null }
+];
+
+function createEmptyTargetDraft(provider: string = 'google', model: string = ''): TargetDraftState {
+  return {
+    provider,
+    model,
+    edited: false,
+    isSaving: false,
+    isResetting: false,
+    isFetching: false,
+    saveMessage: null,
+    saveError: null,
+    fetchWarning: null
+  };
+}
 
 /** One 2x2 px square of the "maxed out" dither texture drawn over a slider rail. */
 export interface DitherPixel {
@@ -128,15 +172,33 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   // Model & Environment configuration from backend
   public modelConfigEnv = computed(() => this.systemService.modelConfigEnv());
+  public providerOptions = computed<SupportedProviderOption[]>(
+    () => this.modelConfigEnv()?.supported_providers ?? DEFAULT_PROVIDER_OPTIONS
+  );
+  public proTargets = computed<ProModelTargetState[]>(
+    () => this.modelConfigEnv()?.pro_targets ?? []
+  );
+  public showProModeConfig = signal<boolean>(true);
+  public proTargetDrafts = signal<Record<ProModelTargetKey, TargetDraftState>>({
+    object_detector: createEmptyTargetDraft(),
+    hopper: createEmptyTargetDraft(),
+    step_summarizer: createEmptyTargetDraft(),
+    chunking: createEmptyTargetDraft()
+  });
 
-  // Custom / Ollama model discovery & selection state
+  // Custom / multi-provider model discovery & selection state
   public customBaseUrlInput = signal<string>('');
   public isCustomBaseUrlEdited = signal<boolean>(false);
-  public selectedCustomProvider = signal<string>('openai');
+  public selectedCustomProvider = signal<string>('ollama');
   public selectedCustomModel = signal<string>('');
   public isCustomSelectionEdited = signal<boolean>(false);
   public customModels = computed(() => this.systemService.customModels());
+  public providerModelsCache = computed(() => this.systemService.providerModelsCache());
+  public defaultProviderModels = computed<CustomEndpointModel[]>(() =>
+    this.getModelsForProvider(this.selectedCustomProvider(), this.selectedCustomModel())
+  );
   public customModelsEndpointUsed = signal<string | null>(null);
+  public customModelsWarning = signal<string | null>(null);
   public isLoadingCustomModels = signal<boolean>(false);
   public customModelsError = signal<string | null>(null);
   public isSavingCustomModel = signal<boolean>(false);
@@ -581,9 +643,28 @@ export class HomeComponent implements OnInit, OnDestroy {
           this.selectedCustomProvider.set(cfg.default_model.provider);
         }
       }
-      if (this.modelSetupMode() === 'custom' && baseUrlFromEnv && !this.hasAutoFetchedCustomModels) {
-        this.hasAutoFetchedCustomModels = true;
-        this.fetchCustomModels(true);
+      if (cfg?.pro_targets?.length) {
+        this.proTargetDrafts.update(current => {
+          const next = { ...current };
+          for (const target of cfg.pro_targets || []) {
+            const existing = next[target.key] || createEmptyTargetDraft();
+            if (!existing.edited) {
+              next[target.key] = {
+                ...existing,
+                provider: target.effective_provider || cfg.default_model?.provider || 'google',
+                model: target.effective_model || cfg.default_model?.model || ''
+              };
+            }
+          }
+          return next;
+        });
+      }
+      if (this.modelSetupMode() === 'custom' && !this.hasAutoFetchedCustomModels) {
+        const provider = this.selectedCustomProvider().trim().toLowerCase();
+        if (!this.isLocalCompatProvider(provider) || baseUrlFromEnv) {
+          this.hasAutoFetchedCustomModels = true;
+          this.fetchCustomModels(true);
+        }
       }
     });
   }
@@ -639,16 +720,66 @@ export class HomeComponent implements OnInit, OnDestroy {
     if (mode === 'custom') {
       this.systemService.setSkipCredentialsCheck(true);
       this.systemService.fetchModelConfigEnv().subscribe({
-        next: () => {
+        next: (envCfg) => {
+          const provider = this.selectedCustomProvider().trim().toLowerCase();
           const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
-          if (url && !this.isLoadingCustomModels() && this.customModels().length === 0) {
+          if (
+            (!this.isLocalCompatProvider(provider) || url) &&
+            !this.isLoadingCustomModels() &&
+            this.defaultProviderModels().length === 0
+          ) {
             this.hasAutoFetchedCustomModels = true;
             this.fetchCustomModels(true);
           }
+          this.prefetchProTargetProviders(envCfg.pro_targets || [], url);
         }
       });
     } else {
       this.systemService.setSkipCredentialsCheck(false);
+    }
+  }
+
+  public isLocalCompatProvider(provider: string | null | undefined): boolean {
+    const clean = (provider || '').trim().toLowerCase();
+    return clean === 'ollama' || clean === 'vllm' || clean === 'custom';
+  }
+
+  public getModelsForProvider(provider: string, selectedModel?: string | null): CustomEndpointModel[] {
+    const cleanProvider = (provider || '').trim().toLowerCase();
+    const cached = this.providerModelsCache()[cleanProvider]?.models || [];
+    if (cached.length === 0) {
+      return [];
+    }
+    const trimmedSelected = (selectedModel || '').trim();
+    if (trimmedSelected && !cached.some(m => m.id === trimmedSelected)) {
+      return [
+        { id: trimmedSelected, name: trimmedSelected, provider: cleanProvider },
+        ...cached
+      ];
+    }
+    return cached;
+  }
+
+  private prefetchProTargetProviders(targets: ProModelTargetState[], baseUrl: string): void {
+    const providers = new Set<string>();
+    for (const target of targets) {
+      const p = (target.effective_provider || '').trim().toLowerCase();
+      if (p) {
+        providers.add(p);
+      }
+    }
+    const cache = this.providerModelsCache();
+    for (const prov of providers) {
+      if (cache[prov]) {
+        continue;
+      }
+      if (this.isLocalCompatProvider(prov) && !baseUrl) {
+        continue;
+      }
+      this.systemService.fetchCustomModels(
+        this.isLocalCompatProvider(prov) ? baseUrl : undefined,
+        prov
+      ).subscribe({ error: () => {} });
     }
   }
 
@@ -661,10 +792,22 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public onCustomProviderChange(val: string): void {
-    this.selectedCustomProvider.set(val);
+    const clean = val.trim().toLowerCase();
+    this.selectedCustomProvider.set(clean);
     this.isCustomSelectionEdited.set(true);
+    this.customModelsError.set(null);
+    this.customModelsWarning.set(null);
     this.customModelSaveError.set(null);
     this.customModelSaveMessage.set(null);
+
+    const cached = this.providerModelsCache()[clean]?.models;
+    if (cached && cached.length > 0) {
+      if (!cached.some(m => m.id === this.selectedCustomModel().trim())) {
+        this.selectedCustomModel.set(cached[0].id);
+      }
+      return;
+    }
+    this.fetchCustomModels(true);
   }
 
   public onCustomModelSelectChange(val: string): void {
@@ -675,11 +818,13 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public fetchCustomModels(silentIfEmptyUrl: boolean = false): void {
+    const provider = (this.selectedCustomProvider() || 'ollama').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
     const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
-    if (!url) {
+    if (isLocal && !url) {
       if (!silentIfEmptyUrl) {
         this.customModelsError.set(
-          'Enter your Ollama / OpenAI-compatible URL (e.g. http://192.168.155.5:11434/v1).'
+          'Enter your Ollama / OpenAI-compatible URL (e.g. http://localhost:11434/v1).'
         );
       }
       return;
@@ -687,25 +832,22 @@ export class HomeComponent implements OnInit, OnDestroy {
 
     this.isLoadingCustomModels.set(true);
     this.customModelsError.set(null);
-    this.systemService.fetchCustomModels(url).subscribe({
+    this.customModelsWarning.set(null);
+    this.systemService.fetchCustomModels(isLocal ? url : undefined, provider).subscribe({
       next: (res) => {
         this.isLoadingCustomModels.set(false);
         this.customModelsEndpointUsed.set(res.endpoint_used || null);
+        this.customModelsWarning.set(res.fallback_used && res.warning ? res.warning : null);
         const models = res.models || [];
         if (models.length === 0) {
           this.customModelsError.set(
-            `No models found at ${res.endpoint_used || url}. Pull a model in Ollama first.`
+            res.warning || `No models found for provider '${provider}'.`
           );
           return;
         }
-        // Switch provider away from 'google' automatically when pulling from Ollama/OpenAI endpoint
-        const currentProv = this.selectedCustomProvider().trim().toLowerCase();
-        if (!currentProv || currentProv === 'google') {
-          this.selectedCustomProvider.set('openai');
-        }
         const currentModel = this.selectedCustomModel().trim();
         const hasMatch = models.some(m => m.id === currentModel);
-        if (!hasMatch) {
+        if (!currentModel || (this.isCustomSelectionEdited() && !hasMatch)) {
           this.selectedCustomModel.set(models[0].id);
         }
       },
@@ -713,7 +855,7 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.isLoadingCustomModels.set(false);
         this.customModelsEndpointUsed.set(null);
         this.customModelsError.set(
-          err?.error?.detail || err?.message || 'Failed to fetch models from endpoint.'
+          err?.error?.detail || err?.message || `Failed to fetch models for provider '${provider}'.`
         );
       }
     });
@@ -721,7 +863,8 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   public saveSelectedCustomModel(): void {
     const model = this.selectedCustomModel().trim();
-    const provider = (this.selectedCustomProvider() || 'openai').trim();
+    const provider = (this.selectedCustomProvider() || 'ollama').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
     const baseUrl = this.customBaseUrlInput().trim();
     if (!model) {
       this.customModelSaveError.set('Select a model before applying.');
@@ -732,7 +875,7 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.customModelSaveError.set(null);
     this.customModelSaveMessage.set(null);
 
-    const shouldPersistBaseUrl = !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
+    const shouldPersistBaseUrl = isLocal && !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
     this.systemService.updateDefaultModel({
       provider,
       model,
@@ -744,7 +887,7 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.isSavingCustomModel.set(false);
         this.isCustomBaseUrlEdited.set(false);
         this.isCustomSelectionEdited.set(false);
-        this.customModelSaveMessage.set(res?.message || `✓ Default model set to ${provider}/${model}.`);
+        this.customModelSaveMessage.set(res?.message || `Default model set to ${provider}/${model}.`);
         setTimeout(() => this.customModelSaveMessage.set(null), 5000);
       },
       error: (err) => {
@@ -752,6 +895,163 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.customModelSaveError.set(
           err?.error?.detail || err?.message || 'Failed to update default model.'
         );
+      }
+    });
+  }
+
+  public toggleProModeConfig(): void {
+    this.showProModeConfig.update(v => !v);
+  }
+
+  private patchTargetDraft(targetKey: ProModelTargetKey, patch: Partial<TargetDraftState>): void {
+    this.proTargetDrafts.update(current => ({
+      ...current,
+      [targetKey]: {
+        ...(current[targetKey] || createEmptyTargetDraft()),
+        ...patch
+      }
+    }));
+  }
+
+  public onTargetProviderChange(targetKey: ProModelTargetKey, provider: string): void {
+    const clean = provider.trim().toLowerCase();
+    this.patchTargetDraft(targetKey, {
+      provider: clean,
+      edited: true,
+      saveMessage: null,
+      saveError: null,
+      fetchWarning: null
+    });
+
+    const cached = this.providerModelsCache()[clean]?.models;
+    const currentModel = (this.proTargetDrafts()[targetKey]?.model || '').trim();
+    if (cached && cached.length > 0) {
+      if (!cached.some(m => m.id === currentModel)) {
+        this.patchTargetDraft(targetKey, { model: cached[0].id });
+      }
+      return;
+    }
+    this.fetchModelsForTarget(targetKey, true);
+  }
+
+  public onTargetModelChange(targetKey: ProModelTargetKey, model: string): void {
+    this.patchTargetDraft(targetKey, {
+      model,
+      edited: true,
+      saveMessage: null,
+      saveError: null
+    });
+  }
+
+  public fetchModelsForTarget(
+    targetKey: ProModelTargetKey,
+    silentIfEmptyUrl: boolean = false
+  ): void {
+    const draft = this.proTargetDrafts()[targetKey] || createEmptyTargetDraft();
+    const provider = (draft.provider || 'google').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
+    const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
+    if (isLocal && !url) {
+      if (!silentIfEmptyUrl) {
+        this.patchTargetDraft(targetKey, {
+          saveError: 'Configure OPENAI_BASE_URL above before fetching local endpoint models.'
+        });
+      }
+      return;
+    }
+
+    this.patchTargetDraft(targetKey, {
+      isFetching: true,
+      saveError: null,
+      fetchWarning: null
+    });
+    this.systemService.fetchCustomModels(isLocal ? url : undefined, provider).subscribe({
+      next: (res) => {
+        const models = res.models || [];
+        const currentModel = (this.proTargetDrafts()[targetKey]?.model || '').trim();
+        const hasMatch = models.some(m => m.id === currentModel);
+        const nextModel =
+          models.length > 0 && (!currentModel || (this.proTargetDrafts()[targetKey]?.edited && !hasMatch))
+            ? models[0].id
+            : currentModel;
+        this.patchTargetDraft(targetKey, {
+          isFetching: false,
+          model: nextModel,
+          fetchWarning: res.fallback_used && res.warning ? res.warning : null,
+          saveError: models.length === 0 ? (res.warning || `No models found for '${provider}'.`) : null
+        });
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isFetching: false,
+          saveError: err?.error?.detail || err?.message || `Failed to fetch models for '${provider}'.`
+        });
+      }
+    });
+  }
+
+  public applyTargetModel(targetKey: ProModelTargetKey): void {
+    const draft = this.proTargetDrafts()[targetKey] || createEmptyTargetDraft();
+    const provider = (draft.provider || 'google').trim().toLowerCase();
+    const model = (draft.model || '').trim();
+    if (!model) {
+      this.patchTargetDraft(targetKey, { saveError: 'Select or enter a model before applying.' });
+      return;
+    }
+
+    const isLocal = this.isLocalCompatProvider(provider);
+    const baseUrl = this.customBaseUrlInput().trim();
+    const shouldPersistBaseUrl = isLocal && !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
+
+    this.patchTargetDraft(targetKey, {
+      isSaving: true,
+      saveError: null,
+      saveMessage: null
+    });
+    this.systemService.updateTargetModel({
+      target: targetKey,
+      provider,
+      model,
+      base_url: shouldPersistBaseUrl ? baseUrl : undefined,
+      persist_base_url: shouldPersistBaseUrl
+    }).subscribe({
+      next: (res) => {
+        this.patchTargetDraft(targetKey, {
+          isSaving: false,
+          edited: false,
+          saveMessage: res?.message || `Updated to ${provider}/${model}.`
+        });
+        setTimeout(() => this.patchTargetDraft(targetKey, { saveMessage: null }), 5000);
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isSaving: false,
+          saveError: err?.error?.detail || err?.message || 'Failed to update target model.'
+        });
+      }
+    });
+  }
+
+  public resetTargetModel(targetKey: ProModelTargetKey): void {
+    this.patchTargetDraft(targetKey, {
+      isResetting: true,
+      saveError: null,
+      saveMessage: null
+    });
+    this.systemService.resetTargetModel(targetKey).subscribe({
+      next: (res) => {
+        this.patchTargetDraft(targetKey, {
+          isResetting: false,
+          edited: false,
+          saveMessage: res?.message || 'Reset target to inherit default model.'
+        });
+        setTimeout(() => this.patchTargetDraft(targetKey, { saveMessage: null }), 5000);
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isResetting: false,
+          saveError: err?.error?.detail || err?.message || 'Failed to reset target override.'
+        });
       }
     });
   }

@@ -169,6 +169,7 @@ class FlashRunner:
             VisualStepSummarizer(
                 ctx,
                 model_name=self.step_summarizer_cfg.model,
+                provider=self.step_summarizer_cfg.provider,
                 retry_limit=self.memory_runtime_cfg.retry_limit,
                 max_concurrency=self.memory_runtime_cfg.max_concurrency,
                 flush_timeout_s=self.memory_runtime_cfg.flush_timeout_s,
@@ -219,7 +220,9 @@ class FlashRunner:
         # declared from the very same args schemas the LangChain tools bind
         # (same availability gates: a DataEngine session, recall config).
         tools.extend(history_tool_declarations(self.ctx))
-        if self._video_tools_enabled() and not is_tool_denylisted(self.ctx, "video_analyzer", "flash"):
+        if self._video_tools_enabled() and not is_tool_denylisted(
+            self.ctx, "video_analyzer", "flash"
+        ):
             from artemis.tools.video_tool import VIDEO_ANALYZER_TOOL
 
             tools.append(VIDEO_ANALYZER_TOOL)
@@ -705,7 +708,9 @@ class FlashRunner:
                     norm_coords = [int(float(nums[0])), int(float(nums[1]))]
         return norm_coords, norm_start, norm_end
 
-    def _build_action_record(self, name: str, args: dict, exec_result, state: State | None = None) -> dict:
+    def _build_action_record(
+        self, name: str, args: dict, exec_result, state: State | None = None
+    ) -> dict:
         """The action as the step record and the visual lens see it.
 
         Flash records the model's own 0–1000 coordinates verbatim (an index
@@ -862,7 +867,9 @@ class FlashRunner:
 
             # One record shape for the DataEngine step and the visual lens.
             action_dict = (
-                self._build_action_record(name, args, exec_result, state=state) if name in action_names else None
+                self._build_action_record(name, args, exec_result, state=state)
+                if name in action_names
+                else None
             )
 
             # Record telemetry / step in DataEngine

@@ -259,6 +259,41 @@ def _visual_summary_marker() -> str:
     return HISTORY_SUMMARY_PREFIX.strip()
 
 
+def _resolve_default_provider_and_model(ctx: Any) -> tuple[str, str]:
+    """Resolve ``(provider, model)`` from the configured ``default`` LLM block."""
+    llm_cfg = getattr(ctx, "llm_config", None) if ctx is not None else None
+    for attr in ("default", "summarizer"):
+        candidate = getattr(llm_cfg, attr, None)
+        p = getattr(candidate, "provider", None)
+        m = getattr(candidate, "model", None)
+        if isinstance(p, str) and p and isinstance(m, str) and m:
+            return p, m
+    if llm_cfg is None:
+        try:
+            from artemis.config.llm import get_default_llm_config
+
+            cfg = get_default_llm_config()
+            candidate = getattr(cfg, "default", None) or getattr(cfg, "summarizer", None)
+            p = getattr(candidate, "provider", None)
+            m = getattr(candidate, "model", None)
+            if isinstance(p, str) and p and isinstance(m, str) and m:
+                return p, m
+        except (FileNotFoundError, OSError, ValueError, RuntimeError):
+            pass
+    return "google", "gemini-3.8-flash"
+
+
+def _instantiate_capsule_llm(provider: str, model_name: str):
+    """Instantiate a StepCapsuleLens chat model for any configured provider."""
+    if is_google_provider(provider):
+        from artemis.services.llm import get_google_llm
+
+        return get_google_llm(model_name=model_name, temperature=0.0)
+    from artemis.services.llm import build_chat_model
+
+    return build_chat_model(provider, model_name, temperature=0.0)
+
+
 class StepCapsuleLens(StepLens):
     """Chunk-level lens producing bands ①+② in one call.
 
@@ -294,11 +329,22 @@ class StepCapsuleLens(StepLens):
         model_name: str | None = None,
         llm: Any | None = None,
         *,
+        provider: str | None = None,
         ctx: Any = None,
         fallback_model_name: str | None = None,
+        fallback_provider: str | None = None,
         fallback_llm: Any | None = None,
     ):
-        self._model_name = model_name or "gemini-3.8-flash"
+        explicit_model = model_name if isinstance(model_name, str) and model_name else None
+        explicit_provider = provider if isinstance(provider, str) and provider else None
+        if explicit_model is None:
+            default_provider, default_model = _resolve_default_provider_and_model(ctx)
+            self._model_name = default_model
+            self._provider = explicit_provider or default_provider
+        else:
+            self._model_name = explicit_model
+            self._provider = explicit_provider or "google"
+
         self._llm = llm
         self._ctx = ctx
         # Availability hardening: `chunking.model` is a dedicated model with no
@@ -306,8 +352,17 @@ class StepCapsuleLens(StepLens):
         # 503), every capsule dies and chunk headers stay pending forever. A
         # configured fallback model turns a provider outage into a degraded
         # attempt instead of a dead loop.
+        fb_provider = (
+            fallback_provider
+            if isinstance(fallback_provider, str) and fallback_provider
+            else "google"
+        )
+        self._fallback_provider = fb_provider
         self._fallback_model_name = (
-            fallback_model_name if fallback_model_name != self._model_name else None
+            fallback_model_name
+            if fallback_model_name
+            and (fb_provider, fallback_model_name) != (self._provider, self._model_name)
+            else None
         )
         self._fallback_llm = fallback_llm
         try:
@@ -323,17 +378,13 @@ class StepCapsuleLens(StepLens):
 
     def _get_llm(self):
         if self._llm is None:
-            from artemis.services.llm import get_google_llm
-
-            self._llm = get_google_llm(model_name=self._model_name, temperature=0.0)
+            self._llm = _instantiate_capsule_llm(self._provider, self._model_name)
         return self._llm
 
     def _get_fallback_llm(self):
         if self._fallback_llm is None and self._fallback_model_name:
-            from artemis.services.llm import get_google_llm
-
-            self._fallback_llm = get_google_llm(
-                model_name=self._fallback_model_name, temperature=0.0
+            self._fallback_llm = _instantiate_capsule_llm(
+                self._fallback_provider, self._fallback_model_name
             )
         return self._fallback_llm
 
@@ -891,7 +942,15 @@ class HistoryChunkManager:
         self._max_steps = int(getattr(cc, "max_steps", 12) or 12)
         self._min_steps = max(1, min(self._max_steps, int(getattr(cc, "min_steps", 3) or 3)))
         self._target_source_tokens = int(getattr(cc, "target_source_tokens", 2000) or 2000)
-        self._model_name = getattr(cc, "model", None) or "gemini-3.8-flash"
+        raw_model = getattr(cc, "model", None)
+        raw_provider = getattr(cc, "provider", None)
+        if isinstance(raw_model, str) and raw_model:
+            self._model_name = raw_model
+            self._provider = (
+                raw_provider if isinstance(raw_provider, str) and raw_provider else "google"
+            )
+        else:
+            self._provider, self._model_name = _resolve_default_provider_and_model(ctx)
         self._max_chunks = int(getattr(cc, "max_chunks", 8) or 8)
         # None uses max_chunks as the era cap.
         self._max_eras = int(getattr(cc, "max_eras", None) or self._max_chunks)
@@ -942,12 +1001,47 @@ class HistoryChunkManager:
                 f"Memory runtime config unavailable; using capsule service defaults: {exc}",
                 exc_info=True,
             )
+        fb_provider, fb_model = self._resolve_capsule_fallback(ctx)
         lens = StepCapsuleLens(
             self._model_name,
+            provider=self._provider,
             ctx=ctx,
-            fallback_model_name=self._resolve_capsule_fallback_model(ctx),
+            fallback_model_name=fb_model,
+            fallback_provider=fb_provider,
         )
         return ChunkCapsuleService(ctx, lens, **kwargs)
+
+    def _resolve_capsule_fallback(self, ctx: Any) -> tuple[str | None, str | None]:
+        """Resolve ``(provider, model)`` fallback for capsule generation across providers."""
+        try:
+            llm_cfg = getattr(ctx, "llm_config", None) if ctx is not None else None
+            if llm_cfg is None:
+                from artemis.config.llm import get_default_llm_config
+
+                llm_cfg = get_default_llm_config()
+            for attr in ("default", "summarizer"):
+                node_cfg = getattr(llm_cfg, attr, None)
+                fallback = getattr(node_cfg, "fallback", None)
+                provider = getattr(fallback, "provider", None)
+                model = getattr(fallback, "model", None)
+                if (
+                    isinstance(provider, str)
+                    and provider
+                    and isinstance(model, str)
+                    and model
+                    and (provider, model) != (self._provider, self._model_name)
+                ):
+                    return provider, model
+        except (
+            FileNotFoundError,
+            OSError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ) as exc:
+            logger.debug(f"Capsule fallback model resolution skipped: {exc}", exc_info=True)
+        return None, None
 
     def _resolve_capsule_fallback_model(self, ctx: Any) -> str | None:
         """Fallback model for capsule generation when `chunking.model` is down.
@@ -967,7 +1061,14 @@ class HistoryChunkManager:
             model = getattr(fallback, "model", None)
             if model and is_google_provider(provider) and model != self._model_name:
                 return str(model)
-        except Exception as exc:
+        except (
+            FileNotFoundError,
+            OSError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+        ) as exc:
             logger.debug(f"Capsule fallback model resolution skipped: {exc}", exc_info=True)
         return None
 

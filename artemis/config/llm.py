@@ -75,6 +75,7 @@ def lightweight_judge_default() -> "LLMWithFallback":
 class LLMConfig(LLMConfigBase):
     """Comprehensive LLM configuration mapping every node to primary/fallback models."""
 
+    default: LLMWithFallback | None = None
     summarizer: LLMWithFallback
     operator: LLMWithFallback
     operator_summarizer: LLMWithFallback
@@ -94,6 +95,8 @@ class LLMConfig(LLMConfigBase):
     def validate_providers(self) -> None:
         """Validate credentials across all configured agent nodes."""
         super().validate_providers()
+        if self.default:
+            self.default.validate_provider("Default")
         self.summarizer.validate_provider("Summarizer")
         self.operator.validate_provider("Operator")
         self.operator_summarizer.validate_provider("OperatorSummarizer")
@@ -138,22 +141,55 @@ class LLMConfig(LLMConfigBase):
         return val
 
 
+def _merge_node_override(base_cfg: dict[str, Any], override: Any) -> dict[str, Any]:
+    """Merge a node override onto the default LLM block.
+
+    If ``model`` is absent or empty in ``override``, ``provider``, ``model``, and
+    ``fallback`` fall back directly to ``default`` while keeping non-model node
+    options intact.
+    """
+    node_cfg = dict(base_cfg)
+    if isinstance(base_cfg.get("fallback"), dict):
+        node_cfg["fallback"] = dict(base_cfg["fallback"])
+    if not isinstance(override, dict):
+        return node_cfg
+
+    has_explicit_model = bool(override.get("model"))
+    for k, v in override.items():
+        if not has_explicit_model and k in ("provider", "model", "fallback"):
+            continue
+        if isinstance(v, dict) and isinstance(node_cfg.get(k), dict):
+            node_cfg[k] = {**node_cfg[k], **v}
+        else:
+            node_cfg[k] = v
+    return node_cfg
+
+
 def _expand_default_into_nodes(config_dict: dict) -> dict:
     """Expand unified config format with 'default' and 'nodes' into full LLMConfig schema."""
     if "planner" in config_dict and "utils" in config_dict:
         return config_dict
 
-    default_model_cfg = config_dict.get(
-        "default",
-        {
+    raw_default = config_dict.get("default")
+    default_model_cfg = (
+        dict(raw_default)
+        if isinstance(raw_default, dict)
+        else {
             "provider": "google",
             "model": "gemini-3.8-flash",
             "fallback": {
                 "provider": "google",
                 "model": "gemini-3.7-flash",
             },
-        },
+        }
     )
+    if "fallback" not in default_model_cfg or not isinstance(
+        default_model_cfg.get("fallback"), dict
+    ):
+        default_model_cfg["fallback"] = {
+            "provider": default_model_cfg.get("provider", "google"),
+            "model": default_model_cfg.get("model", "gemini-3.8-flash"),
+        }
 
     nodes_override = config_dict.get("nodes", {})
 
@@ -179,27 +215,13 @@ def _expand_default_into_nodes(config_dict: dict) -> dict:
         "object_detector",
     ]
 
-    result: dict[str, Any] = {}
+    result: dict[str, Any] = {"default": dict(default_model_cfg)}
     for node in all_agent_nodes:
-        node_cfg = dict(default_model_cfg)
-        if node in nodes_override:
-            for k, v in nodes_override[node].items():
-                if isinstance(v, dict) and isinstance(node_cfg.get(k), dict):
-                    node_cfg[k] = {**node_cfg[k], **v}
-                else:
-                    node_cfg[k] = v
-        result[node] = node_cfg
+        result[node] = _merge_node_override(default_model_cfg, nodes_override.get(node))
 
     utils_dict: dict[str, Any] = {}
     for util in all_utils_nodes:
-        util_cfg = dict(default_model_cfg)
-        if util in nodes_override:
-            for k, v in nodes_override[util].items():
-                if isinstance(v, dict) and isinstance(util_cfg.get(k), dict):
-                    util_cfg[k] = {**util_cfg[k], **v}
-                else:
-                    util_cfg[k] = v
-        utils_dict[util] = util_cfg
+        utils_dict[util] = _merge_node_override(default_model_cfg, nodes_override.get(util))
     result["utils"] = utils_dict
 
     return result

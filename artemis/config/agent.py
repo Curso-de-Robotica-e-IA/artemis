@@ -14,6 +14,7 @@
 
 """Agent tools, sub-agent capabilities, and explorer settings configuration."""
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -394,9 +395,19 @@ class StepSummarizerConfig(BaseModel):
         default=True,
         description="Whether to asynchronously summarize historical steps to replace pruned images.",
     )
-    model: str = Field(
-        default="gemini-2.5-flash-lite",
-        description="Lightweight model used for background step state summarization.",
+    provider: str | None = Field(
+        default=None,
+        description=(
+            "Optional LLM provider override for background step state summarization. "
+            "When omitted alongside model, inherits the global default provider."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Lightweight model used for background step state summarization. "
+            "When None, inherits the global default model."
+        ),
     )
     prune_history_xml: bool = Field(
         default=True,
@@ -691,9 +702,19 @@ class MemoryChunkingConfig(BaseModel):
             " the hard threshold waives it (emergency)."
         ),
     )
-    model: str = Field(
-        default="gemini-3.8-flash",
-        description="Model used for the chunk-level StepCapsuleLens (bands ①+②).",
+    provider: str | None = Field(
+        default=None,
+        description=(
+            "Optional LLM provider override for StepCapsuleLens. "
+            "When omitted alongside model, inherits the global default provider."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model used for the chunk-level StepCapsuleLens (bands ①+②). "
+            "When None, inherits the global default model."
+        ),
     )
     max_chunks: int = Field(
         default=8,
@@ -1079,6 +1100,16 @@ def resolve_explorer_version(
     )
 
 
+def _inherit_default_model_fields(target: dict[str, Any], default_block: dict[str, Any]) -> None:
+    """Populate missing model/provider fields on a sub-module block from ``default``."""
+    if target.get("model"):
+        return
+    if default_block.get("provider"):
+        target["provider"] = default_block["provider"]
+    if default_block.get("model"):
+        target["model"] = default_block["model"]
+
+
 def load_agent_config(
     config_path: Path | None = None,
 ) -> AgentGlobalConfig:
@@ -1106,12 +1137,31 @@ def load_agent_config(
         with open(resolved_path, encoding="utf-8") as f:
             data = load_jsonc(f)
             if isinstance(data, dict) and "agent" in data:
-                return AgentGlobalConfig.model_validate(data["agent"])
+                agent_dict = copy.deepcopy(data["agent"])
+                default_block = data.get("default")
+                if isinstance(agent_dict, dict) and isinstance(default_block, dict):
+                    flash_block = agent_dict.setdefault("flash", {})
+                    if isinstance(flash_block, dict):
+                        ss_block = flash_block.get("step_summarizer")
+                        if ss_block is None:
+                            ss_block = {}
+                            flash_block["step_summarizer"] = ss_block
+                        if isinstance(ss_block, dict):
+                            _inherit_default_model_fields(ss_block, default_block)
+
+                    memory_block = agent_dict.setdefault("memory", {})
+                    if isinstance(memory_block, dict):
+                        chunking_block = memory_block.get("chunking")
+                        if chunking_block is None:
+                            chunking_block = {}
+                            memory_block["chunking"] = chunking_block
+                        if isinstance(chunking_block, dict):
+                            _inherit_default_model_fields(chunking_block, default_block)
+                return AgentGlobalConfig.model_validate(agent_dict)
             return AgentGlobalConfig.model_validate(data)
     except Exception as e:
         logger.error(f"Failed to load agent config from '{resolved_path}': {e}")
         raise ValueError(f"Failed to parse '{resolved_path}': {e}") from e
-
 
 
 def is_tool_denylisted(ctx: Any, tool_name: str, agent_name: str = "operator") -> bool:
