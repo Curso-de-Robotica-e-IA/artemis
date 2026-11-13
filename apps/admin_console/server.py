@@ -61,9 +61,6 @@ from artemis.runtime import (
 from artemis.config import (
     DB_PATH,
     IMAGES_DIR,
-    REPLAY_BASE_DIR,
-    TEST_DATA_DIR,
-    TEST_OUTPUTS_DIR,
     TRACES_PATH,
     WORKSPACE_ROOT,
     init_ls_address,
@@ -118,6 +115,14 @@ app.state.lifecycle_token = LIFECYCLE_TOKEN
 app.add_middleware(SameOriginBoundaryMiddleware)
 
 
+async def _run_startup_trace_maintenance() -> None:
+    """Run startup trace maintenance sequentially after folder finalization."""
+    await asyncio.to_thread(task_queue_service.recover_orphaned_recordings_on_launch)
+    await asyncio.to_thread(task_queue_service.archive_older_replays_on_launch)
+    await asyncio.to_thread(task_queue_service.verify_chunks_exist_on_launch, replay_manager)
+    await asyncio.to_thread(task_queue_service.cleanup_empty_traces_on_launch)
+
+
 async def on_startup():
     """Startup lifecycle hooks."""
     state.is_shutting_down = False
@@ -145,18 +150,13 @@ async def on_startup():
             "[ServerStartup] ADB warm-up did not confirm a responding adb server; "
             "device enumeration will retry on demand."
         )
-    asyncio.create_task(asyncio.to_thread(task_queue_service.archive_older_replays_on_launch))
-    asyncio.create_task(
-        asyncio.to_thread(task_queue_service.verify_chunks_exist_on_launch, replay_manager)
-    )
-
     cleaned = session_repo.cleanup_orphans_on_startup()
     if cleaned > 0:
         print(f"[ServerStartup] Marked {cleaned} orphaned running session(s) as failed.")
     # Workers killed together with a previous daemon never remuxed their
-    # recordings; publish whatever raw files they left behind.
-    asyncio.create_task(asyncio.to_thread(task_queue_service.recover_orphaned_recordings_on_launch))
-    asyncio.create_task(asyncio.to_thread(task_queue_service.cleanup_empty_traces_on_launch))
+    # recordings; publish whatever raw files they left behind before archiving
+    # and chunking per-session replay artifacts under finalized folder names.
+    asyncio.create_task(_run_startup_trace_maintenance())
 
     await ipc_service.start_server()
     state.worker_task = asyncio.create_task(task_queue_service.queue_worker())

@@ -204,17 +204,25 @@ def get_trace_dir(trace_id: str) -> str:
     if os.path.isdir(direct):
         return direct
 
+    reserved_dirs = {"replay", "images", "data", "temp_traces", "outputs"}
     s_prefix = trace_id[:8] if len(trace_id) >= 8 else trace_id
+    fallback_match: str | None = None
     try:
         if os.path.isdir(TRACES_DIR):
-            for entry in os.listdir(TRACES_DIR):
-                if (trace_id in entry or s_prefix in entry) and os.path.isdir(
-                    os.path.join(TRACES_DIR, entry)
-                ):
-                    return os.path.join(TRACES_DIR, entry)
+            for entry in sorted(os.listdir(TRACES_DIR)):
+                if entry.startswith(".") or entry in reserved_dirs:
+                    continue
+                full_entry = os.path.join(TRACES_DIR, entry)
+                if not os.path.isdir(full_entry):
+                    continue
+                if trace_id in entry or s_prefix in entry:
+                    if "_PASS_" in entry or "_FAIL_" in entry or "_TESTFAIL_" in entry:
+                        return full_entry
+                    if fallback_match is None or entry.startswith("web_"):
+                        fallback_match = full_entry
     except OSError:
         pass
-    return direct
+    return fallback_match or direct
 
 
 def cleanup_empty_trace_dirs() -> list[str]:

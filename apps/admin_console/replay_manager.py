@@ -43,6 +43,21 @@ except ImportError:
     ArtemisContext = Any
     State = Any
 
+try:
+    from admin_console.services.media_service import (
+        RESERVED_TRACE_SUBDIRS,
+        MediaService,
+        media_service,
+        resolve_session_trace_dir,
+    )
+except ImportError:
+    from apps.admin_console.services.media_service import (
+        RESERVED_TRACE_SUBDIRS,
+        MediaService,
+        media_service,
+        resolve_session_trace_dir,
+    )
+
 REPLAY_TOOLS_CONFIG = {
     "ask_explorer": {
         "display_name": "Ask Explorer",
@@ -99,15 +114,9 @@ class ReplayManager:
     Attributes:
         workspace_root (Path): The absolute path to the root of the project
           workspace.
-        replay_base_dir (Path): Base directory containing replay data and
-          outputs.
-        test_data_dir (Path): Directory containing chunked historical step
-          traces.
-        test_outputs_dir (Path): Sandbox directory where replay outputs are
-          written.
         db_path (Path): Path to the master Data Engine SQLite database.
         traces_path (Path): Path to the master traces directory.
-        images_dir (Path): Path to the master images directory.
+        images_dir (Path): Path to the fallback root images directory.
     """
 
     def __init__(
@@ -116,8 +125,9 @@ class ReplayManager:
         device_id: str = None,
         original_db_path: Path = None,
         init_device: bool = False,
+        traces_path: Path | None = None,
     ):
-        """Initializes the ReplayManager and autodetects the connected Android device.
+        """Initializes the ReplayManager and optionally connects an Android device.
 
         Args:
             workspace_root (Path, optional): The absolute path to the workspace
@@ -125,17 +135,22 @@ class ReplayManager:
             device_id (str, optional): The serial ID of the target Android
               device. If not specified, autodetects the first connected device.
             original_db_path (Path, optional): Path to the master SQLite
-              database. Defaults to DB_PATH.
+              database. Defaults to DB_PATH (or ``<traces_path>/data_engine.db``
+              when ``traces_path`` is explicitly supplied).
             init_device (bool, optional): Whether to initialize the ADB device
               connection on startup.
+            traces_path (Path, optional): Override root directory for session
+              execution trace folders. Defaults to TRACES_PATH.
         """
         self.workspace_root = workspace_root
-        self.traces_path = TRACES_PATH
-        self.replay_base_dir = self.traces_path / "replay"
-        self.test_data_dir = self.replay_base_dir / "data"
-        self.test_outputs_dir = self.replay_base_dir / "outputs"
-        self.db_path = Path(original_db_path) if original_db_path else DB_PATH
-        self.images_dir = IMAGES_DIR
+        self.traces_path = Path(traces_path) if traces_path else TRACES_PATH
+        if original_db_path:
+            self.db_path = Path(original_db_path)
+        elif traces_path:
+            self.db_path = self.traces_path / "data_engine.db"
+        else:
+            self.db_path = DB_PATH
+        self.images_dir = self.traces_path / "images" if traces_path else IMAGES_DIR
 
         # Device connection and autodetection
         self.device_id = None
@@ -193,49 +208,74 @@ class ReplayManager:
         self.w, self.h = ui_data.width, ui_data.height
         print(f"Connected to device: {self.device_id} ({self.w}x{self.h})")
 
+    def resolve_session_dir(self, session_id: str) -> Path:
+        """Resolve the execution directory for ``session_id`` under ``self.traces_path``."""
+        return resolve_session_trace_dir(self.traces_path, session_id, db_path=self.db_path)
+
+    def get_session_replay_dir(self, session_id: str) -> Path:
+        """Return ``<execution_dir>/replay`` for ``session_id``."""
+        return self.resolve_session_dir(session_id) / "replay"
+
+    def get_step_dir(self, session_id: str, step_number: int) -> Path:
+        """Return ``<execution_dir>/replay/step_<NN>`` for ``session_id`` and ``step_number``."""
+        return self.get_session_replay_dir(session_id) / f"step_{step_number:02d}"
+
+    def get_step_outputs_dir(self, session_id: str, step_number: int) -> Path:
+        """Return ``<execution_dir>/replay/outputs/step_<NN>`` for sandboxed replay runs."""
+        return self.get_session_replay_dir(session_id) / "outputs" / f"step_{step_number:02d}"
+
+    def get_session_archive_dir(self, session_id: str) -> Path:
+        """Return ``<execution_dir>/replay/older`` for archived sandbox replay outputs."""
+        return self.get_session_replay_dir(session_id) / "older"
+
+    def _resolve_step_image_file(
+        self,
+        image_name: str,
+        session_dir: Path,
+        step_session_id: str | None = None,
+    ) -> Path | None:
+        """Locate a recorded screenshot for a step inside its session or fallback folders."""
+        raw_name = str(image_name).strip()
+        if not raw_name:
+            return None
+        suffix = Path(raw_name).suffix.lower()
+        filenames = (
+            [raw_name]
+            if suffix in {".jpg", ".jpeg", ".png", ".webp"}
+            else [f"{raw_name}{ext}" for ext in (".jpg", ".jpeg", ".png", ".webp")] + [raw_name]
+        )
+        search_dirs = [session_dir / "images", session_dir]
+        if step_session_id:
+            search_dirs.append(self.traces_path / str(step_session_id) / "images")
+        search_dirs.extend([self.images_dir, self.traces_path / "images"])
+
+        for directory in search_dirs:
+            for filename in filenames:
+                cand = directory / filename
+                if cand.is_file():
+                    return cand
+
+        resolved = media_service.resolve_image_path(image_name, session_id=step_session_id)
+        if resolved and resolved.is_file():
+            return resolved
+        return None
+
     def chunk_session_traces(self, session_id: str, output_dir: Path = None) -> Path:
         """Chunks traces, screenshots, and metadata for a specific execution session.
 
         Queries the master SQLite database and exports step-by-step
-        subdirectories
-        (e.g., `step_00/`, `step_01/`) inside the output directory.
+        subdirectories (e.g., ``step_01/``, ``step_02/``) inside
+        ``<execution_dir>/replay/`` (or ``output_dir`` when explicitly given).
 
         Args:
             session_id: The UUID string of the session to extract and chunk.
-            output_dir: Optional path to the directory where chunked results
-              should be saved. Defaults to `self.test_data_dir /
-              f"{session_id}_chunked"`.
+            output_dir: Optional override directory for chunked replay data.
+              Defaults to ``<execution_dir>/replay``.
         """
-        import sqlite3
-        import json
-        import shutil
-
         db_path = self.db_path
-        traces_dir = self.traces_path
 
         if not db_path.exists():
             raise FileNotFoundError(f"Master database not found at {db_path}")
-
-        if not output_dir:
-            output_dir = self.test_data_dir / f"{session_id}_chunked"
-        else:
-            output_dir = Path(output_dir)
-
-        if output_dir.exists() or output_dir.is_symlink():
-            # Safety check: only delete directories that are named *_chunked
-            if output_dir.name.endswith("_chunked"):
-                if output_dir.is_symlink():
-                    output_dir.unlink()
-                elif (
-                    self.test_data_dir in output_dir.parents
-                    or output_dir.parent == self.test_data_dir
-                    or output_dir.parent.name == "inputs"
-                ):
-                    shutil.rmtree(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Chunking traces for session: {session_id}")
-        print(f"Using database: {db_path}")
-        print(f"Output directory: {output_dir}")
 
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -254,6 +294,31 @@ class ReplayManager:
         if not session_row and not steps:
             conn.close()
             raise ValueError(f"Session {session_id} not found in database.")
+
+        session_dir = self.resolve_session_dir(session_id)
+        output_dir = Path(output_dir) if output_dir else (session_dir / "replay")
+
+        if output_dir.is_symlink():
+            output_dir.unlink()
+        elif output_dir.exists():
+            # Rebuild chunked step subdirectories idempotently while keeping
+            # sandbox outputs/ and older/ directories intact.
+            for child in output_dir.iterdir():
+                if child.is_dir() and child.name.startswith("step_"):
+                    shutil.rmtree(child)
+            sentinel = output_dir / ".chunked"
+            if sentinel.exists():
+                sentinel.unlink()
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Chunking traces for session: {session_id}")
+        print(f"Using database: {db_path}")
+        print(f"Output directory: {output_dir}")
+
+        if session_row:
+            session_meta_path = output_dir / "session.json"
+            with open(session_meta_path, "w", encoding="utf-8") as f:
+                json.dump(dict(session_row), f, indent=2, ensure_ascii=False, default=str)
 
         for step in steps:
             step_number = step["step_number"]
@@ -276,7 +341,7 @@ class ReplayManager:
                 ):
                     try:
                         step_data[key] = json.loads(val)
-                    except Exception:
+                    except (ValueError, TypeError):
                         step_data[key] = val
                 else:
                     step_data[key] = val
@@ -300,7 +365,7 @@ class ReplayManager:
                     if key == "payload" and val:
                         try:
                             trace_dict[key] = json.loads(val)
-                        except Exception:
+                        except (ValueError, TypeError):
                             trace_dict[key] = val
                     else:
                         trace_dict[key] = val
@@ -315,34 +380,34 @@ class ReplayManager:
             post_image_name = step_data.get("post_image_name")
             if pre_image_name and post_image_name == pre_image_name:
                 post_image_name = None
-            images_dir = traces_dir / "images"
-
-            from apps.admin_console.services.media_service import media_service
 
             step_sess_id = step_data.get("session_id")
-            if pre_image_name:
-                src_pre = media_service.resolve_image_path(pre_image_name, session_id=step_sess_id)
-                if not src_pre or not src_pre.exists():
-                    src_pre = images_dir / f"{pre_image_name}.jpg"
-                if src_pre and src_pre.exists():
-                    shutil.copy2(src_pre, step_dir / "pre.jpg")
+            for label, image_name, target_filename in (
+                ("Pre-action", pre_image_name, "pre.jpg"),
+                ("Post-action", post_image_name, "post.jpg"),
+            ):
+                if not image_name:
+                    continue
+                src_image = self._resolve_step_image_file(
+                    image_name,
+                    session_dir,
+                    step_session_id=str(step_sess_id) if step_sess_id else None,
+                )
+                if src_image is not None:
+                    shutil.copy2(src_image, step_dir / target_filename)
                 else:
-                    print(f"Warning: Pre-action screenshot not found for {pre_image_name}")
+                    print(f"Warning: {label} screenshot not found for {image_name}")
 
-            if post_image_name:
-                src_post = media_service.resolve_image_path(post_image_name, session_id=step_sess_id)
-                if not src_post or not src_post.exists():
-                    src_post = images_dir / f"{post_image_name}.jpg"
-                if src_post and src_post.exists():
-                    shutil.copy2(src_post, step_dir / "post.jpg")
-                else:
-                    print(f"Warning: Post-action screenshot not found for {post_image_name}")
-
-            # 4. Save metadata of the pre-action screenshot (pre_image_meta.json)
-            if pre_image_name:
+            # 4 & 5. Save pre/post screenshot metadata JSON files
+            for image_name, meta_filename in (
+                (pre_image_name, "pre_image_meta.json"),
+                (post_image_name, "post_image_meta.json"),
+            ):
+                if not image_name:
+                    continue
                 cursor.execute(
                     "SELECT * FROM images WHERE image_name = ?",
-                    (pre_image_name,),
+                    (image_name,),
                 )
                 img_row = cursor.fetchone()
                 if img_row:
@@ -352,53 +417,24 @@ class ReplayManager:
                         if key in ("ocr_result", "ui_tree", "extra_metadata") and val:
                             try:
                                 img_meta[key] = json.loads(val)
-                            except Exception:
+                            except (ValueError, TypeError):
                                 img_meta[key] = val
                         else:
                             img_meta[key] = val
 
-                    pre_img_meta_path = step_dir / "pre_image_meta.json"
-                    with open(pre_img_meta_path, "w", encoding="utf-8") as f:
+                    img_meta_path = step_dir / meta_filename
+                    with open(img_meta_path, "w", encoding="utf-8") as f:
                         json.dump(img_meta, f, indent=2, ensure_ascii=False)
                 else:
                     print(
-                        f"Warning: Image metadata row for {pre_image_name} not"
-                        " found in images table."
-                    )
-
-            # 5. Save metadata of the post-action screenshot (post_image_meta.json)
-            if post_image_name:
-                cursor.execute(
-                    "SELECT * FROM images WHERE image_name = ?",
-                    (post_image_name,),
-                )
-                img_row = cursor.fetchone()
-                if img_row:
-                    img_meta = {}
-                    for key in img_row.keys():
-                        val = img_row[key]
-                        if key in ("ocr_result", "ui_tree", "extra_metadata") and val:
-                            try:
-                                img_meta[key] = json.loads(val)
-                            except Exception:
-                                img_meta[key] = val
-                        else:
-                            img_meta[key] = val
-
-                    post_img_meta_path = step_dir / "post_image_meta.json"
-                    with open(post_img_meta_path, "w", encoding="utf-8") as f:
-                        json.dump(img_meta, f, indent=2, ensure_ascii=False)
-                else:
-                    print(
-                        f"Warning: Image metadata row for {post_image_name} not"
-                        " found in images table."
+                        f"Warning: Image metadata row for {image_name} not found in images table."
                     )
 
         conn.close()
-        # Write sentinel file to indicate successful chunking
+        # Write sentinel file only after all steps succeed
         try:
             (output_dir / ".chunked").touch()
-        except Exception as e:
+        except OSError as e:
             print(f"Warning: Failed to write chunked sentinel file: {e}")
         print("Chunking trace completion status: success")
         return output_dir
@@ -419,15 +455,18 @@ class ReplayManager:
         self, session_id: str, step_dir: Path, original_db_path: str = None
     ) -> str:
         """Loads the session goal from either session.json or the original session db."""
-        session_json_path = step_dir.parent / "session.json"
-        if session_json_path.exists():
-            try:
-                with open(session_json_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict) and "initial_goal" in data and data["initial_goal"]:
-                        return data["initial_goal"]
-            except Exception as e:
-                print(f"Warning: Failed to load goal from session.json: {e}")
+        for session_json_path in (
+            step_dir.parent / "session.json",
+            step_dir.parent.parent / "session.json",
+        ):
+            if session_json_path.exists():
+                try:
+                    with open(session_json_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict) and data.get("initial_goal"):
+                            return data["initial_goal"]
+                except (OSError, ValueError) as e:
+                    print(f"Warning: Failed to load goal from {session_json_path}: {e}")
 
         if original_db_path and Path(original_db_path).exists():
             try:
@@ -721,9 +760,7 @@ class ReplayManager:
         return storage
 
     def get_preloaded_trace_ids_for_step(self, session_id: str, step_num: int) -> set:
-        traces_json_path = (
-            self.test_data_dir / f"{session_id}_chunked" / f"step_{step_num:02d}" / "traces.json"
-        )
+        traces_json_path = self.get_step_dir(session_id, step_num) / "traces.json"
         if traces_json_path.exists():
             try:
                 with open(traces_json_path, encoding="utf-8") as f:
@@ -840,14 +877,14 @@ class ReplayManager:
         if not session_id:
             return self.load_traces_from_db(temp_db_path, current_step_number, preloaded_trace_ids)
 
-        session_chunked_dir = self.test_data_dir / f"{session_id}_chunked"
+        session_replay_dir = self.get_session_replay_dir(session_id)
 
         all_traces = []
-        if session_chunked_dir.exists():
+        if session_replay_dir.exists():
             step_subdirs = sorted(
                 [
                     d
-                    for d in session_chunked_dir.iterdir()
+                    for d in session_replay_dir.iterdir()
                     if d.is_dir() and d.name.startswith("step_")
                 ],
                 key=lambda d: d.name,
@@ -859,7 +896,7 @@ class ReplayManager:
                 except (IndexError, ValueError):
                     continue
 
-                step_outputs_dir = self.test_outputs_dir / f"{session_id}_step_{step_num:02d}"
+                step_outputs_dir = self.get_step_outputs_dir(session_id, step_num)
                 step_db_path = step_outputs_dir / "temp_traces" / "data_engine.db"
 
                 step_preloaded_ids = self.get_preloaded_trace_ids_for_step(session_id, step_num)
@@ -894,7 +931,7 @@ class ReplayManager:
         # Align live replay traces to the appropriate preloaded step/operator trace
         for step_num in range(1, 100):
             current_step_id = None
-            current_step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_num:02d}"
+            current_step_dir = session_replay_dir / f"step_{step_num:02d}"
             if not current_step_dir.exists():
                 continue
 
@@ -998,11 +1035,11 @@ class ReplayManager:
 
     def enrich_all_session_traces(self, all_traces: list, session_id: str) -> list:
         """Enriches all preloaded traces (across all steps) with file URLs to their corresponding screenshots."""
-        session_chunked_dir = self.test_data_dir / f"{session_id}_chunked"
+        session_replay_dir = self.get_session_replay_dir(session_id)
 
         step_dirs = {}
-        if session_chunked_dir.exists():
-            for subdir in session_chunked_dir.iterdir():
+        if session_replay_dir.exists():
+            for subdir in session_replay_dir.iterdir():
                 if subdir.is_dir() and subdir.name.startswith("step_"):
                     step_json_path = subdir / "step.json"
                     if step_json_path.exists():
@@ -1034,12 +1071,12 @@ class ReplayManager:
         return all_traces
 
     def load_steps_metadata(self, session_id: str) -> dict[int, dict]:
-        """Loads metadata for all steps in the session from the chunked data."""
-        session_chunked_dir = self.test_data_dir / f"{session_id}_chunked"
+        """Loads metadata for all steps in the session from the session replay directory."""
+        session_replay_dir = self.get_session_replay_dir(session_id)
 
         steps = {}
-        if session_chunked_dir.exists():
-            for subdir in session_chunked_dir.iterdir():
+        if session_replay_dir.exists():
+            for subdir in session_replay_dir.iterdir():
                 if subdir.is_dir() and subdir.name.startswith("step_"):
                     step_json_path = subdir / "step.json"
                     if step_json_path.exists():
@@ -1256,45 +1293,55 @@ class ReplayManager:
         )
 
     def _ensure_session_chunked(self, session_id: str) -> Path:
-        """Ensures that the session traces are chunked and ready for replay."""
-        session_chunked_dir = self.test_data_dir / f"{session_id}_chunked"
+        """Ensure step replay chunks exist under ``<execution_dir>/replay`` for ``session_id``."""
+        session_replay_dir = self.get_session_replay_dir(session_id)
+
+        if not self.db_path.exists():
+            return session_replay_dir
 
         db_steps_count = 0
-        if self.db_path.exists():
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT COUNT(*) FROM steps WHERE session_id = ?",
-                    (session_id,),
-                )
-                db_steps_count = cursor.fetchone()[0]
-                conn.close()
-            except Exception as e:
-                print(f"Warning: Failed to query step count from DB: {e}")
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM steps WHERE session_id = ?",
+                (session_id,),
+            )
+            db_steps_count = cursor.fetchone()[0]
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Warning: Failed to query step count from DB: {e}")
+            return session_replay_dir
 
         chunked_steps_count = 0
-        if session_chunked_dir.exists():
-            chunked_steps_count = len(list(session_chunked_dir.glob("step_*")))
+        if session_replay_dir.exists():
+            chunked_steps_count = sum(
+                1
+                for item in session_replay_dir.iterdir()
+                if item.is_dir() and item.name.startswith("step_")
+            )
 
-        # Check if directory does not exist, does not contain the sentinel file, or count of chunked steps is out of sync
+        # Avoid creating empty replay/ directories on disk for sessions without recorded steps.
+        if db_steps_count == 0 and chunked_steps_count == 0:
+            return session_replay_dir
+
         needs_chunking = (
-            not session_chunked_dir.exists()
-            or not (session_chunked_dir / ".chunked").exists()
+            not session_replay_dir.exists()
+            or not (session_replay_dir / ".chunked").exists()
             or db_steps_count != chunked_steps_count
         )
 
         if needs_chunking:
             try:
                 print(
-                    f"Chunked data needs update for session {session_id} (DB"
+                    f"Replay data needs update for session {session_id} (DB"
                     f" steps: {db_steps_count}, chunked steps:"
                     f" {chunked_steps_count}). Chunking on-the-fly..."
                 )
-                self.chunk_session_traces(session_id, session_chunked_dir)
-            except Exception as e:
+                self.chunk_session_traces(session_id, session_replay_dir)
+            except (OSError, sqlite3.Error, ValueError) as e:
                 print(f"Failed to chunk session {session_id} on-the-fly: {e}")
-        return session_chunked_dir
+        return session_replay_dir
 
     def resolve_master_video_path(self, db_recorded_path_str: str) -> Path | None:
         """Resolves the physical master video recording path on disk, searching for renamed folders."""
@@ -1316,6 +1363,9 @@ class ReplayManager:
 
         # 4. Resolve folder renaming prefix
         parent_dir_name = db_video_path.parent.name
+        base_parent_name = (
+            MediaService.strip_trace_status_suffix(parent_dir_name) if parent_dir_name else ""
+        )
         filename = db_video_path.name
         for search_dir in [
             self.traces_path,
@@ -1324,13 +1374,21 @@ class ReplayManager:
             if parent_dir_name and search_dir.exists():
                 try:
                     for child in search_dir.iterdir():
-                        if child.is_dir() and (
-                            child.name.startswith(parent_dir_name) or parent_dir_name in child.name
+                        if (
+                            not child.is_dir()
+                            or child.name.startswith(".")
+                            or child.name in RESERVED_TRACE_SUBDIRS
+                        ):
+                            continue
+                        if (
+                            child.name.startswith(parent_dir_name)
+                            or parent_dir_name in child.name
+                            or (base_parent_name and child.name.startswith(base_parent_name))
                         ):
                             candidate = child / filename
                             if candidate.exists():
                                 return candidate.resolve()
-                except Exception as e:
+                except OSError as e:
                     print(f"Warning: Error while scanning {search_dir} for renamed folder: {e}")
 
         # 5. Check if under traces_path or artemis-traces with parent_dir_name
@@ -1472,7 +1530,7 @@ class ReplayManager:
             return
 
         # Look for next step start
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         next_step_dir = step_dir.parent / f"step_{step_number + 1:02d}"
         next_step_json_path = next_step_dir / "step.json"
 
@@ -1620,7 +1678,7 @@ class ReplayManager:
     ) -> ArtemisContext:
         """Creates a sandboxed ArtemisContext and DataEngine for the given session and step."""
         self._ensure_session_chunked(session_id)
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         if not step_dir.exists():
             raise FileNotFoundError(f"Step directory not found at {step_dir}")
 
@@ -1641,7 +1699,7 @@ class ReplayManager:
             with open(post_image_meta_path, encoding="utf-8") as f:
                 post_image_meta = json.load(f)
 
-        outputs_dir = self.test_outputs_dir / f"{session_id}_step_{step_number:02d}"
+        outputs_dir = self.get_step_outputs_dir(session_id, step_number)
         outputs_dir.mkdir(parents=True, exist_ok=True)
 
         temp_traces_dir = outputs_dir / "temp_traces"
@@ -1756,7 +1814,7 @@ class ReplayManager:
     ) -> State:
         """Instantiates the State object for the given session and step number."""
         self._ensure_session_chunked(session_id)
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         if not step_dir.exists():
             raise FileNotFoundError(f"Step directory not found at {step_dir}")
 
@@ -1826,11 +1884,12 @@ class ReplayManager:
             raise ValueError(f"Unknown tool for replay: {tool_name}")
         agent_name = tool_cfg["agent_name"]
 
-        outputs_parent = self.test_outputs_dir
+        session_replay_dir = self.get_session_replay_dir(session_id)
+        outputs_parent = session_replay_dir / "outputs"
         if outputs_parent.exists():
             for item in outputs_parent.iterdir():
-                if item.is_dir() and item.name.startswith(f"{session_id}_step_"):
-                    archive_dir = self.replay_base_dir / "data" / "older"
+                if item.is_dir() and item.name.startswith("step_"):
+                    archive_dir = self.get_session_archive_dir(session_id)
                     archive_dir.mkdir(parents=True, exist_ok=True)
 
                     from datetime import datetime
@@ -1850,17 +1909,17 @@ class ReplayManager:
                     )
                     try:
                         shutil.move(str(item), str(target_path))
-                    except Exception as archive_err:
+                    except OSError as archive_err:
                         print(
                             f"Warning: Failed to archive {item.name}: {archive_err}",
                             file=sys.stderr,
                         )
 
-        outputs_dir = self.test_outputs_dir / f"{session_id}_step_{step_number:02d}"
+        outputs_dir = self.get_step_outputs_dir(session_id, step_number)
         temp_db_path = outputs_dir / "temp_traces" / "data_engine.db"
 
         # Load step data locally for fallback mapping resolutions
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         step_json_path = step_dir / "step.json"
         with open(step_json_path, encoding="utf-8") as f:
             step_data = json.load(f)
@@ -2152,10 +2211,28 @@ class ReplayManager:
             for name, cfg in REPLAY_TOOLS_CONFIG.items()
         ]
 
+    def _session_exists_in_db(self, session_id: str) -> bool:
+        """Return whether ``session_id`` has a row in the master SQLite database."""
+        if not self.db_path.exists():
+            return False
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM sessions WHERE session_id = ? LIMIT 1", (session_id,))
+            return cur.fetchone() is not None
+        except sqlite3.Error:
+            return False
+        finally:
+            if conn is not None:
+                conn.close()
+
     def get_replay_steps(self, session_id: str) -> list[dict]:
         """Loads and formats metadata for all chunked steps in the session."""
-        session_chunked_dir = self._ensure_session_chunked(session_id)
-        if not session_chunked_dir.exists():
+        session_replay_dir = self._ensure_session_chunked(session_id)
+        if not session_replay_dir.exists():
+            if self._session_exists_in_db(session_id):
+                return []
             raise FileNotFoundError("Step replay chunked data not found for this session.")
 
         try:
@@ -2185,7 +2262,7 @@ class ReplayManager:
 
                 pre_url = None
                 post_url = None
-                step_dir = session_chunked_dir / f"step_{num:02d}"
+                step_dir = session_replay_dir / f"step_{num:02d}"
                 if step_dir.exists():
                     pre_jpg = step_dir / "pre.jpg"
                     if pre_jpg.exists():
@@ -2239,7 +2316,7 @@ class ReplayManager:
                     all_tool_defaults[t_name] = defaults
 
                 # Check if this step has already been replayed by scanning outputs folder
-                step_outputs_dir = self.test_outputs_dir / f"{session_id}_step_{num:02d}"
+                step_outputs_dir = self.get_step_outputs_dir(session_id, num)
                 step_db_path = step_outputs_dir / "temp_traces" / "data_engine.db"
                 is_replayed = step_db_path.exists()
 
@@ -2291,11 +2368,11 @@ class ReplayManager:
         )
 
         # 2. Extract freshly generated traces
-        outputs_dir = self.test_outputs_dir / f"{session_id}_step_{step_number:02d}"
+        outputs_dir = self.get_step_outputs_dir(session_id, step_number)
         temp_db_path = outputs_dir / "temp_traces" / "data_engine.db"
 
         self._ensure_session_chunked(session_id)
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         _, _, traces_to_preload = self.extract_replay_data(
             step_dir, str(self.db_path), agent_name=agent_name
         )
@@ -2448,14 +2525,14 @@ class ReplayManager:
             raise ValueError(f"Unknown tool for replay: {tool_name}")
         agent_name = tool_cfg["agent_name"]
 
-        outputs_dir = self.test_outputs_dir / f"{session_id}_step_{step_number:02d}"
+        outputs_dir = self.get_step_outputs_dir(session_id, step_number)
         temp_db_path = outputs_dir / "temp_traces" / "data_engine.db"
 
         if not temp_db_path.exists():
             return {"success": True, "live": []}
 
         self._ensure_session_chunked(session_id)
-        step_dir = self.test_data_dir / f"{session_id}_chunked" / f"step_{step_number:02d}"
+        step_dir = self.get_step_dir(session_id, step_number)
         preloaded_trace_ids = set()
         if step_dir.exists():
             _, _, traces_to_preload = self.extract_replay_data(

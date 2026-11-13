@@ -19,6 +19,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import threading
 import time
@@ -29,6 +30,140 @@ from fastapi import HTTPException
 from artemis.config import IMAGES_DIR, TRACES_PATH, WORKSPACE_ROOT
 
 logger = logging.getLogger(__name__)
+
+RESERVED_TRACE_SUBDIRS = ("replay", "images", "data", "temp_traces", "outputs")
+_SESSION_ARTIFACT_MARKERS = ("notes", "check_ledger.jsonl", "images", "steps.json", "replay")
+
+
+def _extract_video_prefixes(
+    db_path: Path, session_id: str, traces_path: Path
+) -> tuple[Path | None, list[str]]:
+    """Return an existing direct parent dir from video metadata and fallback folder prefixes."""
+    if not db_path.is_file():
+        return None, []
+
+    prefixes: list[str] = []
+    direct_match: Path | None = None
+    try:
+        traces_root = traces_path.resolve()
+    except OSError:
+        traces_root = traces_path
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        raw_paths: list[str] = []
+        for query in (
+            "SELECT video_filepath FROM sessions WHERE session_id = ? AND video_filepath IS NOT NULL",
+            "SELECT local_video_path FROM video_recordings WHERE session_id = ? AND local_video_path IS NOT NULL",
+        ):
+            try:
+                cursor.execute(query, (session_id,))
+                raw_paths.extend(str(row[0]) for row in cursor.fetchall() if row and row[0])
+            except sqlite3.OperationalError:
+                continue
+    except (sqlite3.Error, OSError):
+        raw_paths = []
+    finally:
+        if conn is not None:
+            conn.close()
+
+    for raw in raw_paths:
+        if raw.startswith("/videos/"):
+            rel = raw.removeprefix("/videos/").split("?")[0]
+            ws_candidate = (WORKSPACE_ROOT / rel).parent
+            candidate_parent = ws_candidate if ws_candidate.is_dir() else (traces_path / rel).parent
+        else:
+            candidate_parent = Path(raw).parent
+
+        parent_name = candidate_parent.name
+        if parent_name and parent_name not in RESERVED_TRACE_SUBDIRS:
+            base_name = MediaService.strip_trace_status_suffix(parent_name)
+            if base_name and base_name not in prefixes:
+                prefixes.append(base_name)
+            if candidate_parent.is_dir():
+                try:
+                    resolved_parent = candidate_parent.resolve()
+                    if resolved_parent.parent == traces_root:
+                        direct_match = candidate_parent
+                except OSError:
+                    pass
+    return direct_match, prefixes
+
+
+def resolve_session_trace_dir(
+    traces_path: Path,
+    session_id: str,
+    db_path: Path | None = None,
+) -> Path:
+    """Resolve the execution trace directory for ``session_id`` under ``traces_path``.
+
+    Supports active un-suffixed folders (``web_<id>_<short_uuid>``), finalized
+    folders (``web_<id>_<short_uuid>_<STATUS>_<timestamp>``), direct UUID
+    folders, and custom ``--test-name`` folders recorded alongside video paths.
+    Prefer finalized or artifact-bearing execution directories over transient
+    ``traces/<session_id>`` staging folders that only contain process logs.
+    """
+    s_id = str(session_id).strip()
+    if not s_id:
+        return traces_path
+
+    direct = traces_path / s_id
+    s_prefix = s_id[:8] if len(s_id) >= 8 else s_id
+    resolved_db = db_path if db_path is not None else (traces_path / "data_engine.db")
+    video_dir, video_prefixes = _extract_video_prefixes(resolved_db, s_id, traces_path)
+    if video_dir is not None and any(
+        marker in video_dir.name for marker in MediaService.TRACE_STATUS_SUFFIXES
+    ):
+        return video_dir
+
+    if not traces_path.is_dir():
+        return direct
+
+    best_score: tuple[int, int, int, int, int, int, str] | None = None
+    best_folder: Path | None = None
+    try:
+        candidates = list(traces_path.iterdir())
+    except OSError:
+        return video_dir if video_dir is not None else direct
+
+    for folder in candidates:
+        if not folder.is_dir():
+            continue
+        name = folder.name
+        if name.startswith(".") or name in RESERVED_TRACE_SUBDIRS:
+            continue
+        matches_sid = s_id in name
+        matches_prefix = (len(s_prefix) >= 8 and s_prefix in name) or (
+            len(s_id) < 8 and s_id in name
+        )
+        matches_video = any(vp and name.startswith(vp) for vp in video_prefixes)
+        if not (matches_sid or matches_prefix or matches_video):
+            continue
+
+        has_terminal = any(marker in name for marker in MediaService.TRACE_STATUS_SUFFIXES)
+        has_artifacts = any((folder / sub).exists() for sub in _SESSION_ARTIFACT_MARKERS)
+        is_web = name.startswith("web_")
+        is_direct = folder == direct
+        score = (
+            int(has_terminal and has_artifacts),
+            int(has_terminal),
+            int(has_artifacts),
+            int(is_web),
+            int(matches_sid),
+            int(not is_direct),
+            name,
+        )
+        if best_score is None or score > best_score:
+            best_score = score
+            best_folder = folder
+
+    if best_folder is not None:
+        return best_folder
+    if video_dir is not None:
+        return video_dir
+    return direct
 
 
 class MediaService:
@@ -579,7 +714,12 @@ class MediaService:
             if not found:
                 try:
                     for folder in TRACES_PATH.iterdir():
-                        if folder.is_dir() and (s_id in folder.name or s_prefix in folder.name):
+                        if (
+                            folder.is_dir()
+                            and not folder.name.startswith(".")
+                            and folder.name not in RESERVED_TRACE_SUBDIRS
+                            and (s_id in folder.name or s_prefix in folder.name)
+                        ):
                             for fn in filenames:
                                 for sub in (folder / "images" / fn, folder / fn):
                                     if _is_safe_image(sub):
@@ -604,7 +744,11 @@ class MediaService:
         if not found:
             try:
                 for folder in TRACES_PATH.iterdir():
-                    if folder.is_dir() and folder.name != "images":
+                    if (
+                        folder.is_dir()
+                        and not folder.name.startswith(".")
+                        and folder.name not in RESERVED_TRACE_SUBDIRS
+                    ):
                         for fn in filenames:
                             for sub in (folder / "images" / fn, folder / fn):
                                 if _is_safe_image(sub):
@@ -678,22 +822,7 @@ class MediaService:
     @classmethod
     def resolve_session_dir(cls, session_id: str) -> Path:
         """Find the trace directory for a session_id, matching direct, suffixed, or web-prefixed folders."""
-        s_id = str(session_id).strip()
-        direct = TRACES_PATH / s_id
-        if direct.is_dir() and any(
-            (direct / sub).exists() for sub in ("notes", "check_ledger.jsonl", "images", "steps.json")
-        ):
-            return direct
-
-        s_prefix = s_id[:8] if len(s_id) >= 8 else s_id
-        if TRACES_PATH.is_dir():
-            try:
-                for folder in TRACES_PATH.iterdir():
-                    if folder.is_dir() and (s_id in folder.name or s_prefix in folder.name):
-                        return folder
-            except OSError:
-                pass
-        return direct
+        return resolve_session_trace_dir(TRACES_PATH, session_id)
 
     @classmethod
     def get_task_plan_content(cls, session_id: str) -> str:
