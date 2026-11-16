@@ -46,18 +46,28 @@ def get_recent_sessions(limit=5):
 def get_session_steps(session_id):
     """
     Busca TODOS os prints/passos capturados para uma mesma task (session_id).
+    Lida corretamente com execuções avulsas (session_id IS NULL).
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    query = """
-        SELECT trace_id, timestamp, payload
-        FROM traces 
-        WHERE session_id = ? AND payload LIKE '%Android Device Operator%'
-        ORDER BY timestamp ASC
-    """
-    
-    cursor.execute(query, (session_id,))
+    if session_id is None:
+        query = """
+            SELECT trace_id, timestamp, payload
+            FROM traces 
+            WHERE session_id IS NULL AND payload LIKE '%Android Device Operator%'
+            ORDER BY timestamp ASC
+        """
+        cursor.execute(query)
+    else:
+        query = """
+            SELECT trace_id, timestamp, payload
+            FROM traces 
+            WHERE session_id = ? AND payload LIKE '%Android Device Operator%'
+            ORDER BY timestamp ASC
+        """
+        cursor.execute(query, (session_id,))
+        
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -184,7 +194,8 @@ def main():
         formatted_time = datetime.fromtimestamp(start_ts).strftime('%Y-%m-%d %H:%M:%S') if start_ts else "N/A"
 
         session_map[idx] = session_id
-        print(f"  [{idx}] Task iniciada em: {formatted_time} | Sessão: {session_id[:8]}...")
+        session_display = session_id[:8] if session_id else "No Session"
+        print(f"  [{idx}] Task iniciada em: {formatted_time} | Sessão: {session_display}...")
         print(f"      Passos/Prints gravados: {total_steps} | Modo Configurado: {mode_label}")
         print("-" * 75)
 
