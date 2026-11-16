@@ -22,6 +22,7 @@ from typing import NamedTuple
 from jinja2 import Environment, StrictUndefined, Template
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from artemis.config.settings import is_vision_only_mode, settings
 from artemis.tools.history import HISTORY_TOOL_NAMES
 from PIL import Image
 
@@ -392,14 +393,43 @@ class ObservationPromptComponent(PromptComponent):
         latest_screenshot_b64 = kwargs.get("latest_screenshot_b64")
         minimal_list = kwargs.get("minimal_list")
 
-        builder.add_human_content("--- Current Screenshot ---")
-        builder.add_human_content(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{encode_image_for_llm(latest_screenshot_b64)}"},
-            }
-        )
-        builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")
+        clean_b64 = str(latest_screenshot_b64).strip() if latest_screenshot_b64 else None
+        if clean_b64:
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",", 1)[1].strip()
+            builder.add_human_content("--- Current Screenshot ---")
+            builder.add_human_content(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encode_image_for_llm(clean_b64)}"},
+                }
+            )
+        vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if vision_only:
+            builder.add_human_content(
+                "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
+            )
+        else:
+            ui_content = minimal_list
+            if not ui_content and state is not None:
+                raw_data = getattr(state, "operator_raw_data", None) or {}
+                fused = getattr(state, "latest_ui_hierarchy", None) or (
+                    raw_data.get("xml_hierarchy") if isinstance(raw_data, dict) else None
+                )
+                if fused:
+                    from artemis.utils.visualization import format_minimal_list_with_elements
+                    w = 1080
+                    h = 2400
+                    if isinstance(raw_data, dict) and isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                        w = raw_data["width"]
+                        h = raw_data["height"]
+                    try:
+                        ui_content, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        ui_content = None
+            if not ui_content:
+                ui_content = "(No UI elements detected)"
+            builder.add_human_content(f"--- Visible UI Elements ---\n{ui_content}")
 
 
 class PlanRecitationPromptComponent(PromptComponent):

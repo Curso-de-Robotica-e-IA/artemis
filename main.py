@@ -7,7 +7,7 @@ from artemis.toolchain import find_scrcpy
 
 
 def mirror_screen(
-    device_serial: str,
+    device_serial: str | None = None,
     title: str = "Artemis - Smartphone Mirror",
     always_on_top: bool = True,
 ) -> subprocess.Popen | None:
@@ -16,12 +16,12 @@ def mirror_screen(
     try:
         cmd = [
             scrcpy_bin,
-            "--serial",
-            device_serial,
             "--window-title",
             title,
             "--stay-awake",
         ]
+        if device_serial:
+            cmd.extend(["--serial", device_serial])
         if always_on_top:
             cmd.append("--always-on-top")
 
@@ -39,7 +39,7 @@ def mirror_screen(
 
 @contextmanager
 def start_screen_mirror(
-    device_serial: str,
+    device_serial: str | None = None,
     title: str = "Artemis - Smartphone Mirror",
     auto_close: bool = True,
     always_on_top: bool = True,
@@ -56,8 +56,9 @@ def start_screen_mirror(
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-def get_device_serial() -> str:
-    """Retorna o serial do dispositivo conectado via ADB."""
+
+def get_device_serial() -> str | None:
+    """Retorna o serial do dispositivo conectado via ADB, ou None para seleção automática."""
     try:
         result = subprocess.run(
             ["adb", "devices"],
@@ -71,10 +72,20 @@ def get_device_serial() -> str:
                 return line.split()[0]
     except Exception as e:
         print(f"[Erro] Não foi possível obter o serial do dispositivo: {e}")
-    return ""
+    return None
 
 
+# Target a specific device via ADB or None to use the first attached device
 DEVICE_SERIAL = get_device_serial()
+
+DISPLAY_TASK = (
+    "Open the settings menu, navigate to the 'Display' section, "
+    "turn on adaptive brightness, and turn on the dark mode."
+)
+VISION_ONLY_TASK = (
+    "Go to settings and turn on the airplane mode. "
+    "To do this task only use navigation controls, tap gestures, and swipe gestures."
+)
 
 # Espelha a tela em segundo plano enquanto executa o bot
 # Dica: defina auto_close=False se preferir manter a janela do scrcpy aberta após a automação
@@ -82,10 +93,7 @@ with start_screen_mirror(device_serial=DEVICE_SERIAL, auto_close=True):
     with ArtemisRunner(device_serial=DEVICE_SERIAL, profile="flash") as bot:
         # Basic task execution
         start_time = time.time()
-        result = bot.run(
-            "Open the settings menu, navigate to the 'Display' section, turn on adaptive brightness, and turn on the dark mode.",
-            return_steps=True,
-        )
+        result = bot.run(VISION_ONLY_TASK, return_steps=True)
         end_time = time.time()
         print(f"Execution time: {end_time - start_time:.2f} seconds")
 

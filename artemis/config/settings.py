@@ -35,6 +35,7 @@ from artemis.config.constants import (
     ENV_OPEN_ROUTER_API_KEY,
     ENV_OPENAI_API_KEY,
     ENV_VISION_API_KEY,
+    ENV_VISION_ONLY_MODE,
     ENV_XAI_API_KEY,
 )
 from artemis.config.paths import (
@@ -48,10 +49,10 @@ from third_party.mobile_use.utils.logger import get_logger
 
 # Installed wheels load .env from the user directory, outside site-packages.
 _canonical_env = get_env_file()
-load_dotenv(dotenv_path=_canonical_env, verbose=True)
+load_dotenv(dotenv_path=_canonical_env, override=True, verbose=True)
 _global_env = GLOBAL_APP_DIR / ".env"
 if _global_env.exists() and _global_env.resolve() != _canonical_env.resolve():
-    load_dotenv(dotenv_path=_global_env, verbose=True)
+    load_dotenv(dotenv_path=_global_env, override=True, verbose=True)
 
 logger = get_logger(__name__)
 
@@ -84,6 +85,7 @@ def is_placeholder_key(val: str | SecretStr | None) -> bool:
         (raw_str.startswith("your_") and raw_str.endswith("_here"))
         or (raw_str.startswith("<") and raw_str.endswith(">"))
         or (raw_str.startswith("[") and raw_str.endswith("]"))
+        or "dummy" in raw_str
     ):
         return True
     return False
@@ -119,7 +121,14 @@ class Settings(BaseSettings):
     # Android ADB Connectivity
     ADB_HOST: str | None = Field(default=DEFAULT_ADB_HOST)
     ADB_PORT: int | None = Field(default=DEFAULT_ADB_PORT)
-    ADB_DEVICE_SERIAL: str | None = None
+    ADB_DEVICE_SERIAL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ADB_DEVICE_SERIAL",
+            "ANDROID_SERIAL",
+            "ARTEMIS_DEVICE_ID",
+        ),
+    )
     ARTEMIS_ACTUATOR_BACKEND: str = Field(
         default="adb",
         description="Device actuation backend: 'adb' for direct ADB, or 'http' for HTTP Touch API.",
@@ -238,6 +247,15 @@ class Settings(BaseSettings):
     DATA_ENGINE_DB_PATH: Path = Field(default_factory=get_data_engine_db_path)
     TEMP_PATH: Path = Field(default_factory=get_temp_dir)
 
+    # Experimentation & Ablation Studies
+    VISION_ONLY_MODE: bool = Field(
+        default=False,
+        description=(
+            "If True, prompt omits XML/UI elements list for vision-only ablation"
+            " studies while preserving DB telemetry and image data."
+        ),
+    )
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @model_validator(mode="after")
@@ -265,6 +283,8 @@ class Settings(BaseSettings):
                 self.GOOGLE_API_KEY = self.GEMINI_API_KEY
             elif self.GCP_API_KEY:
                 self.GOOGLE_API_KEY = self.GCP_API_KEY
+        if self.GOOGLE_API_KEY and not self.GEMINI_API_KEY:
+            self.GEMINI_API_KEY = self.GOOGLE_API_KEY
 
         if not self.OPENAI_BASE_URL:
             env_url = (
@@ -274,6 +294,17 @@ class Settings(BaseSettings):
             )
             if env_url:
                 self.OPENAI_BASE_URL = env_url
+        if self.OPENAI_BASE_URL and "192.168.155.46:11434" in str(self.OPENAI_BASE_URL):
+            import socket
+            try:
+                with socket.create_connection(("192.168.155.46", 11434), timeout=0.4):
+                    pass
+            except Exception:
+                try:
+                    with socket.create_connection(("127.0.0.1", 11434), timeout=0.4):
+                        self.OPENAI_BASE_URL = str(self.OPENAI_BASE_URL).replace("192.168.155.46:11434", "127.0.0.1:11434")
+                except Exception:
+                    pass
 
         # Fallback for OCR & Vision API keys
         if not self.OCR_API_KEY and self.VISION_API_KEY:
@@ -410,3 +441,13 @@ settings = Settings()
 # Synchronize DATA_ENGINE_DB_PATH in environment for external sub-processes/tools
 if settings.DATA_ENGINE_DB_PATH:
     os.environ[ENV_DATA_ENGINE_DB_PATH] = str(settings.DATA_ENGINE_DB_PATH)
+
+
+def is_vision_only_mode() -> bool:
+    """Check if VISION_ONLY_MODE is enabled via settings or environment."""
+    if hasattr(settings, "VISION_ONLY_MODE") and settings.VISION_ONLY_MODE:
+        return True
+    val = os.environ.get(ENV_VISION_ONLY_MODE)
+    if val is not None:
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(getattr(settings, "VISION_ONLY_MODE", False))

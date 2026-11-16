@@ -119,7 +119,10 @@ def _get_controller(device_serial: str | None = None):
     """Lazy-load device controller on-demand, caching per device serial."""
     global _GLOBAL_CONTROLLER, _CONTROLLERS
     target_serial = (
-        device_serial or os.environ.get("ARTEMIS_DEVICE_ID") or os.environ.get("ADB_DEVICE_SERIAL")
+        device_serial
+        or os.environ.get("ARTEMIS_DEVICE_ID")
+        or os.environ.get("ADB_DEVICE_SERIAL")
+        or os.environ.get("ANDROID_SERIAL")
     )
     if target_serial and target_serial in _CONTROLLERS:
         return _CONTROLLERS[target_serial]
