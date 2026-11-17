@@ -18,6 +18,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.core.tool_failure import ToolFailure
 from artemis.context import ArtemisContext
 from artemis.data_engine.trace import trace_langchain_tool
@@ -65,6 +66,9 @@ class GetUiHierarchyTool(ArtemisTool):
         **kwargs: Any,
     ) -> str:
         try:
+            if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+                logger.info("get_ui_hierarchy called in VISION_ONLY_MODE; omitting XML hierarchy.")
+                return VISION_ONLY_NOTICE
             logger.info("get_ui_hierarchy tool called.")
             if ctx is not None and getattr(ctx, "ui_adb_client", None) is not None:
                 xml_hierarchy = ctx.ui_adb_client.get_hierarchy()

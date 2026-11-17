@@ -33,6 +33,7 @@ from artemis.agents.explorer.constants import (
     ASK_EXPLORER_QUERY_DESCRIPTION,
     ASK_EXPLORER_TOOL_NAME,
 )
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.core.tool_declaration import ToolDeclaration
@@ -69,7 +70,9 @@ class ToolExecutionResult(BaseModel):
         content_blocks: list[dict[str, Any]] = [
             {"type": "text", "text": self.text_summary or f"Action '{self.tool_name}' dispatched."}
         ]
-        if self.ui_elements_text:
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            content_blocks.append({"type": "text", "text": VISION_ONLY_NOTICE})
+        elif self.ui_elements_text:
             content_blocks.append(
                 {
                     "type": "text",

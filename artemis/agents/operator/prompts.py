@@ -22,7 +22,7 @@ from typing import NamedTuple
 from jinja2 import Environment, StrictUndefined, Template
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from artemis.config.settings import is_vision_only_mode, settings
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.tools.history import HISTORY_TOOL_NAMES
 from PIL import Image
 
@@ -406,9 +406,7 @@ class ObservationPromptComponent(PromptComponent):
             )
         vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
         if vision_only:
-            builder.add_human_content(
-                "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
-            )
+            builder.add_human_content(VISION_ONLY_NOTICE)
         else:
             ui_content = minimal_list
             if not ui_content and state is not None:
@@ -582,21 +580,28 @@ def render_execution_incident(incident: dict, steps: list) -> str:
         )
 
     # --- Category-specific evidence -------------------------------------------------
+    is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
     if category == "target_shifted":
         location = evidence.get("new_location")
-        bounds = evidence.get("new_bounds")
+        bounds = None if is_vision_only else evidence.get("new_bounds")
         where = f" at normalized {location}" if location else ""
         bounds_str = f" (bounds {bounds})" if bounds else ""
+        notice = f" {VISION_ONLY_NOTICE}" if is_vision_only else ""
         lines.append(
             f"Evidence: the same element still exists but has moved{where}{bounds_str};"
-            " the shift exceeded the safety net's auto-correction tolerance."
+            f" the shift exceeded the safety net's auto-correction tolerance.{notice}"
         )
     elif category == "target_occupied":
-        occupant = evidence.get("occupant") or "a different element"
+        occupant = (
+            "another element"
+            if is_vision_only
+            else (evidence.get("occupant") or "a different element")
+        )
+        notice = f" {VISION_ONLY_NOTICE}" if is_vision_only else ""
         lines.append(
             f"Evidence: the target position is now covered by {occupant}. Something"
             " appeared on top of your target (dialog, sheet, banner, keyboard, or a"
-            " re-laid-out screen)."
+            f" re-laid-out screen).{notice}"
         )
     elif category in ("target_disappeared", "pixel_target_disappeared"):
         prior_str = (

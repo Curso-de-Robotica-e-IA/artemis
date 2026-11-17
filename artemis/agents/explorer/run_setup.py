@@ -42,7 +42,7 @@ from artemis.agents.explorer.perception_tools import load_detector_templates
 from artemis.agents.explorer.screen_index import ScreenElement, ScreenIndex
 from artemis.agents.explorer.tiers import SUBMIT_TOOL, ExplorerTier
 from artemis.agents.object_detector.object_detector import _run_object_detection
-from artemis.config import settings
+from artemis.config import is_vision_only_mode, settings
 from artemis.data_engine.storage import StorageManager
 from artemis.graph.state import State
 from artemis.utils.ocr_api import is_ocr_configured, perform_ocr
@@ -305,6 +305,8 @@ class RunSetupMixin:
         HTTP client backing on-the-fly OCR is created here on first need and
         released by ``Explorer.run`` regardless of the engine used.
         """
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            return []
         fused_xml: Any = []
         if record and getattr(record, "ui_tree", None):
             ui_tree = record.ui_tree
@@ -390,6 +392,8 @@ class RunSetupMixin:
         Returns the (possibly updated) minimal list and the image path the
         model should read (marked screenshot when available, raw otherwise).
         """
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            return "", screenshot_path
         marked_path = None
         if not minimal_list and fused_xml:
             minimal_list, marked_path = self._annotate_initial_screenshot(

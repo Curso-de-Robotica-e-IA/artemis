@@ -93,6 +93,7 @@ from artemis.config.constants import (
     LLM_CONFIG_FILENAME,
     LLM_CONFIG_OVERRIDE_FILENAME,
     LS_ADDRESS_FILENAME,
+    VISION_ONLY_NOTICE,
     AgentNode,
     ExplorerVersion,
     LLMProvider,
@@ -170,6 +171,7 @@ __all__ = [
     "settings",
     "is_vision_only_mode",
     "ENV_VISION_ONLY_MODE",
+    "VISION_ONLY_NOTICE",
     # Paths & Dirs
     "ROOT_DIR",
     "WORKSPACE_ROOT",

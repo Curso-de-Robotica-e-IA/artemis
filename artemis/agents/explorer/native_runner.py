@@ -35,6 +35,7 @@ from google.genai import types
 
 from artemis.agents.explorer.geometry import is_valid_norm_point
 from artemis.agents.explorer.tiers import SUBMIT_TOOL
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.constants import SAFETY_SETTINGS_BLOCK_NONE
 from artemis.data_engine.trace import TraceSpan
 from artemis.llm.reliability import (
@@ -201,6 +202,15 @@ class NativeRunnerMixin:
         self, query: str, context_feedback: str, minimal_list: str, initial_part: types.Part
     ) -> list[types.Content]:
         """Builds the initial user content with the operator request and screenshot."""
+        is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        elements_section = (
+            VISION_ONLY_NOTICE
+            if is_vision_only
+            else (
+                "Initial marked UI elements list (corresponding to numbers ①, ②... in the"
+                f" image):\n{minimal_list}"
+            )
+        )
         return [
             types.Content(
                 role="user",
@@ -210,8 +220,7 @@ class NativeRunnerMixin:
 - Query: {query}
 - Context Feedback: {context_feedback}
 
-Initial marked UI elements list (corresponding to numbers ①, ②... in the image):
-{minimal_list}
+{elements_section}
 """
                     ),
                     initial_part,

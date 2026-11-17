@@ -79,6 +79,9 @@ ENV_RESULTS_OUTPUT_PATH = "RESULTS_OUTPUT_PATH"
 
 # Experimentation & Ablation Studies
 ENV_VISION_ONLY_MODE = "VISION_ONLY_MODE"
+VISION_ONLY_NOTICE = (
+    "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)"
+)
 
 
 # ==============================================================================

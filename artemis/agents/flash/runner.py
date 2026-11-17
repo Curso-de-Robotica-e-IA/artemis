@@ -65,14 +65,15 @@ from artemis.agents.validator.tool_declarations import (
     capture_screenshot_and_parse_ui,
     prune_intermediate_screenshots,
 )
-from artemis.config.settings import is_vision_only_mode, settings
 from artemis.config import (
     MemoryRuntimeConfig,
     MemoryTranscriptConfig,
     StepSummarizerConfig,
+    VISION_ONLY_NOTICE,
+    is_vision_only_mode,
     load_agent_config,
+    settings,
 )
-from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.data_engine.trace import trace
@@ -392,12 +393,7 @@ class FlashRunner:
             )
         vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
         if vision_only:
-            blocks.append(
-                {
-                    "type": "text",
-                    "text": "(Vision-only mode enabled: operate using visual coordinates [0-1000] only.)",
-                }
-            )
+            blocks.append({"type": "text", "text": VISION_ONLY_NOTICE})
         else:
             ui_text = xml_list
             if not ui_text and state is not None:

@@ -22,6 +22,7 @@ import uuid
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.core.tool_failure import is_tool_failure
 from artemis.context import ArtemisContext
 from artemis.data_engine.trace import (
@@ -213,7 +214,10 @@ class Diagnoser:
             formatted_feedback = checker_feedback_template.format(checker_feedback=checker_feedback)
             content.append({"type": "text", "text": formatted_feedback})
 
-        if minimal_list:
+        is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if is_vision_only:
+            content.append({"type": "text", "text": f"{VISION_ONLY_NOTICE}\n"})
+        elif minimal_list:
             content.append(
                 {
                     "type": "text",
@@ -527,10 +531,15 @@ class Diagnoser:
 
         plan_and_history = self._build_plan_and_history()
         checker_feedback = self._collect_checker_feedback(state)
+        is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
         minimal_list = (
-            self._format_minimal_list(state.latest_ui_hierarchy)
-            if state.latest_ui_hierarchy
-            else ""
+            ""
+            if is_vision_only
+            else (
+                self._format_minimal_list(state.latest_ui_hierarchy)
+                if state.latest_ui_hierarchy
+                else ""
+            )
         )
 
         current_messages = self._build_initial_messages(
@@ -546,7 +555,7 @@ class Diagnoser:
             "system_prompt": system_prompt,
             "plan_and_history": plan_and_history,
             "checker_feedback": checker_feedback,
-            "visible_ui_elements": minimal_list,
+            "visible_ui_elements": VISION_ONLY_NOTICE if is_vision_only else minimal_list,
             "diagnostic_query": prompt,
         }
 
