@@ -106,6 +106,8 @@ def _make_mock_robot_client(requests_log: list[dict[str, Any]]) -> httpx.AsyncCl
                     "approach_z": 48.0,
                 },
             )
+        if request.url.path == "/speed":
+            return httpx.Response(200, json={"result": True})
         return httpx.Response(404, json={"detail": "Not found"})
 
     return httpx.AsyncClient(
@@ -126,8 +128,12 @@ def test_robot_touch_actuator_contract(test_context: ArtemisContext):
 
 
 @pytest.mark.asyncio
-async def test_touch_api_with_robot_actuator_end_to_end(test_context: ArtemisContext):
+async def test_touch_api_with_robot_actuator_end_to_end(
+    test_context: ArtemisContext,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Touch API sends device info on /device and forwards tap/swipe to Robot API without touching calibration files."""
+    monkeypatch.delenv("ROBOT_IP", raising=False)
     requests_log: list[dict[str, Any]] = []
     robot_http_client = _make_mock_robot_client(requests_log)
     robot_actuator = RobotTouchActuator(
@@ -162,15 +168,14 @@ async def test_touch_api_with_robot_actuator_end_to_end(test_context: ArtemisCon
                 "screen_height": 2340,
             }
 
-            # 2. Tap -> triggers POST /calibration/tap with Bearer token
+            # 2. Tap -> triggers POST /speed (20, 4, 4) then POST /calibration/tap with Bearer token
             resp_tap = await client.post("/tap", json={"nx": 500, "ny": 500, "times": 1})
             assert resp_tap.status_code == 200
             assert resp_tap.json()["ok"] is True
-            assert len(requests_log) == 2
-            assert requests_log[1]["path"] == "/calibration/tap"
-            assert requests_log[1]["headers"].get("authorization") == "Bearer robot-session-token-123"
-            assert requests_log[1]["json"]["px"] == 539.5
-            assert requests_log[1]["json"]["py"] == 1169.5
+            tap_req = [r for r in requests_log if r["path"] == "/calibration/tap"][-1]
+            assert tap_req["headers"].get("authorization") == "Bearer robot-session-token-123"
+            assert tap_req["json"]["px"] == 539.5
+            assert tap_req["json"]["py"] == 1169.5
 
             # 3. Swipe -> triggers POST /calibration/swipe with Bearer token
             resp_swipe = await client.post(
@@ -185,14 +190,15 @@ async def test_touch_api_with_robot_actuator_end_to_end(test_context: ArtemisCon
             )
             assert resp_swipe.status_code == 200
             assert resp_swipe.json()["ok"] is True
-            assert len(requests_log) == 3
-            assert requests_log[2]["path"] == "/calibration/swipe"
-            assert requests_log[2]["headers"].get("authorization") == "Bearer robot-session-token-123"
-            assert requests_log[2]["json"] == {
+            swipe_req = [r for r in requests_log if r["path"] == "/calibration/swipe"][-1]
+            assert swipe_req["headers"].get("authorization") == "Bearer robot-session-token-123"
+            assert swipe_req["json"] == {
                 "from_px": 539.5,
                 "from_py": 1871.2,
                 "to_px": 539.5,
                 "to_py": 467.8,
             }
+            speed_reqs = [r["json"] for r in requests_log if r["path"] == "/speed"]
+            assert speed_reqs == [{"speed": 20.0, "accel": 4.0, "decel": 4.0}]
 
     await robot_http_client.aclose()
