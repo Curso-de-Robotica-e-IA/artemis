@@ -29,6 +29,7 @@ from starlette.routing import Route
 from artemis.config.settings import settings
 from artemis.context import ArtemisContext, DeviceContext, DevicePlatform
 from artemis.controllers.unified_controller import UnifiedMobileController
+from artemis.interfaces.touch_api.robot_actuator import RobotTouchActuator
 from artemis.mcp.action_types import ActionResult
 from artemis.mcp.actuators.adb import AdbActuator
 from artemis.platform import platform
@@ -45,6 +46,7 @@ __all__ = [
     "InputTextRequest",
     "LongPressRequest",
     "PressKeyRequest",
+    "RobotTouchActuator",
     "SwipeRequest",
     "TapPoint",
     "TapRequest",
@@ -215,12 +217,30 @@ def _validation_error_response(exc: BaseException) -> JSONResponse:
     )
 
 
+def _use_robot_backend() -> bool:
+    backend = os.environ.get("TOUCH_API_BACKEND", "").strip().lower()
+    if backend in {"adb", "direct"}:
+        return False
+    if backend == "robot":
+        return True
+    return bool(os.environ.get("ROBOT_API_URL", "").strip())
+
+
+def _create_default_actuator(
+    ctx: ArtemisContext,
+    controller: UnifiedMobileController | None = None,
+) -> AdbActuator:
+    if _use_robot_backend():
+        return RobotTouchActuator(ctx, controller=controller)
+    return AdbActuator(ctx, controller=controller)
+
+
 def create_touch_api_app(
     actuator: AdbActuator | None = None,
     controller: UnifiedMobileController | None = None,
     ctx: ArtemisContext | None = None,
 ) -> Starlette:
-    """Creates an ASGI application serving the ADB-backed touch and input routes."""
+    """Creates an ASGI application serving the touch and input routes."""
     state_holder: dict[str, Any] = {
         "actuator": actuator,
         "controller": controller,
@@ -245,7 +265,7 @@ def create_touch_api_app(
                 runtime_ctx = _build_context(device_id=str(default_serial), width=w, height=h)
                 state_holder["ctx"] = runtime_ctx
 
-            act = AdbActuator(runtime_ctx, controller=state_holder["controller"])
+            act = _create_default_actuator(runtime_ctx, controller=state_holder["controller"])
             state_holder["actuator"] = act
         return act
 
@@ -295,16 +315,34 @@ def create_touch_api_app(
             if hasattr(act, "controller") and act.controller is not None:
                 act.controller.ctx = new_ctx
         else:
-            state_holder["actuator"] = AdbActuator(
-                new_ctx, controller=state_holder["controller"]
+            act = _create_default_actuator(new_ctx, controller=state_holder["controller"])
+            state_holder["actuator"] = act
+
+        msg = f"Device configured: {req.device_id} ({width}x{height})."
+        if isinstance(act, RobotTouchActuator):
+            setup_res = await act.setup_device(
+                device_id=req.device_id,
+                width=width,
+                height=height,
             )
+            if not setup_res.ok:
+                body = DeviceConfigResponse(
+                    ok=False,
+                    device_id=req.device_id,
+                    screen_width=width,
+                    screen_height=height,
+                    message=setup_res.message,
+                    error=setup_res.detail or setup_res.message,
+                )
+                return JSONResponse(body.model_dump(), status_code=500)
+            msg = f"Device configured: {req.device_id} ({width}x{height}). {setup_res.message}"
 
         body = DeviceConfigResponse(
             ok=True,
             device_id=req.device_id,
             screen_width=width,
             screen_height=height,
-            message=f"Device configured: {req.device_id} ({width}x{height}).",
+            message=msg,
         )
         return JSONResponse(body.model_dump(), status_code=200)
 
