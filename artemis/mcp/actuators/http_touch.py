@@ -15,23 +15,29 @@
 """HTTP-backed Touch and Input Actuator for ARTEMIS."""
 
 from collections.abc import Sequence
+import inspect
 import json
 from typing import Any
 
 import httpx
 
-from artemis.config.settings import settings
+from artemis.clients.http_screenshot import fetch_http_screenshot
+from artemis.config.settings import is_vision_only_mode, settings
 from artemis.context import ArtemisContext
+from artemis.controllers.device_controller import ScreenDataResponse
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.action_types import ActionResult
 from artemis.mcp.actuators.adb import AdbActuator
+from third_party.mobile_use.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class HttpTouchActuator(AdbActuator):
-    """Actuator that routes touch, text, and key actions through the HTTP Touch API.
+    """Actuator that routes touch, text, key actions, and screenshots via HTTP Touch API.
 
-    Screen observation (screenshots, UI hierarchy) and app management remain
-    handled directly via ADB through :class:`AdbActuator`.
+    Touch actions and screen captures (``GET /screenshot``) are dispatched over HTTP.
+    App management remains handled through :class:`AdbActuator`.
     """
 
     _synced_devices_by_url: dict[str, str] = {}
@@ -62,6 +68,12 @@ class HttpTouchActuator(AdbActuator):
             if self._external_client is None
             else None
         )
+        # Route controller observation calls through HTTP /screenshot when running
+        # inside FlashRunner or ActionServer so local ADB is never invoked for screenshots.
+        if type(self.controller) is UnifiedMobileController:
+            setattr(self.controller, "get_screen_data", self.get_screen_data)
+            setattr(self.controller, "take_screenshot", self.take_screenshot)
+            setattr(self.controller, "get_ui_elements", self.get_ui_elements)
 
     @classmethod
     def reset_synced_devices(cls) -> None:
@@ -272,3 +284,68 @@ class HttpTouchActuator(AdbActuator):
         if err := await self._ensure_device_configured():
             return err
         return await self._post("/press-key", {"key": key}, action="press_key")
+
+    # --- HTTP Screen Observation -----------------------------------------------------
+
+    async def _get_screenshot(self) -> tuple[str, int, int]:
+        """Fetches the current screen image and dimensions from ``GET /screenshot``.
+
+        Returns ``(image_base64, width, height)``. On HTTP timeouts, connection
+        errors, or invalid responses, logs a clear error and returns
+        ``("", width, height)`` using fallback dimensions so the loop continues.
+        """
+        fallback_w, fallback_h = self._dims()
+        payload = await fetch_http_screenshot(
+            base_url=self.base_url,
+            timeout_s=self.timeout_s,
+            client=self._external_client,
+        )
+        if payload is None:
+            return "", fallback_w, fallback_h
+
+        width = payload.width if payload.width > 0 else fallback_w
+        height = payload.height if payload.height > 0 else fallback_h
+
+        if self.ctx and self.ctx.device:
+            self.ctx.device.device_width = width
+            self.ctx.device.device_height = height
+
+        return payload.image_base64, width, height
+
+    async def take_screenshot(self) -> str:
+        """Captures the current screen as a base64 string via ``GET /screenshot``."""
+        image_b64, _, _ = await self._get_screenshot()
+        return image_b64
+
+    async def get_ui_elements(self) -> list[dict[str, Any]]:
+        """Returns UI elements without triggering local ADB screenshots."""
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            return []
+        ui_client = getattr(self.ctx, "ui_adb_client", None)
+        if ui_client is not None and hasattr(ui_client, "get_hierarchy"):
+            try:
+                res = ui_client.get_hierarchy()
+                hierarchy = await res if inspect.iscoroutine(res) else res
+                if isinstance(hierarchy, str):
+                    from third_party.mobile_use.clients.ui_automator_client import (
+                        parse_hierarchy_xml_to_elements,
+                    )
+
+                    return parse_hierarchy_xml_to_elements(hierarchy)
+                if isinstance(hierarchy, list):
+                    return hierarchy
+            except (RuntimeError, OSError, ValueError, TypeError) as exc:
+                logger.warning(f"Failed to fetch UI hierarchy via ui_adb_client: {exc}")
+        return []
+
+    async def get_screen_data(self, skip_settling: bool = False) -> ScreenDataResponse:
+        """Captures screen state via ``GET /screenshot`` in ``ScreenDataResponse`` format."""
+        _ = skip_settling
+        image_b64, width, height = await self._get_screenshot()
+        return ScreenDataResponse(
+            base64=image_b64,
+            elements=[],
+            width=width,
+            height=height,
+            platform="android",
+        )

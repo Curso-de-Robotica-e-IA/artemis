@@ -47,6 +47,7 @@ from pydantic import BaseModel
 
 from artemis.agents.flash.runner import FlashRunner
 from artemis.agents.outputter.outputter import outputter
+from artemis.clients.http_screenshot import fetch_http_screenshot_image
 from artemis.clients.screen_client_factory import (
     ScreenClient,
     create_screen_client,
@@ -868,26 +869,23 @@ class AgentBase:
             logger.info("No active automation task to stop.")
 
     async def get_screenshot(self) -> Image.Image:
-        """Capture a screenshot from the mobile device.
+        """Capture a screenshot from the mobile device via the HTTP Touch API.
 
         Returns:
             Screenshot as PIL Image
 
         Raises:
             AgentNotInitializedError: If the agent is not initialized
-            Exception: If screenshot capture fails
+            RuntimeError: If screenshot capture via the HTTP Touch API fails
         """
         if not self._initialized:
             raise AgentNotInitializedError()
 
-        # Use ADB to capture screenshot
-        logger.info("Capturing screenshot from local Android device")
-        if not self._adb_client:
-            raise Exception("ADB client not initialized")
-
-        device = self._adb_client.device(serial=self._device_context.device_id)
-        screenshot = await asyncio.to_thread(device.screenshot)
-        logger.info("Screenshot captured from local Android device")
+        logger.info("Capturing screenshot via HTTP Touch API")
+        screenshot = await fetch_http_screenshot_image()
+        if screenshot is None:
+            raise RuntimeError("Failed to capture screenshot via HTTP Touch API")
+        logger.info("Screenshot captured via HTTP Touch API")
         return screenshot
 
     async def _prepare_app_installation(self, task: Task) -> str | None:

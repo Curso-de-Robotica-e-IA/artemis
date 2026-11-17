@@ -35,7 +35,6 @@ only adds an adb screencap; the hierarchy is never dumped twice.
 
 from __future__ import annotations
 
-from io import BytesIO
 import json
 import subprocess
 from typing import Any
@@ -44,6 +43,7 @@ import urllib.request
 
 from PIL import Image
 
+from artemis.clients.http_screenshot import fetch_http_screenshot_image_sync
 from artemis.runtime.adb_endpoint import adb_command
 from artemis.runtime.awake_service import ensure_device_awake
 from artemis.runtime.helper_manager import (
@@ -319,18 +319,8 @@ class AccessibilityClient:
         return None
 
     def get_screenshot(self) -> Image.Image | None:
-        try:
-            result = subprocess.run(
-                adb_command(["-s", self._device_id, "exec-out", "screencap", "-p"]),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=10,
-                check=True,
-            )
-            return Image.open(BytesIO(result.stdout))
-        except (OSError, subprocess.SubprocessError) as exc:
-            logger.error(f"Failed to capture screenshot via adb: {exc}")
-            return None
+        """Capture a screenshot via the HTTP Touch API."""
+        return fetch_http_screenshot_image_sync()
 
     def get_screenshot_base64(self) -> str | None:
         screenshot = self.get_screenshot()

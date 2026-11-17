@@ -35,6 +35,7 @@ from PIL import Image
 from pydantic import BaseModel
 import uiautomator2 as u2
 
+from artemis.clients.http_screenshot import fetch_http_screenshot_image_sync
 from artemis.runtime.adb_endpoint import adb_command
 from artemis.runtime.awake_service import ensure_device_awake
 from artemis.utils.cython_compat import CyFunctionDetector
@@ -375,29 +376,12 @@ class UIAutomatorClient:
         return device.dump_hierarchy(compressed=True)
 
     def get_screenshot(self) -> Image.Image | None:
-        """Capture a screenshot from the device.
-
-        Uses adb screencap for more reliable capture of all layers (including
-        popups), falling back to UIAutomator2 if it fails.
+        """Capture a screenshot from the device via the HTTP Touch API.
 
         Returns:
             PIL Image or None if capture failed
         """
-        try:
-            result = subprocess.run(
-                adb_command(["-s", self._device_id, "exec-out", "screencap", "-p"]),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=10,
-                check=True,
-            )
-            return Image.open(BytesIO(result.stdout))
-        except (OSError, subprocess.SubprocessError) as e:
-            logger.warning(
-                f"Failed to capture screenshot via adb: {e}, falling back to uiautomator2"
-            )
-            device = self._ensure_connected()
-            return device.screenshot()
+        return fetch_http_screenshot_image_sync()
 
     def get_screenshot_base64(self) -> str | None:
         """Capture a screenshot and return as base64 string.

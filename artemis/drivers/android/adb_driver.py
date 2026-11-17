@@ -16,12 +16,13 @@
 
 import asyncio
 import base64
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
 from adbutils import AdbClient, AdbDevice
+from artemis.clients.http_screenshot import fetch_http_screenshot
 from artemis.config.paths import get_temp_dir
+from artemis.config.settings import is_vision_only_mode
 from artemis.drivers.base import BaseDeviceDriver, KeyCode, ScreenData, SwipeDirection
 from artemis.toolchain import find_ffmpeg, find_scrcpy
 from artemis.utils.video import build_scrcpy_record_command
@@ -123,7 +124,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
         if not skip_settling:
             await asyncio.sleep(0.3)
 
-        # 1. Capture raw screenshot
+        # 1. Capture raw screenshot exclusively via the HTTP Touch API
         screenshot_bytes: bytes = b""
         screenshot_base64: str = ""
         ui_hierarchy_xml: str | None = None
@@ -131,21 +132,31 @@ class AndroidAdbDriver(BaseDeviceDriver):
         current_package: str | None = None
         current_activity: str | None = None
 
-        # Check if ui_adb_client has direct screen data support
-        if self._ui_adb_client and hasattr(self._ui_adb_client, "get_screen_data"):
+        http_shot = await fetch_http_screenshot()
+        if http_shot is not None:
+            screenshot_base64 = http_shot.image_base64
+            screenshot_bytes = http_shot.image_bytes
+            if http_shot.width > 0:
+                self._width = http_shot.width
+            if http_shot.height > 0:
+                self._height = http_shot.height
+
+        vision_only = is_vision_only_mode()
+
+        # Check if ui_adb_client has direct screen data support (hierarchy/package/activity only;
+        # screenshots must always flow through the HTTP Touch API).
+        if (
+            not vision_only
+            and self._ui_adb_client
+            and hasattr(self._ui_adb_client, "get_screen_data")
+        ):
             try:
                 raw_ui_data = self._ui_adb_client.get_screen_data()
-                if (
-                    hasattr(raw_ui_data, "base64")
-                    and isinstance(raw_ui_data.base64, str)
-                    and raw_ui_data.base64
-                ):
-                    screenshot_base64 = raw_ui_data.base64
-                    screenshot_bytes = base64.b64decode(screenshot_base64)
-                if hasattr(raw_ui_data, "width") and isinstance(raw_ui_data.width, int):
-                    self._width = raw_ui_data.width
-                if hasattr(raw_ui_data, "height") and isinstance(raw_ui_data.height, int):
-                    self._height = raw_ui_data.height
+                if http_shot is None:
+                    if hasattr(raw_ui_data, "width") and isinstance(raw_ui_data.width, int):
+                        self._width = raw_ui_data.width
+                    if hasattr(raw_ui_data, "height") and isinstance(raw_ui_data.height, int):
+                        self._height = raw_ui_data.height
                 if hasattr(raw_ui_data, "hierarchy_xml") and isinstance(
                     raw_ui_data.hierarchy_xml, str
                 ):
@@ -166,24 +177,12 @@ class AndroidAdbDriver(BaseDeviceDriver):
                 logger.debug(f"Direct ui_adb_client.get_screen_data error: {e}")
 
         if not screenshot_base64 or not isinstance(screenshot_base64, str):
-            try:
-                pil_img = await asyncio.to_thread(self.device.screenshot)
-                if hasattr(pil_img, "save"):
-                    buf = BytesIO()
-                    pil_img.save(buf, format="PNG")
-                    screenshot_bytes = buf.getvalue()
-                    self._width, self._height = pil_img.size
-                    screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-            except Exception as e:
-                logger.warning(f"Device screenshot capture failed on {self._device_id}: {e}")
-
-        if not screenshot_base64 or not isinstance(screenshot_base64, str):
-            # Fallback for headless testing environments
+            # Fallback for headless testing environments when the Touch API is unavailable
             screenshot_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             screenshot_bytes = base64.b64decode(screenshot_base64)
 
         # 2. Capture UI Hierarchy via UIAutomator
-        if self._ui_adb_client and not ui_elements:
+        if not vision_only and self._ui_adb_client and not ui_elements:
             try:
                 if hasattr(self._ui_adb_client, "get_hierarchy"):
                     res = self._ui_adb_client.get_hierarchy()

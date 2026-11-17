@@ -15,11 +15,14 @@
 """HTTP Touch & Input API server backed by ADB."""
 
 import asyncio
+import base64
+from io import BytesIO
 import json
 import os
 import re
 from typing import Any
 
+from PIL import Image
 from pydantic import BaseModel, Field, ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -45,6 +48,7 @@ __all__ = [
     "InputTextRequest",
     "LongPressRequest",
     "PressKeyRequest",
+    "ScreenshotResponse",
     "SwipeRequest",
     "TapPoint",
     "TapRequest",
@@ -148,6 +152,17 @@ class TouchActionResponse(BaseModel):
     error: str | None = None
 
 
+class ScreenshotResponse(BaseModel):
+    """Response payload for ``GET /screenshot``."""
+
+    ok: bool
+    image_base64: str | None = None
+    screen_width: int = 0
+    screen_height: int = 0
+    message: str = ""
+    error: str | None = None
+
+
 async def _query_adb_screen_size(device_id: str) -> tuple[int, int]:
     """Queries ADB for the active screen resolution (Override or Physical size)."""
     adb_bin = find_adb() or "adb"
@@ -174,6 +189,54 @@ async def _query_adb_screen_size(device_id: str) -> tuple[int, int]:
 
     width_str, height_str = matches[-1]
     return int(width_str), int(height_str)
+
+
+async def _capture_adb_screenshot(device_id: str) -> bytes:
+    """Captures raw PNG screenshot bytes via ``adb exec-out screencap -p``."""
+    adb_bin = find_adb() or "adb"
+    cmd = [adb_bin]
+    if device_id and device_id != "default":
+        cmd.extend(["-s", device_id])
+    cmd.extend(["exec-out", "screencap", "-p"])
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+    except TimeoutError as exc:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        raise TimeoutError(f"Timed out capturing screenshot for '{device_id}'.") from exc
+
+    if proc.returncode != 0:
+        err_msg = stderr.decode("utf-8", errors="replace").strip() or (
+            f"adb exited with status {proc.returncode}"
+        )
+        raise RuntimeError(f"Failed to capture screenshot for '{device_id}': {err_msg}")
+
+    if not stdout:
+        err_msg = stderr.decode("utf-8", errors="replace").strip() or "Empty screenshot output"
+        raise RuntimeError(f"Failed to capture screenshot for '{device_id}': {err_msg}")
+
+    return stdout
+
+
+def _extract_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    """Extracts ``(width, height)`` from encoded image bytes, or ``None`` if unreadable."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            width, height = img.size
+        if width > 0 and height > 0:
+            return int(width), int(height)
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 def _build_context(
@@ -265,6 +328,63 @@ def create_touch_api_app(
                 "device": device_info,
             }
         )
+
+    def _resolve_device_info(override_device_id: str | None = None) -> tuple[str, int, int]:
+        current_ctx: ArtemisContext | None = state_holder.get("ctx")
+        if current_ctx is None:
+            current_ctx = getattr(state_holder.get("actuator"), "ctx", None)
+
+        width = 1080
+        height = 2400
+        ctx_serial: str | None = None
+        if current_ctx and current_ctx.device:
+            ctx_serial = current_ctx.device.device_id
+            width = current_ctx.device.device_width or width
+            height = current_ctx.device.device_height or height
+
+        serial = (
+            override_device_id
+            or ctx_serial
+            or os.environ.get("ADB_DEVICE_SERIAL")
+            or getattr(settings, "ADB_DEVICE_SERIAL", None)
+            or "default"
+        )
+        return str(serial), int(width), int(height)
+
+    async def screenshot_endpoint(request: Request) -> JSONResponse:
+        query_device_id = request.query_params.get("device_id")
+        device_id, fallback_w, fallback_h = _resolve_device_info(query_device_id)
+        try:
+            raw_bytes = await _capture_adb_screenshot(device_id)
+        except (RuntimeError, OSError, ValueError, TimeoutError) as exc:
+            logger.error(f"GET /screenshot failed for '{device_id}': {exc}")
+            body = ScreenshotResponse(
+                ok=False,
+                image_base64=None,
+                screen_width=0,
+                screen_height=0,
+                message=f"Failed to capture screenshot for '{device_id}'.",
+                error=str(exc),
+            )
+            return JSONResponse(body.model_dump(), status_code=500)
+
+        dims = _extract_image_dimensions(raw_bytes)
+        width, height = dims if dims is not None else (fallback_w, fallback_h)
+
+        current_ctx: ArtemisContext | None = state_holder.get("ctx")
+        if dims is not None and current_ctx and current_ctx.device and not query_device_id:
+            current_ctx.device.device_width = width
+            current_ctx.device.device_height = height
+
+        image_b64 = base64.b64encode(raw_bytes).decode("ascii")
+        body = ScreenshotResponse(
+            ok=True,
+            image_base64=image_b64,
+            screen_width=width,
+            screen_height=height,
+            message=f"Captured screenshot ({width}x{height}).",
+        )
+        return JSONResponse(body.model_dump(), status_code=200)
 
     async def set_device_endpoint(request: Request) -> JSONResponse:
         try:
@@ -449,6 +569,7 @@ def create_touch_api_app(
         Route("/", health_endpoint, methods=["GET"]),
         Route("/health", health_endpoint, methods=["GET"]),
         Route("/device", set_device_endpoint, methods=["POST"]),
+        Route("/screenshot", screenshot_endpoint, methods=["GET"]),
         Route("/tap", tap_endpoint, methods=["POST"]),
         Route("/tap-sequence", tap_sequence_endpoint, methods=["POST"]),
         Route("/long-press", long_press_endpoint, methods=["POST"]),
