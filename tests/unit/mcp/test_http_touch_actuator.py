@@ -345,3 +345,33 @@ async def test_agent_startup_mandatorily_calls_touch_api_device(monkeypatch):
     ):
         with pytest.raises(AgentError, match="Failed to configure device 'robot-device-01'"):
             await agent_fail.init()
+
+
+@pytest.mark.asyncio
+async def test_query_adb_screen_size_landscape_orientation():
+    """_query_adb_screen_size must return landscape (width, height) when device is rotated."""
+    from artemis.interfaces.touch_api.server import _query_adb_screen_size
+
+    class _FakeProcess:
+        def __init__(self, stdout: bytes, returncode: int = 0):
+            self._stdout = stdout
+            self.returncode = returncode
+
+        async def communicate(self):
+            return self._stdout, b""
+
+    calls: list[tuple[str, ...]] = []
+
+    async def _fake_exec(*cmd, **_kwargs):
+        calls.append(cmd)
+        if "wm" in cmd and "size" in cmd:
+            return _FakeProcess(b"Physical size: 1080x2340\n")
+        return _FakeProcess(
+            b"  init=1080x2340 450dpi cur=2340x1080 app=2340x1080\n"
+            b"  mRotation=1 mCurrentRotation=ROTATION_90\n"
+        )
+
+    with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec):
+        width, height = await _query_adb_screen_size("RXCX909ZELT")
+        assert (width, height) == (2340, 1080)
+        assert len(calls) == 2

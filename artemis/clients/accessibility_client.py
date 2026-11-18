@@ -350,6 +350,11 @@ class AccessibilityClient:
         activity = snapshot.get("activity") or None
         if activity and (activity.startswith("android.widget.") or activity.startswith("android.view.")):
             activity = None
+        if not _has_usable_elements(elements, package):
+            raise HelperEmptyHierarchy(
+                f"accessibility helper on {self._device_id} returned no usable UI elements "
+                f"(nodes={len(elements)}, package={package!r})"
+            )
         if snapshot.get("has_screenshot") and snapshot.get("screenshot_base64"):
             width, height = _dimensions(snapshot)
             return UIAutomatorScreenData(
@@ -444,3 +449,32 @@ def _dimensions(snapshot: dict[str, Any]) -> tuple[int, int]:
             200, "/snapshot", f"screenshot without dimensions (width={width}, height={height})"
         )
     return width, height
+
+
+def _has_usable_elements(
+    elements: list[dict[str, Any]],
+    foreground_package: str | None = None,
+) -> bool:
+    """Return True when the dump contains at least one labelled element from an active window."""
+    has_label = False
+    packages: set[str] = set()
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        pkg = el.get("package")
+        if isinstance(pkg, str) and pkg.strip():
+            packages.add(pkg.strip())
+        for key in ("text", "content-desc", "accessibilityText", "hint", "error"):
+            val = el.get(key)
+            if isinstance(val, str) and val.strip():
+                has_label = True
+                break
+    if not has_label:
+        return False
+    if (
+        foreground_package
+        and foreground_package != "com.android.systemui"
+        and packages == {"com.android.systemui"}
+    ):
+        return False
+    return True

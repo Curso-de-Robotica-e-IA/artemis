@@ -295,6 +295,31 @@ def test_empty_hierarchy_is_an_error_not_a_blank_screen(client):
             c.get_screen_data()
 
 
+def test_unlabelled_or_systemui_only_hierarchy_raises_empty_hierarchy(client):
+    c, _ = client
+    status_bar_only_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<hierarchy rotation="0">'
+        '<node index="0" text="" resource-id="" class="android.widget.FrameLayout" '
+        'package="com.android.systemui" content-desc="" clickable="false" '
+        'bounds="[0,0][1080,97]" />'
+        "</hierarchy>"
+    )
+    answer = {
+        "success": True,
+        "has_screenshot": True,
+        "screenshot_base64": "QUJD",
+        "xml": status_bar_only_xml,
+        "width": 1080,
+        "height": 2340,
+        "package": "com.android.settings",
+    }
+    with _urlopen() as urlopen:
+        urlopen.return_value = _response(json.dumps(answer).encode())
+        with pytest.raises(HelperEmptyHierarchy, match="no usable UI elements"):
+            c.get_screen_data()
+
+
 def test_screenshot_without_dimensions_is_rejected(client):
     c, _ = client
     answer = {"success": True, "has_screenshot": True, "screenshot_base64": "QUJD", "xml": XML}

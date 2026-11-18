@@ -649,7 +649,7 @@ class FlashRunner:
             logger.warning(f"Failed to capture fallback screenshot in FlashRunner: {obs.message}")
             return post_img_bytes
         post_img_bytes = screenshot_bytes
-        if not exec_result.ui_elements_text:
+        if exec_result.ui_elements_text is None:
             exec_result.ui_elements_text = obs.elements_text
         if not exec_result.screenshot_path and obs.screenshot_path:
             exec_result.screenshot_path = obs.screenshot_path
@@ -803,7 +803,11 @@ class FlashRunner:
             recorded_step_id = self.ctx.data_engine.record_step(
                 pre_screenshot_bytes=pre_screenshot_bytes,
                 post_screenshot_bytes=post_img_bytes,
-                ui_tree=(exec_result.ui_elements_text or xml_list),
+                ui_tree=(
+                    exec_result.ui_elements_text
+                    if exec_result.ui_elements_text is not None
+                    else xml_list
+                ),
                 action_taken=action_dict,
                 operator_raw_thinking=raw_text,
                 operator_native_thinking=native_text or None,
@@ -918,7 +922,7 @@ class FlashRunner:
 
             if post_img_bytes:
                 pre_screenshot_bytes = post_img_bytes
-            if exec_result.ui_elements_text:
+            if exec_result.ui_elements_text is not None:
                 xml_list = exec_result.ui_elements_text
 
             # Helper tools may return multimodal blocks (a step screenshot);

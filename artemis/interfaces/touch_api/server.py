@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -55,6 +56,22 @@ __all__ = [
 ]
 
 _WM_SIZE_PATTERN = re.compile(r"(\d+)x(\d+)")
+_CUR_DISPLAY_SIZE_PATTERN = re.compile(r"\bcur=(\d+)x(\d+)")
+_LANDSCAPE_ROTATION_PATTERN = re.compile(
+    r"(?:\bmRotation=(?:1|3|ROTATION_90|ROTATION_270)\b"
+    r"|\bmCurrentRotation=(?:1|3|ROTATION_90|ROTATION_270)\b"
+    r"|\bmDisplayRotation=(?:1|3|ROTATION_90|ROTATION_270)\b"
+    r"|\bSurfaceOrientation:\s*[13]\b"
+    r"|\borientation=(?:1|3)\b)"
+)
+_PORTRAIT_ROTATION_PATTERN = re.compile(
+    r"(?:\bmRotation=(?:0|2|ROTATION_0|ROTATION_180)\b"
+    r"|\bmCurrentRotation=(?:0|2|ROTATION_0|ROTATION_180)\b"
+    r"|\bmDisplayRotation=(?:0|2|ROTATION_0|ROTATION_180)\b"
+    r"|\bSurfaceOrientation:\s*[02]\b"
+    r"|\borientation=(?:0|2)\b)"
+)
+_ORIENTATION_REFRESH_TTL_S = 1.0
 
 
 class DeviceConfigRequest(BaseModel):
@@ -148,8 +165,47 @@ class TouchActionResponse(BaseModel):
     error: str | None = None
 
 
+async def _query_adb_display_orientation_size(
+    adb_bin: str,
+    device_id: str,
+    base_width: int,
+    base_height: int,
+) -> tuple[int, int]:
+    """Resolves the active orientation-aware screen size via ``dumpsys window displays``."""
+    cmd = [adb_bin]
+    if device_id and device_id != "default":
+        cmd.extend(["-s", device_id])
+    cmd.extend(["shell", "dumpsys", "window", "displays"])
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        if proc.returncode != 0:
+            return base_width, base_height
+        text = stdout.decode("utf-8", errors="replace")
+    except (OSError, TimeoutError, ValueError):
+        return base_width, base_height
+
+    cur_match = _CUR_DISPLAY_SIZE_PATTERN.search(text)
+    if cur_match:
+        cur_w, cur_h = int(cur_match.group(1)), int(cur_match.group(2))
+        if cur_w > 0 and cur_h > 0:
+            return cur_w, cur_h
+
+    if _LANDSCAPE_ROTATION_PATTERN.search(text):
+        return max(base_width, base_height), min(base_width, base_height)
+    if _PORTRAIT_ROTATION_PATTERN.search(text):
+        return min(base_width, base_height), max(base_width, base_height)
+
+    return base_width, base_height
+
+
 async def _query_adb_screen_size(device_id: str) -> tuple[int, int]:
-    """Queries ADB for the active screen resolution (Override or Physical size)."""
+    """Queries ADB for the active orientation-aware screen resolution."""
     adb_bin = find_adb() or "adb"
     cmd = [adb_bin]
     if device_id and device_id != "default":
@@ -173,7 +229,13 @@ async def _query_adb_screen_size(device_id: str) -> tuple[int, int]:
         raise RuntimeError(f"Could not parse 'wm size' output for '{device_id}': {output}")
 
     width_str, height_str = matches[-1]
-    return int(width_str), int(height_str)
+    base_width, base_height = int(width_str), int(height_str)
+    return await _query_adb_display_orientation_size(
+        adb_bin,
+        device_id,
+        base_width,
+        base_height,
+    )
 
 
 def _build_context(
@@ -223,14 +285,36 @@ def create_touch_api_app(
     """Creates an ASGI application serving the ADB-backed touch and input routes."""
     state_holder: dict[str, Any] = {
         "actuator": actuator,
+        "custom_actuator": actuator is not None,
         "controller": controller,
         "ctx": ctx,
+        "last_size_check": 0.0,
     }
 
+    def _sync_actuator_dimensions(
+        act: AdbActuator,
+        runtime_ctx: ArtemisContext,
+        width: int,
+        height: int,
+    ) -> None:
+        if runtime_ctx.device is not None:
+            runtime_ctx.device.device_width = width
+            runtime_ctx.device.device_height = height
+        act.ctx = runtime_ctx
+        ctrl = getattr(act, "controller", None)
+        if ctrl is not None:
+            ctrl.ctx = runtime_ctx
+            drv = getattr(ctrl, "_driver", None)
+            if drv is not None:
+                if hasattr(drv, "_width"):
+                    drv._width = width
+                if hasattr(drv, "_height"):
+                    drv._height = height
+
     async def _get_actuator() -> AdbActuator:
-        act = state_holder["actuator"]
+        act: AdbActuator | None = state_holder["actuator"]
         if act is None:
-            runtime_ctx = state_holder["ctx"]
+            runtime_ctx: ArtemisContext | None = state_holder["ctx"]
             if runtime_ctx is None:
                 default_serial = (
                     os.environ.get("ADB_DEVICE_SERIAL")
@@ -244,9 +328,30 @@ def create_touch_api_app(
                     w, h = 1080, 2400
                 runtime_ctx = _build_context(device_id=str(default_serial), width=w, height=h)
                 state_holder["ctx"] = runtime_ctx
+                state_holder["last_size_check"] = time.monotonic()
 
             act = AdbActuator(runtime_ctx, controller=state_holder["controller"])
             state_holder["actuator"] = act
+            return act
+
+        # Dynamically refresh screen dimensions when device orientation changes mid-session
+        if not state_holder["custom_actuator"]:
+            now = time.monotonic()
+            if now - float(state_holder["last_size_check"]) >= _ORIENTATION_REFRESH_TTL_S:
+                runtime_ctx = state_holder["ctx"] or getattr(act, "ctx", None)
+                device_id = (
+                    runtime_ctx.device.device_id
+                    if runtime_ctx and runtime_ctx.device and runtime_ctx.device.device_id
+                    else "default"
+                )
+                try:
+                    w, h = await _query_adb_screen_size(str(device_id))
+                    if runtime_ctx is not None:
+                        _sync_actuator_dimensions(act, runtime_ctx, w, h)
+                except (RuntimeError, OSError, ValueError):
+                    pass
+                state_holder["last_size_check"] = now
+
         return act
 
     async def health_endpoint(_request: Request) -> JSONResponse:
@@ -288,12 +393,11 @@ def create_touch_api_app(
 
         new_ctx = _build_context(device_id=req.device_id, width=width, height=height)
         state_holder["ctx"] = new_ctx
+        state_holder["last_size_check"] = time.monotonic()
 
         act: AdbActuator | None = state_holder["actuator"]
-        if act is not None:
-            act.ctx = new_ctx
-            if hasattr(act, "controller") and act.controller is not None:
-                act.controller.ctx = new_ctx
+        if state_holder["custom_actuator"] and act is not None:
+            _sync_actuator_dimensions(act, new_ctx, width, height)
         else:
             state_holder["actuator"] = AdbActuator(
                 new_ctx, controller=state_holder["controller"]
