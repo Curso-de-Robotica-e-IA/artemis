@@ -349,22 +349,7 @@ def test_mutual_occlusion_warning_injection():
     assert "WARNING: may overlap with [1], possible occlusion" in minimal_list
 
 
-def test_mutual_occlusion_warning_injection_disabled():
-    from artemis.utils.visualization import format_minimal_list_with_elements
-
-    fused_xml = [
-        {"text": "Search Video Result", "bounds": "[50,1800][1000,2000]"},
-        {"text": "Create Floating Button", "bounds": "[750,1850][1000,2000]"},
-    ]
-
-    minimal_list, elements, labels = format_minimal_list_with_elements(
-        fused_xml, width=1080, height=2400, inject_occlusion_warnings=False
-    )
-    assert "WARNING: may overlap with" not in minimal_list
-    assert len(elements) == 2
-
-
-def test_format_minimal_list_skips_offscreen_and_collapsed():
+def test_format_minimal_list_preserves_offscreen_and_collapsed():
     from artemis.utils.visualization import format_minimal_list_with_elements
 
     fused_xml = [
@@ -379,14 +364,134 @@ def test_format_minimal_list_skips_offscreen_and_collapsed():
         fused_xml, width=1080, height=2400
     )
     lines = minimal_list.splitlines()
-    assert len(lines) == 2
+    assert len(lines) == 5
     assert "[1] Text: 'Visible Header' | Bounds: [0,20][1000,62]" in lines[0]
-    assert "[2] Hint: 'Search Box' | Bounds: [9,83][462,125]" in lines[1]
-    assert len(elements) == 2
-    assert elements[0]["text"] == "Visible Header"
-    assert elements[1]["text"] == "Search Box"
+    assert "[2] Text: 'Offscreen Left' | Bounds: [0,41][0,83]" in lines[1]
+    assert "[3] Text: 'Offscreen Bottom' | Bounds: [0,1000][1000,1000]" in lines[2]
+    assert "[4] Text: 'Collapsed Point' | Bounds: [1000,1000][1000,1000]" in lines[3]
+    assert "[5] Hint: 'Search Box' | Bounds: [9,83][462,125]" in lines[4]
+    assert len(elements) == 5
+    assert labels == ["1", "2", "3", "4", "5"]
 
 
 def test_is_semantic_empty_preserves_hint_and_error():
     assert not _is_semantic_empty({"hint": "Search something"})
     assert not _is_semantic_empty({"error": "Field is required"})
+
+
+def test_observe_preserves_unfiltered_hierarchy_and_occlusion_warnings(tmp_path):
+    import asyncio
+    import base64
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from artemis.mcp.observation import observe
+
+    raw_elements = [
+        {
+            "text": "",
+            "class": "android.widget.FrameLayout",
+            "clickable": "false",
+            "focusable": "false",
+            "bounds": "[0,0][1080,2400]",
+        },
+        {
+            "text": "Search Video Result",
+            "bounds": "[50,1800][1000,2000]",
+            "clickable": "true",
+        },
+        {
+            "text": "Create Floating Button",
+            "bounds": "[750,1850][1000,2000]",
+            "clickable": "true",
+        },
+        {
+            "text": "Collapsed Point",
+            "bounds": "[1080,2400][1080,2400]",
+        },
+    ]
+
+    screen_data = SimpleNamespace(
+        base64=base64.b64encode(b"fake-jpg").decode("ascii"),
+        elements=raw_elements,
+        width=1080,
+        height=2400,
+        package="com.example.app",
+        activity=".MainActivity",
+    )
+    controller = MagicMock()
+    controller.get_screen_data = AsyncMock(return_value=screen_data)
+
+    data_engine = MagicMock()
+    data_engine.get_or_create_image.return_value = "img_hash"
+    data_engine.get_image_path.return_value = tmp_path / "images" / "img_hash.jpg"
+
+    ctx = SimpleNamespace(
+        device=SimpleNamespace(device_width=1080, device_height=2400),
+        data_engine=data_engine,
+    )
+
+    with patch("artemis.utils.ui_filter.filter_ui_hierarchy") as mock_filter:
+        obs, screenshot_bytes = asyncio.run(observe(ctx, controller, settle_ms=0))
+
+    mock_filter.assert_not_called()
+    assert screenshot_bytes == b"fake-jpg"
+    assert obs.ok is True
+    assert obs.hierarchy_ok is True
+    assert len(obs.elements) == 3
+    assert "Search Video Result" in obs.elements_text
+    assert "Create Floating Button" in obs.elements_text
+    assert "Collapsed Point" in obs.elements_text
+    assert "WARNING: may overlap with [2], possible occlusion" in obs.elements_text
+    assert "WARNING: may overlap with [1], possible occlusion" in obs.elements_text
+    # DataEngine persists the un-refiltered raw_elements hierarchy
+    assert data_engine.get_or_create_image.call_args.kwargs["ui_tree"] is raw_elements
+
+
+def test_xml_scrub_depth_preserves_live_full_list_and_scrubs_older_turns():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from artemis.memory.transcript import PRO_UI_LIST_MARKER, TranscriptLedger
+
+    ledger = TranscriptLedger(prune_history_xml=True, xml_scrub_depth=1, image_scrub_depth=3)
+
+    old_obs = HumanMessage(
+        content=[
+            {"type": "text", "text": "# CURRENT OBSERVATION [T+00:01]"},
+            {"type": "text", "text": "--- Current Screenshot ---"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,OLD"}},
+            {
+                "type": "text",
+                "text": (
+                    f"{PRO_UI_LIST_MARKER}\n"
+                    "[1] Text: 'Old Item' | Bounds: [0,0][500,100]"
+                    " (WARNING: may overlap with [2], possible occlusion)"
+                ),
+            },
+        ]
+    )
+    ledger.stage_turn([old_obs, AIMessage(content="Tapped old item.")])
+    ledger.commit_staged(step_key="step-1")
+
+    live_list = (
+        "[1] Text: 'Live Item' | Bounds: [50,750][925,833]"
+        " (WARNING: may overlap with [2], possible occlusion)\n"
+        "[2] Text: 'Floating Action' | Bounds: [694,770][925,833]"
+        " (WARNING: may overlap with [1], possible occlusion)"
+    )
+    live_tail = HumanMessage(
+        content=[
+            {"type": "text", "text": "# CURRENT OBSERVATION [T+00:05]"},
+            {"type": "text", "text": "--- Current Screenshot ---"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,LIVE"}},
+            {"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{live_list}"},
+        ]
+    )
+
+    rendered = ledger.render([live_tail])
+    old_rendered_texts = [b.get("text", "") for b in rendered[0].content if isinstance(b, dict)]
+    live_rendered_texts = [b.get("text", "") for b in rendered[-1].content if isinstance(b, dict)]
+
+    assert not any("Old Item" in t for t in old_rendered_texts)
+    assert not any(PRO_UI_LIST_MARKER in t for t in old_rendered_texts)
+    assert any(f"{PRO_UI_LIST_MARKER}\n{live_list}" == t for t in live_rendered_texts)

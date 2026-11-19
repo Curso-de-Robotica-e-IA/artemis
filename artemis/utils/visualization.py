@@ -256,10 +256,7 @@ def _inject_mutual_occlusion_warnings(
 
 
 def format_minimal_list_with_points(
-    fused_xml: list[dict[str, Any]],
-    width: int = 1080,
-    height: int = 2400,
-    inject_occlusion_warnings: bool = True,
+    fused_xml: list[dict[str, Any]], width: int = 1080, height: int = 2400
 ) -> tuple[str, list[list[int]], list[str]]:
     """Formats fused XML hierarchy into a minimal list with sequence numbers,
 
@@ -301,15 +298,6 @@ def format_minimal_list_with_points(
                 ocr_bounds = parse_bounds(ocr.get("bounds"))
                 if ocr_bounds:
                     left, top, right, bottom = ocr_bounds
-                    if (
-                        left >= right
-                        or top >= bottom
-                        or right <= 0
-                        or bottom <= 0
-                        or left >= width
-                        or top >= height
-                    ):
-                        continue
                     cx, cy = get_center_coordinates(left, top, right, bottom)
                     if is_duplicate(ocr["text"], cx, cy):
                         continue
@@ -326,15 +314,6 @@ def format_minimal_list_with_points(
 
         if not registered and text.strip() and bounds:
             left, top, right, bottom = bounds
-            if (
-                left >= right
-                or top >= bottom
-                or right <= 0
-                or bottom <= 0
-                or left >= width
-                or top >= height
-            ):
-                continue
             cx, cy = get_center_coordinates(left, top, right, bottom)
             if is_duplicate(text, cx, cy):
                 continue
@@ -348,16 +327,12 @@ def format_minimal_list_with_points(
             added_items.append((text.strip(), cx, cy))
             idx += 1
 
-    if inject_occlusion_warnings:
-        lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
+    lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
     return "\n".join(lines), points, labels
 
 
 def format_minimal_list_with_elements(
-    fused_xml: list[dict[str, Any]],
-    width: int = 1080,
-    height: int = 2400,
-    inject_occlusion_warnings: bool = True,
+    fused_xml: list[dict[str, Any]], width: int = 1080, height: int = 2400
 ) -> tuple[str, list[dict[str, Any]], list[str]]:
     """Formats fused XML hierarchy into a minimal list with sequence numbers,
 
@@ -399,15 +374,6 @@ def format_minimal_list_with_elements(
                 ocr_bounds = parse_bounds(ocr.get("bounds"))
                 if ocr_bounds:
                     left, top, right, bottom = ocr_bounds
-                    if (
-                        left >= right
-                        or top >= bottom
-                        or right <= 0
-                        or bottom <= 0
-                        or left >= width
-                        or top >= height
-                    ):
-                        continue
                     cx, cy = get_center_coordinates(left, top, right, bottom)
                     if is_duplicate(ocr["text"], cx, cy):
                         continue
@@ -440,15 +406,6 @@ def format_minimal_list_with_elements(
         shown = text.strip() or hint
         if not registered and shown and bounds:
             left, top, right, bottom = bounds
-            if (
-                left >= right
-                or top >= bottom
-                or right <= 0
-                or bottom <= 0
-                or left >= width
-                or top >= height
-            ):
-                continue
             cx, cy = get_center_coordinates(left, top, right, bottom)
             if is_duplicate(shown, cx, cy):
                 continue
@@ -479,8 +436,7 @@ def format_minimal_list_with_elements(
             added_items.append((shown, cx, cy))
             idx += 1
 
-    if inject_occlusion_warnings:
-        lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
+    lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
     return "\n".join(lines), elements, labels
 
 

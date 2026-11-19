@@ -186,15 +186,6 @@ class Settings(BaseSettings):
         description="Maximum dimension in pixels for screenshots sent to LLM. 0 to disable.",
     )
 
-    ARTEMIS_UI_OCCLUSION_WARNINGS: bool = Field(
-        default=False,
-        validation_alias=AliasChoices(
-            "ARTEMIS_UI_OCCLUSION_WARNINGS",
-            "UI_OCCLUSION_WARNINGS",
-        ),
-        description="Whether to append mutual occlusion warnings to UI elements in minimal list.",
-    )
-
     ARTEMIS_SETTLE_MS: int = Field(
         default=150,
         validation_alias=AliasChoices(
