@@ -162,26 +162,36 @@ class OperatorNode:
     def _available_device_actions(self) -> frozenset[str]:
         """Device actions the installed actuator backend provides.
 
-        Without an explicit ``ctx.actuator`` the full manifest set applies (the
-        default AdbActuator implements everything), so behavior is unchanged until a
-        partial backend is actually installed.
+        Without an explicit ``ctx.actuator`` the full manifest set applies (unless
+        non-invasive HTTP Touch API or VISION_ONLY_MODE is active, which strips
+        system-channel shortcuts like ``manage_app``), so behavior is unchanged until a
+        partial backend or non-invasive mode is active.
         """
+        from artemis.config.agent import is_tool_denylisted
+        from artemis.config.settings import is_non_invasive_mode
         from artemis.mcp.action_manifest import (
             OPTIONAL_ACTIONS,
             REQUIRED_ACTIONS,
             available_device_actions,
         )
+        from artemis.mcp.actuators.adb import NON_INVASIVE_EXCLUDED_ACTIONS
 
+        actions = set(REQUIRED_ACTIONS | OPTIONAL_ACTIONS)
         actuator = getattr(self.ctx, "actuator", None)
         if actuator is not None and callable(getattr(actuator, "capabilities", None)):
             try:
                 extension_names = frozenset(
                     e.name for e in actuator.extensions() if "operator" in e.targets
                 )
-                return available_device_actions(actuator) | extension_names
-            except Exception as e:
+                actions = set(available_device_actions(actuator) | extension_names)
+            except (AttributeError, TypeError, ValueError, RuntimeError) as e:
                 logger.warning(f"Failed to read actuator capabilities: {e}")
-        return REQUIRED_ACTIONS | OPTIONAL_ACTIONS
+
+        if is_non_invasive_mode():
+            actions -= NON_INVASIVE_EXCLUDED_ACTIONS
+
+        actions = {name for name in actions if not is_tool_denylisted(self.ctx, name, "operator")}
+        return frozenset(actions)
 
     def _get_history_and_plan(self) -> tuple[list[dict], str]:
         steps = []
@@ -920,10 +930,13 @@ class OperatorNode:
         ] + self.tools
 
         # 5. Mount the task-output analyzer and collect background ADB task state.
-        # The analyzer is always available: the "output truncated, use
-        # analyze_task_output" hint arrives mid-turn, and tools are bound once per
-        # turn, so a conditional mount would be one turn late.
-        if not any(t.name == "analyze_task_output" for t in all_tools):
+        # The analyzer is mounted whenever ADB task tools are active (omitted in
+        # non-invasive mode where ADB shell commands are disabled).
+        from artemis.config.settings import is_non_invasive_mode
+
+        if not is_non_invasive_mode() and not any(
+            t.name == "analyze_task_output" for t in all_tools
+        ):
             all_tools.append(analyze_task_output_wrapper.tool_fn_getter(self.ctx))
 
         traced_tools = [trace_langchain_tool(t, self.ctx) for t in all_tools]

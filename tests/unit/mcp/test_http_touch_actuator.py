@@ -62,13 +62,18 @@ def _make_client(app) -> httpx.AsyncClient:
 
 
 def test_actuator_protocol_and_capabilities(test_context: ArtemisContext, touch_app):
+    from artemis.mcp.actuators.adb import NON_INVASIVE_EXCLUDED_ACTIONS
+
     client = _make_client(touch_app)
     actuator = HttpTouchActuator(test_context, client=client)
 
     assert isinstance(actuator, Actuator)
     assert isinstance(actuator, AdbActuator)
     assert isinstance(actuator, HttpTouchActuator)
-    assert actuator.capabilities() == DEVICE_ACTIONS
+    assert actuator.capabilities() == DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
+    assert "manage_app" not in actuator.capabilities()
+    assert "open_link" not in actuator.capabilities()
+    assert "wait_for_text" not in actuator.capabilities()
     assert "input_text" in actuator.capabilities()
     assert "focus_and_clear_text" in actuator.capabilities()
     assert "erase_one_char" in actuator.capabilities()

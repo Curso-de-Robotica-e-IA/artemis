@@ -23,8 +23,9 @@ import httpx
 from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
-from artemis.mcp.action_types import ActionResult
-from artemis.mcp.actuators.adb import AdbActuator
+from artemis.mcp.action_manifest import DEVICE_ACTIONS
+from artemis.mcp.action_types import ActionCode, ActionResult
+from artemis.mcp.actuators.adb import AdbActuator, NON_INVASIVE_EXCLUDED_ACTIONS
 
 
 class HttpTouchActuator(AdbActuator):
@@ -67,6 +68,24 @@ class HttpTouchActuator(AdbActuator):
     def reset_synced_devices(cls) -> None:
         """Clears cached device synchronization state across URLs."""
         cls._synced_devices_by_url.clear()
+
+    def capabilities(self) -> frozenset[str]:
+        """Exposes only physical touch/input actions supported by the HTTP Touch API.
+
+        Direct ADB app launching (``manage_app``), deep links (``open_link``), and
+        UI-tree text polling (``wait_for_text``) are excluded so the agent operates
+        100% non-invasively like a human user.
+        """
+        return DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
+
+    async def manage_app(self, action: str, app_name: str) -> ActionResult:
+        """Refuses direct ADB app launch/stop on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "manage_app",
+            "manage_app is disabled on the HTTP Touch API backend. Locate and open the "
+            "application visually via home screen / app drawer swipes or the launcher search bar.",
+            code=ActionCode.UNSUPPORTED,
+        )
 
     def _resolve_device_id(self) -> str:
         if self.ctx and self.ctx.device and self.ctx.device.device_id:

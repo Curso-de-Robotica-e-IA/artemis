@@ -489,6 +489,8 @@ class AgentBase:
         self._tasks.append(task)
         task_name = task.get_name()
 
+        from artemis.mcp.actuators import create_actuator
+
         context = ArtemisContext(
             device=self._device_context,
             adb_client=self._adb_client,
@@ -496,6 +498,7 @@ class AgentBase:
             llm_config=agent_profile.llm_config,
             agent_config=self._config,
         )
+        context.actuator = create_actuator(context)
 
         self._last_context = context
         self._last_session_id = task_id

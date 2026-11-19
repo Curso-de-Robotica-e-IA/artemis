@@ -299,12 +299,12 @@ class Settings(BaseSettings):
             try:
                 with socket.create_connection(("192.168.155.46", 11434), timeout=0.4):
                     pass
-            except Exception:
+            except OSError:
                 try:
                     with socket.create_connection(("127.0.0.1", 11434), timeout=0.4):
                         self.OPENAI_BASE_URL = str(self.OPENAI_BASE_URL).replace("192.168.155.46:11434", "127.0.0.1:11434")
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug(f"Local Ollama fallback socket probe skipped: {exc}")
 
         # Fallback for OCR & Vision API keys
         if not self.OCR_API_KEY and self.VISION_API_KEY:
@@ -451,3 +451,14 @@ def is_vision_only_mode() -> bool:
     if val is not None:
         return val.strip().lower() in ("true", "1", "yes", "on")
     return bool(getattr(settings, "VISION_ONLY_MODE", False))
+
+
+def is_non_invasive_mode() -> bool:
+    """Check if non-invasive execution mode is active (HTTP Touch API backend or VISION_ONLY_MODE)."""
+    if is_vision_only_mode():
+        return True
+    backend = str(
+        os.environ.get("ARTEMIS_ACTUATOR_BACKEND")
+        or getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")
+    ).strip().lower()
+    return backend == "http"

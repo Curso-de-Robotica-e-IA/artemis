@@ -156,6 +156,7 @@ from artemis.config.runtime import (
 )
 from artemis.config.settings import (
     Settings,
+    is_non_invasive_mode,
     is_vision_only_mode,
     settings,
 )
@@ -170,6 +171,7 @@ __all__ = [
     "Settings",
     "settings",
     "is_vision_only_mode",
+    "is_non_invasive_mode",
     "ENV_VISION_ONLY_MODE",
     "VISION_ONLY_NOTICE",
     # Paths & Dirs

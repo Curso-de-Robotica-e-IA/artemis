@@ -244,6 +244,11 @@ async def get_action_session(ctx: Any, actuator: Any = None) -> ActionSession:
     from artemis.mcp.actuators import create_actuator
 
     actuator = actuator or getattr(ctx, "actuator", None) or create_actuator(ctx)
+    if getattr(ctx, "actuator", None) is None:
+        try:
+            ctx.actuator = actuator
+        except (AttributeError, TypeError, ValueError):
+            pass
     server = build_action_server(actuator)
     session = ActionSession(server)
     await session.start()

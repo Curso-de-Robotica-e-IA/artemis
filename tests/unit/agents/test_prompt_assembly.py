@@ -184,6 +184,11 @@ def test_flash_without_manage_app_drops_app_launching():
     out = _render_flash(FLASH_FULL - {"manage_app"})
     assert "**App Launching**" not in out
     assert not _tool_refs(out, "manage_app")
+    # Replaces direct launch with the 3-step visual human navigation hierarchy.
+    assert "**Visual App Discovery & Launching (Human Navigation Hierarchy)**" in out
+    assert "**Step 1 (Visual Screen Inspection)**" in out
+    assert "**Step 2 (Swipe Gestures — App Drawer & Pagination)**" in out
+    assert "**Step 3 (Search Bar / Magnifying Glass & Virtual Keyboard Typing)**" in out
     # The neighbouring numbered rule survives.
     assert "**Do not determine element coordinates based on guesswork.**" in out
 

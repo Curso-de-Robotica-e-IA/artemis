@@ -31,6 +31,7 @@ import re
 import time
 from typing import Any
 
+from artemis.config.settings import is_vision_only_mode
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.action_manifest import DEVICE_ACTIONS, ExtensionTool
@@ -39,7 +40,21 @@ from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ["AdbActuator", "find_element_at_coords", "ensure_focus_at_coords"]
+#: System-channel device actions disabled in non-invasive / vision-only mode.
+NON_INVASIVE_EXCLUDED_ACTIONS: frozenset[str] = frozenset(
+    {
+        "manage_app",
+        "open_link",
+        "wait_for_text",
+    }
+)
+
+__all__ = [
+    "AdbActuator",
+    "NON_INVASIVE_EXCLUDED_ACTIONS",
+    "find_element_at_coords",
+    "ensure_focus_at_coords",
+]
 
 
 def find_element_at_coords(elements: list[dict], x: int, y: int) -> dict | None:
@@ -112,6 +127,8 @@ class AdbActuator:
     # --- Contract --------------------------------------------------------------------
 
     def capabilities(self) -> frozenset[str]:
+        if is_vision_only_mode():
+            return DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
         return DEVICE_ACTIONS
 
     def extensions(self) -> list[ExtensionTool]:
@@ -284,6 +301,13 @@ class AdbActuator:
         return ActionResult.success("press_key", f"Pressed key '{key}'.")
 
     async def manage_app(self, action: str, app_name: str) -> ActionResult:
+        if is_vision_only_mode():
+            return ActionResult.failure(
+                "manage_app",
+                "manage_app is disabled in vision-only / non-invasive mode. Locate and launch "
+                "the app visually via the home screen, app drawer swipes, or launcher search bar.",
+                code=ActionCode.UNSUPPORTED,
+            )
         # Imported lazily: launch_app pulls in tool wrappers that are costly at import.
         from artemis.tools.mobile.launch_app import find_package
         from third_party.mobile_use.utils.app_launch_utils import launch_app_with_retries

@@ -18,7 +18,7 @@ from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.actuators.base import Actuator
-from artemis.mcp.actuators.adb import AdbActuator
+from artemis.mcp.actuators.adb import AdbActuator, NON_INVASIVE_EXCLUDED_ACTIONS
 from artemis.mcp.actuators.http_touch import HttpTouchActuator
 from artemis.mcp.actuators.mock import MockActuator
 
@@ -39,5 +39,6 @@ __all__ = [
     "AdbActuator",
     "HttpTouchActuator",
     "MockActuator",
+    "NON_INVASIVE_EXCLUDED_ACTIONS",
     "create_actuator",
 ]

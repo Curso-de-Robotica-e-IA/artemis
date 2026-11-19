@@ -290,8 +290,8 @@
     "explorer_versions": {},
 // 🚫 Per-agent Tool Denylists
     "denylisted_tools": {
-      "operator": ["ask_explorer", "video_analyzer", "ask_diagnoser"],
-      "flash": ["ask_explorer", "video_analyzer"],
+      "operator": ["ask_explorer", "video_analyzer", "ask_diagnoser", "manage_app", "run_adb_command", "manage_task"],
+      "flash": ["ask_explorer", "video_analyzer", "manage_app"],
       "explorer": []
     }
   }

@@ -611,3 +611,98 @@ def test_execution_incident_and_tool_result_omit_xml_bounds_in_vision_only_mode(
     assert "XMLLeak" not in joined
     assert "--- UI Element List ---" not in joined
     assert VISION_ONLY_NOTICE in joined
+
+
+@pytest.mark.asyncio
+async def test_non_invasive_disables_manage_app_and_enforces_human_visual_hierarchy(monkeypatch):
+    """Verify manage_app and ADB shortcuts are disabled and human visual hierarchy is taught when VISION_ONLY_MODE=true or ARTEMIS_ACTUATOR_BACKEND='http'."""
+    from jinja2 import Template
+    from pathlib import Path
+    from artemis.agents.operator.operator import OperatorNode
+    from artemis.agents.operator.prompts import (
+        apply_operator_prompt_contract,
+        load_operator_prompts,
+        resolve_operator_prompt_tools,
+    )
+    from artemis.config.settings import is_non_invasive_mode
+    from artemis.context import ArtemisContext, DeviceContext, DevicePlatform
+    from artemis.mcp.action_manifest import validate_actuator
+    from artemis.mcp.actuators import AdbActuator, HttpTouchActuator
+    from artemis.platform import platform
+
+    ctx = ArtemisContext(
+        device=DeviceContext(
+            host_platform=platform.os_type.name,
+            mobile_platform=DevicePlatform.ANDROID,
+            device_id="test-dev",
+            device_width=1080,
+            device_height=2400,
+        )
+    )
+
+    for mode_name, env_vision, backend in (
+        ("vision_only", "true", "adb"),
+        ("http_touch", "false", "http"),
+    ):
+        monkeypatch.setenv(ENV_VISION_ONLY_MODE, env_vision)
+        monkeypatch.setattr(settings, "VISION_ONLY_MODE", env_vision == "true")
+        monkeypatch.setattr(settings, "ARTEMIS_ACTUATOR_BACKEND", backend)
+
+        assert is_non_invasive_mode() is True, f"Failed for {mode_name}"
+
+        actuator = (
+            HttpTouchActuator(ctx)
+            if backend == "http"
+            else AdbActuator(ctx, controller=MagicMock())
+        )
+        ctx.actuator = actuator
+
+        # 1. validate_actuator passes without ActuatorContractError
+        validate_actuator(actuator)
+        assert "manage_app" not in actuator.capabilities()
+        assert "open_link" not in actuator.capabilities()
+        assert "wait_for_text" not in actuator.capabilities()
+
+        # Calling manage_app directly returns UNSUPPORTED failure without invoking ADB
+        res = await actuator.manage_app("launch", "Settings")
+        assert not res.ok
+        assert res.code.value == "UNSUPPORTED"
+
+        # 2. Operator tools & prompt exclude manage_app and run_adb_command, and teach human hierarchy
+        op_tools = resolve_operator_prompt_tools(ctx)
+        assert "manage_app" not in op_tools
+        assert "run_adb_command" not in op_tools
+        assert "manage_task" not in op_tools
+
+        op_node = OperatorNode(ctx)
+        assert "manage_app" not in op_node._available_device_actions()
+
+        op_prompt = apply_operator_prompt_contract(
+            load_operator_prompts()["main_template"], available_tools=op_tools
+        )
+        assert "manage_app" not in op_prompt
+        assert "run_adb_command" not in op_prompt
+        assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in op_prompt
+        assert "Search Bar / Magnifying Glass & Virtual Keyboard Typing" in op_prompt
+
+        # 3. FlashRunner tools & prompt exclude manage_app and teach human hierarchy
+        with patch("artemis.controllers.unified_controller.get_driver"):
+            runner = FlashRunner(ctx, goal="Open Calculator")
+            flash_tools = runner._get_tools()
+            flash_tool_names = [t.name for t in flash_tools]
+            assert "manage_app" not in flash_tool_names
+            flash_prompt = runner._render_system_prompt(flash_tools)
+            assert "manage_app" not in flash_prompt
+            assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in flash_prompt
+            assert "Search Bar / Magnifying Glass & Virtual Keyboard Typing" in flash_prompt
+
+        # 4. Planner system prompt omits App Management / ADB shell and teaches human hierarchy
+        planner_data = json.loads(
+            (Path("artemis/agents/planner/planner.json")).read_text(encoding="utf-8")
+        )
+        cap_block = Template(planner_data["blocks"]["capabilities_operator"]).render(
+            non_invasive_mode=is_non_invasive_mode()
+        )
+        assert "App Management" not in cap_block
+        assert "Executing arbitrary ADB shell commands" not in cap_block
+        assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in cap_block

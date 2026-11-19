@@ -96,6 +96,11 @@ class McpActionExecutor:
         self.actuator = (
             actuator or getattr(ctx, "actuator", None) or create_actuator(ctx, controller=controller)
         )
+        if getattr(ctx, "actuator", None) is None:
+            try:
+                ctx.actuator = self.actuator
+            except (AttributeError, TypeError, ValueError):
+                pass
         self.controller = self.actuator.controller
         # Identifies the calling agent / profile to the Explorer tier resolver
         # (``explorer.flash_mode`` vs ``explorer.pro_mode``); the agent itself

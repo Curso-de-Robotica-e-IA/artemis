@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from artemis.config.settings import is_non_invasive_mode
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.data_engine.trace import CURRENT_TRACE_ID, TraceSpan, trace
@@ -152,6 +153,7 @@ async def run_async_planner_validation(
             plan_grammar=render_plan_grammar_spec(midway=midway, final=final),
             midway_checks=midway,
             final_check=final,
+            non_invasive_mode=is_non_invasive_mode(),
         )
 
         history_str = "No history available."
@@ -231,6 +233,7 @@ class PlannerNode:
             plan_grammar=render_plan_grammar_spec(midway=midway, final=final),
             midway_checks=midway,
             final_check=final,
+            non_invasive_mode=is_non_invasive_mode(),
         )
 
         # Get screenshot

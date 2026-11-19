@@ -230,14 +230,21 @@ class FlashRunner:
             tools.append(VIDEO_ANALYZER_TOOL)
         tools.append(REPORT_TASK_STATUS_TOOL)
         tools = [t for t in tools if not is_tool_denylisted(self.ctx, t.name, "flash")]
-        # With an actuator installed, drop declarations for device actions the
-        # backend does not implement (and append its extension tools); without
-        # one, the full historical declaration set is kept.
-        actuator = getattr(self.ctx, "actuator", None)
-        if actuator is not None:
+        # With an actuator installed (or resolved from the executor / non-invasive mode),
+        # drop declarations for device actions the backend does not implement.
+        actuator = getattr(self.ctx, "actuator", None) or getattr(
+            getattr(self, "executor", None), "actuator", None
+        )
+        if actuator is not None and callable(getattr(actuator, "capabilities", None)):
             from artemis.mcp.action_manifest import filter_declarations
 
             tools = filter_declarations(tools, actuator, "flash")
+        elif is_vision_only_mode() or str(
+            getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")
+        ).strip().lower() == "http":
+            from artemis.mcp.actuators.adb import NON_INVASIVE_EXCLUDED_ACTIONS
+
+            tools = [t for t in tools if t.name not in NON_INVASIVE_EXCLUDED_ACTIONS]
         return tools
 
     def _prune_intermediate_screenshots(self, messages: list[BaseMessage]) -> None:

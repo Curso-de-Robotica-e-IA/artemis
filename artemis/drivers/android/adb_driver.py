@@ -156,9 +156,9 @@ class AndroidAdbDriver(BaseDeviceDriver):
                         ui_elements = [raw_elements]
                     elif isinstance(raw_elements, list):
                         ui_elements = raw_elements
-                if hasattr(raw_ui_data, "package") and raw_ui_data.package:
+                if hasattr(raw_ui_data, "package") and isinstance(raw_ui_data.package, str) and raw_ui_data.package:
                     current_package = raw_ui_data.package
-                if hasattr(raw_ui_data, "activity") and raw_ui_data.activity:
+                if hasattr(raw_ui_data, "activity") and isinstance(raw_ui_data.activity, str) and raw_ui_data.activity:
                     act = raw_ui_data.activity
                     if not (act.startswith("android.widget.") or act.startswith("android.view.")):
                         current_activity = act
@@ -228,8 +228,10 @@ class AndroidAdbDriver(BaseDeviceDriver):
             try:
                 if hasattr(self.device, "app_current"):
                     app_info = await asyncio.to_thread(self.device.app_current)
-                    if hasattr(app_info, "activity"):
+                    if hasattr(app_info, "activity") and isinstance(app_info.activity, str):
                         pkg = getattr(app_info, "package", current_package)
+                        if not isinstance(pkg, str):
+                            pkg = current_package
                         act = app_info.activity
                         if act and act.startswith(".") and pkg:
                             current_activity = f"{pkg}{act}"
@@ -238,11 +240,14 @@ class AndroidAdbDriver(BaseDeviceDriver):
                         current_package = pkg or current_package
                     elif isinstance(app_info, dict):
                         pkg = app_info.get("package", current_package)
+                        if not isinstance(pkg, str):
+                            pkg = current_package
                         act = app_info.get("activity")
-                        if act and act.startswith(".") and pkg:
-                            current_activity = f"{pkg}{act}"
-                        else:
-                            current_activity = act
+                        if isinstance(act, str):
+                            if act and act.startswith(".") and pkg:
+                                current_activity = f"{pkg}{act}"
+                            else:
+                                current_activity = act
                         current_package = pkg or current_package
             except Exception as e:
                 logger.debug(f"Device app_current fallback failed: {e}")

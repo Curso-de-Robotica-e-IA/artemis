@@ -983,13 +983,18 @@ async def get_graph(ctx: ArtemisContext) -> CompiledStateGraph:
 
     # Get specialized tools for Operator (history tools: shared definitions)
     from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+    from artemis.config.settings import is_non_invasive_mode
     from artemis.tools.history import HISTORY_TOOL_WRAPPERS
 
     operator_specialized_wrappers = [
-        run_adb_command_wrapper,
-        manage_task_wrapper,
         *HISTORY_TOOL_WRAPPERS,
     ]
+    if not is_non_invasive_mode():
+        operator_specialized_wrappers = [
+            run_adb_command_wrapper,
+            manage_task_wrapper,
+            *operator_specialized_wrappers,
+        ]
     if not is_tool_denylisted(ctx, "ask_diagnoser", "operator"):
         operator_specialized_wrappers.insert(0, ask_diagnoser_wrapper)
     if is_explorer_enabled(ctx, "operator"):

@@ -210,6 +210,8 @@ def resolve_operator_prompt_tools(ctx: ArtemisContext) -> frozenset[str]:
         available.discard("video_analyzer")
 
     from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+    from artemis.config.settings import is_non_invasive_mode
+    from artemis.mcp.actuators.adb import NON_INVASIVE_EXCLUDED_ACTIONS
 
     if is_tool_denylisted(ctx, "video_analyzer", "operator"):
         available.discard("video_analyzer")
@@ -240,6 +242,14 @@ def resolve_operator_prompt_tools(ctx: ArtemisContext) -> frozenset[str]:
             available -= DEVICE_ACTIONS - available_device_actions(actuator)
         except Exception as e:
             logger.warning(f"Failed to assemble prompt against actuator: {e}")
+
+    # In non-invasive mode (HTTP Touch API or VISION_ONLY_MODE), strip system-channel
+    # shortcuts (manage_app, run_adb_command, manage_task) and apply tool denylists.
+    if is_non_invasive_mode():
+        available -= NON_INVASIVE_EXCLUDED_ACTIONS
+        available.difference_update(_PRE_DECISION_ADB_TOOLS)
+
+    available = {name for name in available if not is_tool_denylisted(ctx, name, "operator")}
 
     return frozenset(available)
 
