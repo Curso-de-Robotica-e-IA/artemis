@@ -110,3 +110,147 @@ def test_validate_plan_format_single_sourced_status_alphabet():
     empty, message = validate_plan_format("# just prose\n")
     assert empty is False
     assert "at least one subgoal" in message
+
+
+def test_validate_plan_format_require_all_pending():
+    """Initial plan validation rejects any non-pending status such as '- [x]'."""
+    from artemis.agents.planner.planner import validate_plan_format
+
+    valid, err = validate_plan_format(
+        "- [ ] Open settings\n- [ ] [Loop] Check items\n  - [ ] Inspect item #1\n",
+        require_all_pending=True,
+    )
+    assert valid is True and err == ""
+
+    for bad_plan in (
+        "- [x] Open settings\n- [x] Confirm\n",
+        "- [ ] Open settings\n  - [x] Already done subtask\n",
+        "- [/] In progress milestone\n",
+        "- [!] Blocked milestone\n",
+    ):
+        ok, msg = validate_plan_format(bad_plan, require_all_pending=True)
+        assert ok is False
+        assert "- [ ]" in msg
+
+
+@pytest.mark.asyncio
+async def test_planner_stops_after_first_valid_task_plan_save(mock_context, tmp_path):
+    """Planner exits immediately once a valid all-pending task_plan is saved,
+    preventing a gratuitous second LLM turn that could overwrite items with [x]."""
+    from langchain_core.messages import AIMessage
+
+    mock_context.data_engine = Mock()
+    mock_context.data_engine.base_dir = tmp_path
+    state = DummyState(initial_goal="Open Settings")
+    node = PlannerNode(mock_context)
+
+    calls = 0
+
+    async def fake_acomplete(_llm, _messages):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "save_note",
+                        "args": {
+                            "key": "task_plan",
+                            "content": "- [ ] Open Settings\n- [ ] Verify screen\n",
+                        },
+                        "id": "call_1",
+                    }
+                ],
+            )
+        # Should never reach a second turn after a valid task_plan save!
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "save_note",
+                    "args": {
+                        "key": "task_plan",
+                        "content": "- [x] Open Settings\n- [x] Verify screen\n",
+                    },
+                    "id": "call_2",
+                }
+            ],
+        )
+
+    mock_llm = Mock()
+    mock_llm.bind_tools = Mock(return_value=mock_llm)
+
+    with (
+        patch("artemis.agents.planner.planner.get_llm", return_value=mock_llm),
+        patch("artemis.agents.planner.planner.acomplete", side_effect=fake_acomplete),
+    ):
+        await node(state)
+
+    assert calls == 1
+    saved = (tmp_path / "notes" / "task_plan.md").read_text(encoding="utf-8")
+    assert "- [ ] Open Settings" in saved
+    assert "- [x]" not in saved
+
+
+@pytest.mark.asyncio
+async def test_planner_rejects_checked_initial_plan_and_retries(mock_context, tmp_path):
+    """If the Planner writes '- [x]' during initial planning, post-validation
+    rejects it and prompts a retry until all items are unchecked '- [ ]'."""
+    from langchain_core.messages import AIMessage
+
+    mock_context.data_engine = Mock()
+    mock_context.data_engine.base_dir = tmp_path
+    state = DummyState(initial_goal="Open Settings")
+    node = PlannerNode(mock_context)
+
+    seen_messages = []
+
+    async def fake_acomplete(_llm, messages):
+        seen_messages.append(list(messages))
+        if len(seen_messages) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "save_note",
+                        "args": {
+                            "key": "task_plan",
+                            "content": "- [x] Open Settings\n",
+                        },
+                        "id": "call_bad",
+                    }
+                ],
+            )
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "save_note",
+                    "args": {
+                        "key": "task_plan",
+                        "content": "- [ ] Open Settings\n",
+                    },
+                    "id": "call_good",
+                }
+            ],
+        )
+
+    mock_llm = Mock()
+    mock_llm.bind_tools = Mock(return_value=mock_llm)
+
+    with (
+        patch("artemis.agents.planner.planner.get_llm", return_value=mock_llm),
+        patch("artemis.agents.planner.planner.acomplete", side_effect=fake_acomplete),
+    ):
+        await node(state)
+
+    assert len(seen_messages) == 2
+    system_prompt = seen_messages[0][0].content
+    assert "STRICT Initial Plan Status Rule" in system_prompt
+    assert "MUST NEVER" in system_prompt
+    assert "end your turn immediately" in system_prompt
+    # Second attempt received the validation failure feedback
+    assert any("strictly unchecked" in str(getattr(m, "content", "")) for m in seen_messages[1])
+    saved = (tmp_path / "notes" / "task_plan.md").read_text(encoding="utf-8")
+    assert saved.strip() == "- [ ] Open Settings"

@@ -59,12 +59,17 @@ from third_party.mobile_use.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def validate_plan_format(content: str) -> tuple[bool, str]:
+def validate_plan_format(content: str, *, require_all_pending: bool = False) -> tuple[bool, str]:
     """Validates a freshly written plan against the machine-channel grammar.
 
     Single-sourced from :mod:`artemis.utils.plan_grammar`: any status character
     the grammar accepts (including in-progress ``[/]``) is legal here too, so
     the Planner can never reject a line the rest of the harness would parse.
+
+    When ``require_all_pending`` is True (initial planning phase), every item
+    must start strictly unchecked (``- [ ]``); completed (``- [x]``) or other
+    non-pending statuses are rejected so the convergence gate cannot terminate
+    the graph before the Operator runs.
     """
     for line in content.splitlines():
         stripped = line.strip()
@@ -75,10 +80,20 @@ def validate_plan_format(content: str) -> tuple[bool, str]:
                 f"Invalid task status in line: {line}. Must be one of {allowed}.",
             )
 
-    if not parse_plan(content).items:
+    plan = parse_plan(content)
+    if not plan.items:
         return (
             False,
             "Plan must contain at least one subgoal starting with '- [ ]'.",
+        )
+
+    if require_all_pending and any(not item.is_pending for item in plan.items):
+        return (
+            False,
+            "Initial task_plan must have ALL items strictly unchecked with '- [ ]'. "
+            "Never mark any item as completed ('- [x]') before the Operator executes "
+            "actions on screen and the Checker validates the visual change. Rewrite "
+            "'task_plan' with every item starting with '- [ ]' and stop immediately.",
         )
 
     return True, ""
@@ -333,6 +348,7 @@ class PlannerNode:
                     break
 
                 current_messages.append(response)
+                task_plan_written = False
 
                 for tc in response.tool_calls:
                     tool_name = tc["name"]
@@ -342,10 +358,10 @@ class PlannerNode:
                     else:
                         tool_to_run = next((t for t in all_tools if t.name == tool_name), None)
 
-                    if tool_to_run and tool_to_run.name in [
-                        "save_note",
-                        "update_note",
-                    ]:
+                    is_note_write = bool(
+                        tool_to_run and tool_to_run.name in ["save_note", "update_note"]
+                    )
+                    if is_note_write:
                         tool_called = True
                     if tool_to_run:
                         args = dict(tc["args"])
@@ -373,6 +389,19 @@ class PlannerNode:
                                         content=result_content,
                                     )
                                 )
+                                if is_note_write:
+                                    raw_key = str(
+                                        args.get("key")
+                                        or args.get("Key")
+                                        or args.get("title")
+                                        or args.get("Title")
+                                        or ""
+                                    ).strip()
+                                    clean_key = (
+                                        raw_key[:-3] if raw_key.lower().endswith(".md") else raw_key
+                                    )
+                                    if clean_key == "task_plan":
+                                        task_plan_written = True
                             except Exception as e:
                                 span.status = "failed"
                                 span.error = str(e)
@@ -392,6 +421,9 @@ class PlannerNode:
                             )
                         )
 
+                if task_plan_written:
+                    break
+
             # Post-execution validation
             plan_exists = False
             plan_valid = False
@@ -407,7 +439,9 @@ class PlannerNode:
                     plan_exists = True
                     try:
                         content = task_plan_path.read_text(encoding="utf-8")
-                        plan_valid, error_message = validate_plan_format(content)
+                        plan_valid, error_message = validate_plan_format(
+                            content, require_all_pending=True
+                        )
                     except Exception as e:
                         error_message = f"Failed to read task plan for validation: {e}"
                 else:
