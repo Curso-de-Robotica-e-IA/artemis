@@ -1,4 +1,7 @@
 import { signal, computed } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { of } from 'rxjs';
 
 import { AgentService } from './agent.service';
@@ -178,6 +181,25 @@ describe('AgentService live LLM retry timeline', () => {
     service.runTask('test goal').subscribe();
 
     expect(selectSpy).toHaveBeenCalledWith('new-session', false);
+  });
+
+  it('passes device_serial in POST /api/run payload when provided', () => {
+    const service = createServiceWithoutPolling();
+    const postSpy = jasmine.createSpy('post').and.returnValue(of({ tasks: [{ session_id: 's-1' }] }));
+    (service as any).http = { post: postSpy };
+    service.agentStatus = signal('idle');
+    service.runningSessionId = signal<string | null>(null);
+    service.userPinnedSessionId = signal<string | null>(null);
+    (service as any).sessions = signal<any[]>([]);
+    spyOn(service, 'selectSession');
+
+    service.runTask('open settings', 'flash', undefined, undefined, undefined, 'emulator-5556').subscribe();
+
+    expect(postSpy).toHaveBeenCalledWith('/api/run', {
+      goal: 'open settings',
+      profile: 'flash',
+      device_serial: 'emulator-5556'
+    });
   });
 
   it('keeps the paused state when the backend says there is nothing to resume', () => {
@@ -414,5 +436,63 @@ describe('AgentService task cancellation and active session tracking', () => {
     expect(service.agentStatus()).toBe('running');
     // activeTasks should have filtered out sess-2
     expect(service.activeTasks().map((at: any) => at.session_id)).toEqual(['sess-1']);
+  });
+});
+
+describe('AgentService activeVideoDeviceSerial tracking', () => {
+  let service: AgentService;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    localStorage.clear();
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(AgentService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    service.destroy();
+    http.match(() => true).forEach((req) => {
+      if (!req.cancelled) {
+        if (req.request.url.includes('/steps')) {
+          req.flush([]);
+        } else {
+          req.flush({});
+        }
+      }
+    });
+    http.verify();
+  });
+
+  it('tracks target device_serial from runTask and openVideoPlayer across concurrent sessions', () => {
+    service.runTask('Open Wi-Fi Settings', 'flash', undefined, undefined, undefined, '192.168.1.55:5555')
+      .subscribe();
+
+    const runReq = http.expectOne('/api/run');
+    expect(runReq.request.body.device_serial).toBe('192.168.1.55:5555');
+    runReq.flush({
+      status: 'running',
+      tasks: [{ session_id: 'wifi-sess', device_serial: '192.168.1.55:5555' }]
+    });
+
+    // Simulate status/session lists having USB session as well
+    (service as any).rawSessions.set([
+      { session_id: 'usb-sess', initial_goal: 'USB Task', start_time: 100, status: 'running', device_serial: 'usb-001' },
+      { session_id: 'wifi-sess', initial_goal: 'WiFi Task', start_time: 200, status: 'running', device_serial: '192.168.1.55:5555' }
+    ]);
+
+    service.selectSession('wifi-sess', false);
+    service.openVideoPlayer('wifi-sess');
+
+    expect(service.recordingPlaybackStatus()).toBe('live');
+    expect(service.activeVideoSessionIdSignal()).toBe('wifi-sess');
+    expect(service.activeVideoDeviceSerial()).toBe('192.168.1.55:5555');
+
+    // Switching to USB session updates activeVideoDeviceSerial immediately
+    service.selectSession('usb-sess', true);
+    expect(service.activeVideoSessionIdSignal()).toBe('usb-sess');
+    expect(service.activeVideoDeviceSerial()).toBe('usb-001');
   });
 });

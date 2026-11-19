@@ -102,6 +102,12 @@ class ReadinessEngine:
         if hasattr(self._adb_probe, "set_target_serial"):
             self._adb_probe.set_target_serial(serial)
 
+    def get_probe_target_serial(self) -> str | None:
+        """Return the diagnostics probes' preferred device serial, if configured."""
+        if hasattr(self._adb_probe, "get_target_serial"):
+            return self._adb_probe.get_target_serial()
+        return None
+
     async def run_probe(self, probe_id: str) -> ProbeResult | None:
         """Execute a single specific probe by ID."""
         probe = self._probes.get(probe_id)

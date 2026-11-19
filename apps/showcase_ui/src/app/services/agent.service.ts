@@ -27,6 +27,13 @@ export type { Session, ModelInfo, TaskQueueItem, AgentStatusResponse, StepItemDa
 
 const SESSION_CACHE_KEY = 'artemis.sessions.v1';
 
+function normalizeDeviceSerial(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'pending') return null;
+  return trimmed;
+}
+
 export interface VideoSegment {
   url: string;
   /** Back-to-back playlist timeline start (seconds); gaps between segments are not represented. */
@@ -76,6 +83,8 @@ export class AgentService {
   private rawSessions = signal<Session[]>([]);
   private pendingQueue = signal<Session[]>([]);
   public activeTasks = signal<any[]>([]);
+  // Immediate serial overrides learned from /api/run, SSE session_started, and /api/status
+  private sessionDeviceSerialMap = signal<Record<string, string>>({});
   // Persistent tracking of active/pending sessions across polling boundaries
   private activeSessionTracking = new Map<string, Session>();
 
@@ -86,6 +95,7 @@ export class AgentService {
     const goal = this.runningGoal();
     const runId = this.runningSessionId();
     const activeList = this.activeTasks();
+    const serialOverrides = this.sessionDeviceSerialMap();
 
     const sessionMap = new Map<string, Session>();
     // Lookup maps keep the per-session merge O(1) instead of scanning the
@@ -107,11 +117,16 @@ export class AgentService {
       } else {
         sStatus = (s.status === 'success') ? 'completed' : s.status;
       }
-      let serial = s.device_serial || s.device_id || activeMatch?.device_id || pendingMatch?.device_serial || null;
+      let serial =
+        normalizeDeviceSerial(s.device_serial)
+        || normalizeDeviceSerial(s.device_id)
+        || normalizeDeviceSerial(activeMatch?.device_id)
+        || normalizeDeviceSerial(pendingMatch?.device_serial)
+        || normalizeDeviceSerial(serialOverrides[s.session_id]);
       if (!serial && s.device_info) {
         try {
           const info = typeof s.device_info === 'string' ? JSON.parse(s.device_info) : s.device_info;
-          serial = info?.device_id || info?.device_serial || null;
+          serial = normalizeDeviceSerial(info?.device_id) || normalizeDeviceSerial(info?.device_serial);
         } catch {
           // ignore
         }
@@ -139,7 +154,11 @@ export class AgentService {
         const finalPending: Session = {
           ...p,
           status: isCurrentRunning ? (status === 'paused' ? 'paused' : 'running') : (p.status || 'pending'),
-          device_serial: p.device_serial || p.device_id || activeMatch?.device_id || null
+          device_serial:
+            normalizeDeviceSerial(p.device_serial)
+            || normalizeDeviceSerial(p.device_id)
+            || normalizeDeviceSerial(activeMatch?.device_id)
+            || normalizeDeviceSerial(serialOverrides[p.session_id])
         };
         sessionMap.set(p.session_id, finalPending);
         this.activeSessionTracking.set(p.session_id, finalPending);
@@ -158,7 +177,7 @@ export class AgentService {
             start_time: at.acquired_at ? (new Date(at.acquired_at).getTime() / 1000) : (Date.now() / 1000),
             status: 'running',
             model_info: this.activeModel() || undefined,
-            device_serial: at.device_id || null
+            device_serial: normalizeDeviceSerial(at.device_id) || normalizeDeviceSerial(serialOverrides[sid])
           };
           sessionMap.set(sid, newSession);
           this.activeSessionTracking.set(sid, newSession);
@@ -166,7 +185,10 @@ export class AgentService {
           const updated: Session = {
             ...existing,
             status: 'running',
-            device_serial: at.device_id || existing.device_serial
+            device_serial:
+              normalizeDeviceSerial(at.device_id)
+              || normalizeDeviceSerial(existing.device_serial)
+              || normalizeDeviceSerial(serialOverrides[sid])
           };
           sessionMap.set(sid, updated);
           this.activeSessionTracking.set(sid, updated);
@@ -178,7 +200,8 @@ export class AgentService {
         initial_goal: goal || '',
         start_time: Date.now() / 1000,
         status,
-        model_info: this.activeModel() || undefined
+        model_info: this.activeModel() || undefined,
+        device_serial: normalizeDeviceSerial(serialOverrides[runId])
       };
       sessionMap.set(runId, activeSession);
       this.activeSessionTracking.set(runId, activeSession);
@@ -247,7 +270,22 @@ export class AgentService {
   public stepSeekRequest = signal<{ index: number; requestId: number } | null>(null);
   public playerMode = signal<'video' | 'steps'>('video');
   public streamResetEvent = signal<LLMStreamResetEventData | null>(null);
+  public activeVideoSessionIdSignal = signal<string | null>(null);
   private activeVideoSessionId: string | null = null;
+  public activeVideoDeviceSerial = computed<string | null>(() => {
+    const targetSid = this.activeVideoSessionIdSignal() || this.currentSessionId();
+    if (!targetSid) return null;
+    const session = this.sessions().find((s) => s.session_id === targetSid);
+    const fromSession =
+      normalizeDeviceSerial(session?.device_serial) || normalizeDeviceSerial(session?.device_id);
+    if (fromSession) return fromSession;
+    const fromActive = this.activeTasks().find((at) => at.session_id === targetSid);
+    const fromActiveSerial =
+      normalizeDeviceSerial(fromActive?.device_id)
+      || normalizeDeviceSerial(fromActive?.device_serial);
+    if (fromActiveSerial) return fromActiveSerial;
+    return normalizeDeviceSerial(this.sessionDeviceSerialMap()[targetSid]);
+  });
   private videoSeekRequestId = 0;
   private stepSeekRequestId = 0;
   private videoRequestGeneration = 0;
@@ -288,6 +326,17 @@ export class AgentService {
   public requestStepSeek(index: number): void {
     this.stepSeekRequestId++;
     this.stepSeekRequest.set({ index, requestId: this.stepSeekRequestId });
+  }
+
+  private recordSessionDeviceSerial(
+    sessionId: string | null | undefined,
+    serial: string | null | undefined
+  ): void {
+    const cleanSid = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const cleanSerial = normalizeDeviceSerial(serial);
+    if (!cleanSid || !cleanSerial || !this.sessionDeviceSerialMap) return;
+    if (this.sessionDeviceSerialMap()[cleanSid] === cleanSerial) return;
+    this.sessionDeviceSerialMap.update((map) => ({ ...map, [cleanSid]: cleanSerial }));
   }
 
   /**
@@ -420,7 +469,8 @@ export class AgentService {
     profile: string = 'flash',
     expectedOutput?: string,
     enableOutputter?: boolean,
-    proTuning?: ProTuningOptions
+    proTuning?: ProTuningOptions,
+    deviceSerial?: string | null
   ): Observable<any> {
     return new Observable((obs) => {
       const submittedEvent: StartupProgressEvent = {
@@ -442,12 +492,20 @@ export class AgentService {
       if (proTuning?.explorerMode) {
         payload.explorer_mode = proTuning.explorerMode;
       }
+      if (deviceSerial && deviceSerial.trim()) {
+        payload.device_serial = deviceSerial.trim();
+      }
       this.clearUserPinnedSession();
       this.http.post<any>('/api/run', payload).subscribe({
         next: (res) => {
           if (res && res.tasks && res.tasks.length > 0) {
-            const newSessionId = res.tasks[0].session_id;
+            const firstTask = res.tasks[0];
+            const newSessionId = firstTask.session_id;
             if (newSessionId) {
+              this.recordSessionDeviceSerial(
+                newSessionId,
+                firstTask.device_serial || deviceSerial || null
+              );
               this.appendStartupProgress(
                 { ...submittedEvent, session_id: newSessionId },
                 newSessionId
@@ -844,6 +902,7 @@ export class AgentService {
             this.agentStatus.set('running');
             if (parsedData?.session_id) {
               this.runningSessionId.set(parsedData.session_id);
+              this.recordSessionDeviceSerial(parsedData.session_id, parsedData.device_serial);
             }
             if (parsedData?.initial_goal) {
               this.runningGoal.set(parsedData.initial_goal);
@@ -1513,6 +1572,9 @@ export class AgentService {
           this.agentStatus.set(data.status);
           this.runningSessionId.set(data.session_id || null);
           this.runningGoal.set(data.goal || null);
+          if (data.session_id && data.device_serial) {
+            this.recordSessionDeviceSerial(data.session_id, data.device_serial);
+          }
           if (data.model_info) {
             this.activeModel.set(data.model_info);
           }
@@ -1789,6 +1851,7 @@ export class AgentService {
     this.isVideoWindowOpen.set(true);
     this.isVideoMinimized.set(false);
     this.activeVideoSessionId = targetSessionId;
+    this.activeVideoSessionIdSignal?.set(targetSessionId);
     this.cancelVideoRetry();
     this.videoRequestGeneration++;
     this.shouldAutoplayVideo.set(false);
@@ -2008,5 +2071,6 @@ export class AgentService {
     this.cancelVideoRetry();
     this.videoRequestGeneration++;
     this.activeVideoSessionId = null;
+    this.activeVideoSessionIdSignal?.set(null);
   }
 }

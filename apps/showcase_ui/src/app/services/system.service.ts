@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { Injectable, signal, computed, inject, DestroyRef, NgZone } from '@angular/core';
+import { Injectable, signal, computed, effect, untracked, inject, DestroyRef, NgZone } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, finalize, shareReplay, tap } from 'rxjs';
 import {
@@ -166,7 +166,7 @@ export class SystemService {
   public blockerCount = computed(() => this.totalStepCount());
   public passedBlockerCount = computed(() => this.passedStepCount());
   public probes = computed(() => this.readinessReport()?.probes ?? []);
-  public activeDevice = computed(() => this.readinessReport()?.active_device ?? null);
+  public selectedDeviceSerial = signal<string | null>(null);
   public osType = computed<'linux' | 'darwin' | 'windows'>(() => {
     const raw = this.readinessReport()?.os_type;
     if (raw === 'windows' || raw === 'win32') return 'windows';
@@ -174,13 +174,42 @@ export class SystemService {
     return 'linux';
   });
 
-  // Device list from metadata
+  // Device list from metadata (falls back to active_device if metadata.devices is omitted)
   public connectedDevices = computed<DeviceInfo[]>(() => {
     const meta = this.adbProbe()?.metadata;
     if (meta && Array.isArray(meta['devices'])) {
-      return meta['devices'] as DeviceInfo[];
+      return (meta['devices'] as DeviceInfo[]).filter(
+        dev => !dev.state || dev.state === 'device'
+      );
+    }
+    const reportActive = this.readinessReport()?.active_device ?? null;
+    if (reportActive && (!reportActive.state || reportActive.state === 'device')) {
+      return [reportActive];
     }
     return [];
+  });
+
+  // Active target device resolved against currently connected devices
+  public activeDevice = computed<DeviceInfo | null>(() => {
+    const devices = this.connectedDevices();
+    if (devices.length === 0) {
+      return null;
+    }
+    const selectedSerial = this.selectedDeviceSerial();
+    if (selectedSerial) {
+      const explicitMatch = devices.find(d => d.serial === selectedSerial);
+      if (explicitMatch) {
+        return explicitMatch;
+      }
+    }
+    const reportActiveSerial = this.readinessReport()?.active_device?.serial;
+    if (reportActiveSerial) {
+      const reportMatch = devices.find(d => d.serial === reportActiveSerial);
+      if (reportMatch) {
+        return reportMatch;
+      }
+    }
+    return devices[0];
   });
 
   // Installed local AVD emulators from metadata
@@ -211,6 +240,11 @@ export class SystemService {
   };
 
   constructor() {
+    effect(() => {
+      const devices = this.connectedDevices();
+      const reportSerial = untracked(() => this.readinessReport()?.active_device?.serial ?? null);
+      this.syncSelectedDevice(devices, reportSerial);
+    });
     this.startAutoPolling(3000);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -312,6 +346,27 @@ export class SystemService {
     }
     this.lastAppliedReportJson = serialized;
     this.readinessReport.set(report);
+    this.syncSelectedDevice(this.connectedDevices(), report.active_device?.serial ?? null);
+  }
+
+  /**
+   * Keep the selected active device serial valid across device connects and disconnects.
+   */
+  private syncSelectedDevice(devices: DeviceInfo[], reportActiveSerial?: string | null): void {
+    const current = untracked(() => this.selectedDeviceSerial());
+    if (devices.length === 0) {
+      if (current !== null) {
+        this.selectedDeviceSerial.set(null);
+      }
+      return;
+    }
+    if (current && devices.some(d => d.serial === current)) {
+      return;
+    }
+    const fallbackSerial =
+      (reportActiveSerial && devices.find(d => d.serial === reportActiveSerial)?.serial) ||
+      devices[0].serial;
+    this.selectedDeviceSerial.set(fallbackSerial);
   }
 
   /**
@@ -548,11 +603,21 @@ export class SystemService {
   }
 
   /**
+   * Update the active target device serial locally without issuing an HTTP request.
+   */
+  public setSelectedDeviceSerial(serial: string | null): void {
+    const cleaned = (serial || '').trim();
+    this.selectedDeviceSerial.set(cleaned || null);
+  }
+
+  /**
    * Select a specific connected device serial as active target
    */
   public selectDevice(serial: string): Observable<any> {
+    const cleanSerial = (serial || '').trim();
+    this.setSelectedDeviceSerial(cleanSerial);
     this.isLoading.set(true);
-    return this.http.post<any>('/api/system/devices/select', { serial }).pipe(
+    return this.http.post<any>('/api/system/devices/select', { serial: cleanSerial }).pipe(
       tap({
         next: (res) => {
           if (res?.report) {

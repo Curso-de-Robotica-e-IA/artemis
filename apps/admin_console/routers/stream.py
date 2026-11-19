@@ -17,6 +17,8 @@
 Exposes real-time screen streaming endpoints for the Web UI.
 """
 
+from urllib.parse import urlencode
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -29,10 +31,10 @@ router = APIRouter(tags=["stream"])
 
 
 @router.get("/api/stream/device-live")
-async def stream_device_live():
+async def stream_device_live(serial: str | None = None, session_id: str | None = None):
     """Streams live device screen frames as multipart MJPEG."""
     return StreamingResponse(
-        device_stream_service.mjpeg_frame_generator(),
+        device_stream_service.mjpeg_frame_generator(serial=serial, session_id=session_id),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
@@ -44,13 +46,28 @@ async def stream_device_live():
 
 
 @router.get("/api/stream/device-state")
-async def get_device_stream_state():
-    """Returns whether an ADB device is connected and live streaming is available."""
-    serial = await device_stream_service.get_device_serial()
+async def get_device_stream_state(serial: str | None = None, session_id: str | None = None):
+    """Returns whether the target ADB device is connected and live streaming is available."""
+    resolved_serial = await device_stream_service.get_device_serial(
+        serial=serial, session_id=session_id
+    )
+    query_params = {
+        k: v
+        for k, v in (
+            ("serial", resolved_serial or (serial.strip() if serial else None)),
+            ("session_id", session_id.strip() if session_id else None),
+        )
+        if v
+    }
+    live_url = (
+        f"/api/stream/device-live?{urlencode(query_params)}"
+        if query_params
+        else "/api/stream/device-live"
+    )
     return JSONResponse(
         {
-            "connected": serial is not None,
-            "serial": serial,
-            "live_stream_url": "/api/stream/device-live" if serial else None,
+            "connected": resolved_serial is not None,
+            "serial": resolved_serial,
+            "live_stream_url": live_url if resolved_serial else None,
         }
     )

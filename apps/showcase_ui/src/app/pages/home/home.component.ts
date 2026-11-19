@@ -487,6 +487,8 @@ export class HomeComponent implements OnInit, OnDestroy {
   // Device information
   public activeDevice = computed(() => this.systemService.activeDevice());
   public connectedDevices = computed(() => this.systemService.connectedDevices());
+  public selectedDeviceSerial = computed(() => this.systemService.selectedDeviceSerial());
+  public hasConnectedDevices = computed(() => this.connectedDevices().length > 0);
   public installedAvds = computed(() => this.systemService.installedAvds());
   public emulatorPath = computed(() => this.systemService.emulatorPath());
   public isEmulatorInPath = computed(() => this.systemService.isEmulatorInPath());
@@ -736,6 +738,17 @@ export class HomeComponent implements OnInit, OnDestroy {
         });
       }
     });
+
+    // Automatically return to System Setup & Prerequisites when no devices are connected.
+    effect(() => {
+      if (
+        this.hasReadinessReport() &&
+        this.connectedDevices().length === 0 &&
+        this.activeTab() === 'launcher'
+      ) {
+        this.activeTab.set('diagnostics');
+      }
+    });
   }
 
   ngOnInit(): void {
@@ -763,6 +776,10 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public setTab(tab: 'diagnostics' | 'launcher'): void {
+    if (tab === 'launcher' && this.connectedDevices().length === 0) {
+      this.activeTab.set('diagnostics');
+      return;
+    }
     this.activeTab.set(tab);
     if (tab === 'diagnostics') {
       this.systemService.fetchReadiness().subscribe();
@@ -1614,7 +1631,16 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public selectTargetDevice(serial: string): void {
-    this.systemService.selectDevice(serial).subscribe();
+    const cleanSerial = (serial || '').trim();
+    if (!cleanSerial) {
+      return;
+    }
+    this.systemService.selectDevice(cleanSerial).subscribe();
+  }
+
+  public formatDeviceResolution(resolution: string | null | undefined): string {
+    const raw = (resolution || '').trim();
+    return raw ? raw.replace(/\s*[xX×]\s*/g, '×') : '';
   }
 
   public getEmulatorCommand(avdName: string): string {
@@ -1668,7 +1694,7 @@ export class HomeComponent implements OnInit, OnDestroy {
 
 
   public proceedToLauncher(): void {
-    this.activeTab.set('launcher');
+    this.setTab('launcher');
   }
 
   public runTask(): void {
@@ -1678,12 +1704,19 @@ export class HomeComponent implements OnInit, OnDestroy {
       return;
     }
 
+    if (this.connectedDevices().length === 0) {
+      this.errorMessage.set('No Android device connected. Please connect a device first.');
+      this.activeTab.set('diagnostics');
+      return;
+    }
+
     if (!this.isReady()) {
       this.errorMessage.set('System prerequisites are not satisfied. Please review System Setup first.');
       this.activeTab.set('diagnostics');
       return;
     }
 
+    const targetSerial = this.activeDevice()?.serial || this.selectedDeviceSerial() || undefined;
     this.isSubmitting.set(true);
     this.errorMessage.set(null);
 
@@ -1697,7 +1730,8 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.selectedProfile() === 'pro' ? this.enableOutputter() : undefined,
         this.selectedProfile() === 'pro'
           ? { verificationLevel: this.verificationLevel().id, explorerMode: this.explorerMode().id }
-          : undefined
+          : undefined,
+        targetSerial
       )
       .subscribe({
         next: () => {

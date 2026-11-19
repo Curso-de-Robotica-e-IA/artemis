@@ -60,8 +60,32 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
   public isMuted = signal<boolean>(false);
   public isTheaterMode = signal<boolean>(false);
   public videoLoadError = signal<boolean>(false);
-  public liveStreamUrl = signal<string>('/api/stream/device-live');
+  private liveStreamRetryToken = signal<number | null>(null);
   public liveStreamError = signal<boolean>(false);
+  public liveStreamUrl = computed<string>(() => {
+    const status = this.agentService.recordingPlaybackStatus?.();
+    const sessionId =
+      this.agentService.activeVideoSessionIdSignal?.() ||
+      this.agentService.currentSessionId?.() ||
+      null;
+    const serial = this.agentService.activeVideoDeviceSerial?.() || null;
+    const retryToken = this.liveStreamRetryToken();
+
+    const params: string[] = [];
+    if (serial) {
+      params.push(`serial=${encodeURIComponent(serial)}`);
+    }
+    if (sessionId) {
+      params.push(`session_id=${encodeURIComponent(sessionId)}`);
+    }
+    if (retryToken !== null) {
+      params.push(`t=${retryToken}`);
+    }
+    void status;
+    return params.length > 0
+      ? `/api/stream/device-live?${params.join('&')}`
+      : '/api/stream/device-live';
+  });
   public activeSegmentIndex = signal<number>(0);
   public currentVideoUrl = computed(() => {
     const segments = this.agentService.activeVideoSegments();
@@ -189,6 +213,14 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
       if (!request) return;
       this.seekStepFrame(request.index);
     });
+
+    effect(
+      () => {
+        this.liveStreamUrl();
+        this.liveStreamError.set(false);
+      },
+      { allowSignalWrites: true }
+    );
   }
 
   public onLiveStreamError(): void {
@@ -197,7 +229,7 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
 
   public retryLiveStream(): void {
     this.liveStreamError.set(false);
-    this.liveStreamUrl.set(`/api/stream/device-live?t=${Date.now()}`);
+    this.liveStreamRetryToken.set(Date.now());
   }
 
   /**

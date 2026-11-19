@@ -66,6 +66,10 @@ class AdbDeviceProbe(BaseProbe):
         """Set or update preferred active device serial."""
         self._target_serial = serial
 
+    def get_target_serial(self) -> str | None:
+        """Return the preferred active device serial, if configured."""
+        return self._target_serial
+
     def invalidate_enrichment_cache(self) -> None:
         """Refresh static device metadata on an explicit full re-check."""
         self._device_enrichment_cache.clear()

@@ -57,9 +57,13 @@
           type="button"
           class="mode-tab-btn"
           [class.active]="activeTab() === 'launcher'"
+          [class.disabled]="!hasConnectedDevices()"
+          [disabled]="!hasConnectedDevices()"
+          [attr.aria-disabled]="!hasConnectedDevices()"
+          [title]="!hasConnectedDevices() ? 'Connect an Android device to launch a task' : 'Launch Autonomous Task'"
           (click)="setTab('launcher')"
         >
-          @if (!isReady()) {
+          @if (!isReady() || !hasConnectedDevices()) {
             <span class="material-symbols-outlined tab-icon icon-locked">lock</span>
           } @else {
             <span class="material-symbols-outlined tab-icon">rocket_launch</span>
@@ -1000,70 +1004,49 @@
           <div class="guide-card-body">
 
             <!-- STATE A: CONNECTED & READY -->
-            @if (isDeviceReady()) {
+            @if (isDeviceReady() && connectedDevices().length > 0) {
               <div class="connected-device-panel">
-                <div class="device-hero-card">
-                  <div class="device-avatar">
-                    <span class="material-symbols-outlined device-hero-icon">
-                      phone_android
-                    </span>
-                  </div>
-                  <div class="device-hero-details">
-                    <div class="device-hero-name">
-                      {{ activeDevice()?.model || activeDevice()?.serial }}
-                    </div>
-                    <div class="device-hero-meta">
-                      @if (activeDevice()?.is_emulator) {
-                        <span>Virtual Device</span>
-                        <span class="meta-dot">·</span>
-                      }
-                      <span>{{ activeDevice()?.serial }}</span>
-                      @if (activeDevice()?.screen_resolution) {
-                        <span class="meta-dot">·</span>
-                        <span>{{ activeDevice()?.screen_resolution }}</span>
-                      }
-                      @if (activeDevice()?.android_version) {
-                        <span class="meta-dot">·</span>
-                        <span>Android {{ activeDevice()?.android_version }}</span>
-                      }
-                      @if (isRemoteAdbServer()) {
-                        <span class="meta-dot">·</span>
-                        <span class="remote-endpoint-label">
-                          Remote via {{ adbServerStatus()?.endpoint?.host }}:{{ adbServerStatus()?.endpoint?.port }}
+                <div class="connected-devices-grid grid-cols-1 md:grid-cols-2 gap-3">
+                  @for (dev of connectedDevices(); track dev.serial) {
+                    <div class="device-hero-card">
+                      <div class="device-avatar">
+                        <span class="material-symbols-outlined device-hero-icon">
+                          {{ dev.is_emulator ? 'smartphone' : 'phone_android' }}
                         </span>
-                      }
-                    </div>
-                  </div>
-                  <div class="device-hero-status">
-                    <span class="status-dot dot-pass"></span>
-                    <span class="status-text">Connected</span>
-                  </div>
-                </div>
-
-                <!-- Multi-Device Switcher if multiple devices detected -->
-                @if (connectedDevices().length > 1) {
-                  <div class="multi-device-switcher">
-                    <span class="switcher-label">Select Active Device:</span>
-                    <div class="switcher-chips">
-                      @for (dev of connectedDevices(); track dev.serial) {
-                        <button
-                          type="button"
-                          class="device-chip-btn"
-                          [class.selected]="dev.serial === activeDevice()?.serial"
-                          (click)="selectTargetDevice(dev.serial)"
-                        >
-                          <span class="material-symbols-outlined chip-icon">
-                            phone_android
-                          </span>
-                          <span>{{ dev.model || dev.serial }}</span>
-                          @if (dev.serial === activeDevice()?.serial) {
-                            <span class="active-check">✓ Active</span>
+                      </div>
+                      <div class="device-hero-details">
+                        <div class="device-hero-name">
+                          {{ dev.model || dev.serial }}
+                        </div>
+                        <div class="device-hero-meta">
+                          @if (dev.is_emulator) {
+                            <span>Virtual Device</span>
+                            <span class="meta-dot">·</span>
                           }
-                        </button>
-                      }
+                          <span>{{ dev.serial }}</span>
+                          @if (dev.screen_resolution) {
+                            <span class="meta-dot">·</span>
+                            <span>{{ formatDeviceResolution(dev.screen_resolution) }}</span>
+                          }
+                          @if (dev.android_version) {
+                            <span class="meta-dot">·</span>
+                            <span>Android {{ dev.android_version }}</span>
+                          }
+                          @if (isRemoteAdbServer()) {
+                            <span class="meta-dot">·</span>
+                            <span class="remote-endpoint-label">
+                              Remote via {{ adbServerStatus()?.endpoint?.host }}:{{ adbServerStatus()?.endpoint?.port }}
+                            </span>
+                          }
+                        </div>
+                      </div>
+                      <div class="device-hero-status">
+                        <span class="status-dot dot-pass"></span>
+                        <span class="status-text">Connected</span>
+                      </div>
                     </div>
-                  </div>
-                }
+                  }
+                </div>
               </div>
             }
 
@@ -1850,31 +1833,6 @@
                     <span>{{ isRefreshingDiagnostics() ? 'Checking...' : 'Check Again' }}</span>
                   </button>
                 </div>
-
-                <!-- Multi-Device Switcher if multiple devices detected -->
-                @if (connectedDevices().length > 1) {
-                  <div class="multi-device-switcher" style="margin-top: 12px;">
-                    <span class="switcher-label">Select Active Device:</span>
-                    <div class="switcher-chips">
-                      @for (dev of connectedDevices(); track dev.serial) {
-                        <button
-                          type="button"
-                          class="device-chip-btn"
-                          [class.selected]="dev.serial === activeDevice()?.serial"
-                          (click)="selectTargetDevice(dev.serial)"
-                        >
-                          <span class="material-symbols-outlined chip-icon">
-                            phone_android
-                          </span>
-                          <span>{{ dev.model || dev.serial }}</span>
-                          @if (dev.serial === activeDevice()?.serial) {
-                            <span class="active-check">✓ Active</span>
-                          }
-                        </button>
-                      }
-                    </div>
-                  </div>
-                }
               </div>
             }
 
@@ -2065,6 +2023,37 @@
             </div>
           </div>
 
+          <!-- Active Target Device Selector (Single-Device Execution) -->
+          @if (connectedDevices().length > 0) {
+            <div class="composer-device-bar">
+              <span class="device-bar-label">SELECT ACTIVE DEVICE:</span>
+              <div class="device-bar-pills" role="radiogroup" aria-label="Select active device">
+                @for (dev of connectedDevices(); track dev.serial) {
+                  <button
+                    type="button"
+                    class="device-chip-btn"
+                    role="radio"
+                    [attr.aria-checked]="dev.serial === activeDevice()?.serial"
+                    [class.selected]="dev.serial === activeDevice()?.serial"
+                    [title]="dev.serial"
+                    (click)="selectTargetDevice(dev.serial)"
+                  >
+                    <span class="material-symbols-outlined chip-icon">
+                      {{ dev.is_emulator ? 'smartphone' : 'phone_android' }}
+                    </span>
+                    <span class="chip-name">{{ dev.model || dev.serial }}</span>
+                    @if (dev.model && dev.model !== dev.serial) {
+                      <span class="chip-serial">{{ dev.serial }}</span>
+                    }
+                    @if (dev.serial === activeDevice()?.serial) {
+                      <span class="active-check">✓ Active</span>
+                    }
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
           <!-- Error Banner if any -->
           @if (errorMessage()) {
             <div class="error-banner">
@@ -2111,8 +2100,8 @@
                 type="button"
                 class="btn-run-composer"
                 [class.btn-run-pro]="selectedProfile() === 'pro'"
-                [disabled]="!taskGoal().trim() || isSubmitting() || !isReady()"
-                [title]="!isReady() ? (adbProbe()?.summary === 'Device Locked' ? 'Unlock the Android device before running' : 'Complete System Setup before running') : 'Run task'"
+                [disabled]="!taskGoal().trim() || isSubmitting() || !isReady() || !hasConnectedDevices()"
+                [title]="!hasConnectedDevices() ? 'Connect an Android device before running' : (!isReady() ? (adbProbe()?.summary === 'Device Locked' ? 'Unlock the Android device before running' : 'Complete System Setup before running') : 'Run task')"
                 (click)="runTask()"
               >
                 @if (isSubmitting()) {

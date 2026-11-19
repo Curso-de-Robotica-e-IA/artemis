@@ -22,6 +22,7 @@ import { of } from 'rxjs';
 import { HomeComponent } from './home.component';
 import { AgentService } from '../../services/agent.service';
 import { ModelConfigEnvResponse } from '../../services/system.service';
+import { DeviceInfo, SystemReadinessReport } from '../../core/models/system.model';
 
 describe('HomeComponent Screenshot Resolution Card', () => {
   let http: HttpTestingController;
@@ -412,6 +413,317 @@ describe('HomeComponent Screenshot Resolution Card', () => {
     });
     clearOcrReq.flush({ status: 'success', message: 'OCR Cleared' });
     http.expectOne('/api/system/model-config-env').flush(initialConfig);
+
+    fixture.destroy();
+  });
+});
+
+describe('HomeComponent Device Connection & Selection Flow', () => {
+  let http: HttpTestingController;
+  let runTaskSpy: jasmine.Spy;
+
+  const dev1: DeviceInfo = {
+    serial: 'emulator-5554',
+    state: 'device',
+    model: 'Pixel 8',
+    product: 'sdk_gphone64',
+    android_version: '14',
+    screen_resolution: '1080x2400',
+    is_locked: false,
+    is_emulator: true
+  };
+
+  const dev2: DeviceInfo = {
+    serial: '192.168.1.55:5555',
+    state: 'device',
+    model: 'SM S928B',
+    product: 'e3q',
+    android_version: '15',
+    screen_resolution: '1440x3120',
+    is_locked: false,
+    is_emulator: false
+  };
+
+  function buildReadiness(
+    devices: DeviceInfo[],
+    activeDevice: DeviceInfo | null = devices[0] ?? null,
+    timestamp = 100
+  ): SystemReadinessReport {
+    const ready = devices.length > 0;
+    return {
+      overall_ready: ready,
+      blocker_count: 3,
+      passed_blocker_count: ready ? 3 : 2,
+      probes: [
+        {
+          id: 'python_runtime',
+          category: 'runtime',
+          title: 'Python',
+          status: 'pass',
+          is_blocker: true,
+          summary: 'OK',
+          description: 'OK',
+          metadata: {},
+          actions: []
+        },
+        {
+          id: 'system_config',
+          category: 'runtime',
+          title: 'Config',
+          status: 'pass',
+          is_blocker: true,
+          summary: 'OK',
+          description: 'OK',
+          metadata: {},
+          actions: []
+        },
+        {
+          id: 'toolchain',
+          category: 'toolchain',
+          title: 'Toolchain',
+          status: 'pass',
+          is_blocker: false,
+          summary: 'OK',
+          description: 'OK',
+          metadata: {},
+          actions: []
+        },
+        {
+          id: 'android_adb',
+          category: 'device',
+          title: 'Android ADB',
+          status: ready ? 'pass' : 'warn',
+          is_blocker: true,
+          summary: ready ? `${devices.length} connected` : 'No devices',
+          description: ready ? 'Connected' : 'Connect a device',
+          metadata: { installed: true, devices, installed_avds: [] },
+          actions: []
+        },
+        {
+          id: 'gemini_api_key',
+          category: 'auth',
+          title: 'API Key',
+          status: 'pass',
+          is_blocker: true,
+          summary: 'Active',
+          description: 'Ready',
+          metadata: { api_keys: { google: 'AIza-test' } },
+          actions: []
+        }
+      ],
+      active_device: activeDevice,
+      os_type: 'linux',
+      timestamp
+    };
+  }
+
+  function flushInitialBootstrap(readinessPayload: any): void {
+    http.expectOne('/api/system/readiness').flush(readinessPayload);
+    http.expectOne('/api/system/model-config-env').flush({
+      config_path: 'config/artemis.jsonc',
+      config_filename: 'artemis.jsonc',
+      config_content: '{}',
+      image_max_dim: 1280,
+      default_model: { provider: 'google', model: 'gemini-3.8-flash' },
+      pro_targets: [],
+      supported_providers: [],
+      presets: {},
+      env_path: '.env',
+      env_filename: '.env',
+      env_vars: [
+        { name: 'GEMINI_API_KEY', provider: 'google', is_set: true, preview: 'AIza...1', description: '' }
+      ]
+    });
+    http.expectOne('/api/system/adb/server').flush({
+      endpoint: {
+        host: '127.0.0.1',
+        port: 5037,
+        socket: '127.0.0.1:5037',
+        identity: 'local',
+        mode: 'local',
+        is_local_default: true
+      }
+    });
+    http.match('/api/system/custom-models').forEach(req => {
+      if (!req.cancelled) {
+        req.flush({ provider: 'google', models: [] });
+      }
+    });
+  }
+
+  beforeEach(async () => {
+    runTaskSpy = jasmine.createSpy('runTask').and.returnValue(of({ status: 'queued' }));
+    const agentServiceStub = {
+      getProTuningDefaults: () => of({}),
+      runTask: runTaskSpy
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [HomeComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        { provide: AgentService, useValue: agentServiceStub }
+      ]
+    }).compileComponents();
+
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    http.match(() => true).forEach(req => {
+      if (!req.cancelled) {
+        req.flush({});
+      }
+    });
+    http.verify();
+  });
+
+  it('renders all connected device cards side-by-side in Settings without SELECT ACTIVE DEVICE buttons', () => {
+    const fixture = TestBed.createComponent(HomeComponent);
+    const component = fixture.componentInstance;
+    component.activeTab.set('diagnostics');
+    fixture.detectChanges();
+
+    flushInitialBootstrap(buildReadiness([dev1, dev2], dev1, 100));
+    fixture.detectChanges();
+
+    const grid = fixture.nativeElement.querySelector('.connected-devices-grid') as HTMLElement | null;
+    expect(grid).toBeTruthy();
+    expect(grid!.classList.contains('grid-cols-1')).toBeTrue();
+    expect(grid!.classList.contains('md:grid-cols-2')).toBeTrue();
+    expect(grid!.classList.contains('gap-3')).toBeTrue();
+
+    const cards = Array.from(grid!.querySelectorAll<HTMLElement>('.device-hero-card'));
+    expect(cards.length).toBe(2);
+
+    expect(cards[0].textContent).toContain('Pixel 8');
+    expect(cards[0].textContent).toContain('emulator-5554');
+    expect(cards[0].textContent).toContain('1080×2400');
+    expect(cards[0].textContent).toContain('Android 14');
+    expect(cards[0].textContent).toContain('Connected');
+
+    expect(cards[1].textContent).toContain('SM S928B');
+    expect(cards[1].textContent).toContain('192.168.1.55:5555');
+    expect(cards[1].textContent).toContain('1440×3120');
+    expect(cards[1].textContent).toContain('Android 15');
+    expect(cards[1].textContent).toContain('Connected');
+
+    // No active device selection controls inside System Setup & Prerequisites
+    const setupView = fixture.nativeElement.querySelector('.setup-guide-view') as HTMLElement;
+    expect(setupView.querySelector('.multi-device-switcher')).toBeNull();
+    expect(setupView.textContent?.toUpperCase()).not.toContain('SELECT ACTIVE DEVICE');
+
+    // Header actions remain intact
+    expect(setupView.textContent).toContain('Change Connection');
+    expect(setupView.textContent).toContain('Restart ADB');
+
+    fixture.destroy();
+  });
+
+  it('allows single-device selection in Launch Autonomous Task and submits Run Task with chosen serial', () => {
+    const fixture = TestBed.createComponent(HomeComponent);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    flushInitialBootstrap(buildReadiness([dev1, dev2], dev1, 100));
+    fixture.detectChanges();
+
+    expect(component.activeTab()).toBe('launcher');
+
+    const deviceBar = fixture.nativeElement.querySelector('.composer-device-bar') as HTMLElement | null;
+    expect(deviceBar).toBeTruthy();
+    expect(deviceBar!.textContent).toContain('SELECT ACTIVE DEVICE:');
+
+    const pills = Array.from(deviceBar!.querySelectorAll<HTMLButtonElement>('.device-chip-btn'));
+    expect(pills.length).toBe(2);
+    expect(pills[0].classList.contains('selected')).toBeTrue();
+    expect(pills[0].textContent).toContain('✓ Active');
+    expect(pills[1].classList.contains('selected')).toBeFalse();
+    expect(pills[1].textContent).not.toContain('✓ Active');
+
+    // Click second device pill -> only second device is active
+    pills[1].click();
+    fixture.detectChanges();
+
+    const selectReq = http.expectOne('/api/system/devices/select');
+    expect(selectReq.request.body).toEqual({ serial: '192.168.1.55:5555' });
+    selectReq.flush({
+      status: 'success',
+      selected_serial: '192.168.1.55:5555',
+      report: buildReadiness([dev1, dev2], dev2, 110)
+    });
+    fixture.detectChanges();
+
+    expect(pills[0].classList.contains('selected')).toBeFalse();
+    expect(pills[0].textContent).not.toContain('✓ Active');
+    expect(pills[1].classList.contains('selected')).toBeTrue();
+    expect(pills[1].textContent).toContain('✓ Active');
+
+    // Running task passes the chosen active device serial
+    component.taskGoal.set('Open Settings');
+    fixture.detectChanges();
+    const runBtn = fixture.nativeElement.querySelector('.btn-run-composer') as HTMLButtonElement;
+    runBtn.click();
+
+    expect(runTaskSpy).toHaveBeenCalledWith(
+      'Open Settings',
+      'flash',
+      undefined,
+      undefined,
+      undefined,
+      '192.168.1.55:5555'
+    );
+
+    // If selected device disconnects while dev1 stays connected, active selection defaults to dev1
+    component.systemService.readinessReport.set(buildReadiness([dev1], null, 120));
+    fixture.detectChanges();
+
+    const remainingPills = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+        '.composer-device-bar .device-chip-btn'
+      )
+    );
+    expect(remainingPills.length).toBe(1);
+    expect(remainingPills[0].classList.contains('selected')).toBeTrue();
+    expect(remainingPills[0].textContent).toContain('Pixel 8');
+    expect(remainingPills[0].textContent).toContain('✓ Active');
+
+    fixture.destroy();
+  });
+
+  it('automatically redirects to System Setup & Prerequisites and disables launcher tab when no devices are connected', () => {
+    const fixture = TestBed.createComponent(HomeComponent);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    // Start with 1 connected device on launcher tab
+    flushInitialBootstrap(buildReadiness([dev1], dev1, 100));
+    fixture.detectChanges();
+    expect(component.activeTab()).toBe('launcher');
+
+    const tabButtons = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>('.mode-tab-btn')
+    );
+    const launcherTabBtn = tabButtons[1];
+    expect(launcherTabBtn.disabled).toBeFalse();
+
+    // Disconnect all devices -> auto-redirects to System Setup & Prerequisites with connection tabs
+    component.systemService.readinessReport.set(buildReadiness([], null, 110));
+    fixture.detectChanges();
+
+    expect(component.activeTab()).toBe('diagnostics');
+    expect(launcherTabBtn.disabled).toBeTrue();
+    expect(fixture.nativeElement.querySelector('.foolproof-guide-container')).toBeTruthy();
+    expect(fixture.nativeElement.textContent).toContain('Android Emulator');
+    expect(fixture.nativeElement.textContent).toContain('USB Cable');
+    expect(fixture.nativeElement.textContent).toContain('Wireless ADB');
+    expect(fixture.nativeElement.textContent).toContain('Remote Computer');
+
+    // Calling setTab('launcher') while disconnected stays on diagnostics
+    component.setTab('launcher');
+    expect(component.activeTab()).toBe('diagnostics');
 
     fixture.destroy();
   });

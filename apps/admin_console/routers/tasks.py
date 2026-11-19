@@ -292,6 +292,17 @@ async def get_status():
         or (session_repo.get_running_session_id() if is_running else None)
     )
     owner_connection = state.active_connections.get(str(running_sid), {}) if running_sid else {}
+    running_run = state.active_runs.get(str(running_sid)) if running_sid else None
+    running_device_serial = (
+        (global_owner.device_id if global_owner and global_owner.device_id != "pending" else None)
+        or (running_run.get("device_id") if isinstance(running_run, dict) else None)
+        or (running_task.get("device_serial") if running_task else None)
+        or (
+            active_tasks[0].get("device_id")
+            if active_tasks and active_tasks[0].get("device_id") != "pending"
+            else None
+        )
+    )
     running_goal = (
         owner_connection.get("goal")
         or (global_owner.description if global_owner else None)
@@ -348,6 +359,7 @@ async def get_status():
                 else None
             ),
             "session_id": running_sid,
+            "device_serial": running_device_serial,
             "background_tasks": bg_tasks,
             "queue": queue_data,
             "model_info": model_info,
@@ -356,6 +368,10 @@ async def get_status():
 
     if latest_session_id and str(latest_session_id) in state.active_connections:
         conn_info = state.active_connections[str(latest_session_id)]
+        owner_run = state.active_runs.get(str(latest_session_id))
+        conn_device_serial = (
+            owner_run.get("device_id") if isinstance(owner_run, dict) else None
+        ) or running_device_serial
         is_paused = state.is_paused
         conn_profile = conn_info.get("profile") or active_profile
         conn_model_info = model_service.get_active_model_info(conn_profile)
@@ -365,6 +381,7 @@ async def get_status():
             "goal": conn_info.get("goal"),
             "pid": conn_info.get("pid"),
             "session_id": latest_session_id,
+            "device_serial": conn_device_serial,
             "background_tasks": bg_tasks,
             "queue": queue_data,
             "model_info": conn_model_info,

@@ -515,4 +515,122 @@ describe('SystemService readiness polling', () => {
     }));
     expect(service.isCredentialsReady()).toBeTrue();
   });
+
+  it('tracks single-device selection and falls back to the first connected device on disconnect', () => {
+    const devA = {
+      serial: 'emulator-5554',
+      state: 'device',
+      model: 'Pixel 8',
+      product: 'sdk_gphone64',
+      android_version: '14',
+      screen_resolution: '1080x2400',
+      is_locked: false,
+      is_emulator: true
+    };
+    const devB = {
+      serial: '192.168.1.42:5555',
+      state: 'device',
+      model: 'SM S928B',
+      product: 'e3q',
+      android_version: '15',
+      screen_resolution: '1440x3120',
+      is_locked: false,
+      is_emulator: false
+    };
+
+    const twoDeviceReport = (activeDevice = devA, timestamp = 100): SystemReadinessReport => ({
+      overall_ready: true,
+      blocker_count: 3,
+      passed_blocker_count: 3,
+      probes: [
+        {
+          id: 'android_adb',
+          category: 'device',
+          title: 'Android ADB',
+          status: 'pass',
+          is_blocker: true,
+          summary: '2 devices connected',
+          description: 'Ready',
+          metadata: { devices: [devA, devB] },
+          actions: []
+        }
+      ],
+      active_device: activeDevice,
+      os_type: 'linux',
+      timestamp
+    });
+
+    service.fetchReadiness().subscribe();
+    http.expectOne('/api/system/readiness').flush(twoDeviceReport(devA, 100));
+
+    expect(service.connectedDevices().length).toBe(2);
+    expect(service.activeDevice()?.serial).toBe('emulator-5554');
+    expect(service.selectedDeviceSerial()).toBe('emulator-5554');
+
+    // Selecting the second device updates activeDevice immediately and notifies backend.
+    service.selectDevice('192.168.1.42:5555').subscribe();
+    expect(service.selectedDeviceSerial()).toBe('192.168.1.42:5555');
+    expect(service.activeDevice()?.serial).toBe('192.168.1.42:5555');
+
+    const selectReq = http.expectOne('/api/system/devices/select');
+    expect(selectReq.request.body).toEqual({ serial: '192.168.1.42:5555' });
+    selectReq.flush({ status: 'success', selected_serial: '192.168.1.42:5555', report: twoDeviceReport(devB, 110) });
+    expect(service.activeDevice()?.serial).toBe('192.168.1.42:5555');
+
+    // If the selected device disconnects, fallback defaults to the first remaining connected device.
+    service.fetchReadiness().subscribe();
+    http.expectOne('/api/system/readiness').flush({
+      overall_ready: true,
+      blocker_count: 3,
+      passed_blocker_count: 3,
+      probes: [
+        {
+          id: 'android_adb',
+          category: 'device',
+          title: 'Android ADB',
+          status: 'pass',
+          is_blocker: true,
+          summary: '1 device connected',
+          description: 'Ready',
+          metadata: { devices: [devA] },
+          actions: []
+        }
+      ],
+      active_device: null,
+      os_type: 'linux',
+      timestamp: 120
+    });
+
+    expect(service.connectedDevices().map(d => d.serial)).toEqual(['emulator-5554']);
+    expect(service.activeDevice()?.serial).toBe('emulator-5554');
+    expect(service.selectedDeviceSerial()).toBe('emulator-5554');
+
+    // When all devices disconnect, active selection resets to null.
+    service.fetchReadiness().subscribe();
+    http.expectOne('/api/system/readiness').flush({
+      overall_ready: false,
+      blocker_count: 3,
+      passed_blocker_count: 2,
+      probes: [
+        {
+          id: 'android_adb',
+          category: 'device',
+          title: 'Android ADB',
+          status: 'warn',
+          is_blocker: true,
+          summary: 'No devices',
+          description: 'Connect a device',
+          metadata: { devices: [] },
+          actions: []
+        }
+      ],
+      active_device: null,
+      os_type: 'linux',
+      timestamp: 130
+    });
+
+    expect(service.connectedDevices()).toEqual([]);
+    expect(service.activeDevice()).toBeNull();
+    expect(service.selectedDeviceSerial()).toBeNull();
+  });
 });

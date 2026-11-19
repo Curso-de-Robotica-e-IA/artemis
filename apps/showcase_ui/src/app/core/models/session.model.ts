@@ -49,6 +49,7 @@ export interface Session {
 export interface AgentStatusResponse {
   status: 'idle' | 'running' | 'paused' | 'completed' | 'offline';
   session_id?: string | null;
+  device_serial?: string | null;
   goal?: string | null;
   pid?: number | null;
   queue?: (TaskQueueItem | string)[];
