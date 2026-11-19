@@ -1137,3 +1137,126 @@ def test_consolidate_trace_artifacts(tmp_path, monkeypatch):
     assert (target_dir / "stdout.log").exists()
     assert (target_dir / "stdout.log").read_text(encoding="utf-8") == "worker output line\n"
     assert (target_dir / "steps.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_queue_worker_enforces_strict_serial_concurrency_across_multiple_devices():
+    """Tasks queued across 1..N distinct devices run strictly one at a time in FIFO order."""
+
+    class ControlledProc:
+        def __init__(self, pid: int, serial: str) -> None:
+            self.pid = pid
+            self.serial = serial
+            self.returncode = None
+            self.stdout = None
+            self._done = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self._done.wait()
+            return self.returncode
+
+        def finish(self, returncode: int = 0) -> None:
+            self.returncode = returncode
+            self._done.set()
+
+        def kill(self) -> None:
+            self.finish(-9)
+
+    launched_serials: list[str] = []
+    launched_envs: list[dict[str, str]] = []
+    procs_by_serial: dict[str, ControlledProc] = {}
+    concurrent_peaks: list[int] = []
+
+    async def fake_subprocess_exec(*cmd, **kwargs):
+        cmd_list = list(cmd)
+        serial = cmd_list[cmd_list.index("--device-serial") + 1]
+        launched_serials.append(serial)
+        launched_envs.append(dict(kwargs.get("env") or {}))
+        proc = ControlledProc(os.getpid(), serial)
+        procs_by_serial[serial] = proc
+        concurrent_peaks.append(len([p for p in procs_by_serial.values() if p.returncode is None]))
+        return proc
+
+    with (
+        patch("asyncio.create_subprocess_exec", side_effect=fake_subprocess_exec),
+        patch("apps.admin_console.services.task_queue_service.session_repo") as mock_repo,
+        patch("apps.admin_console.services.task_queue_service.media_service"),
+        patch(
+            "artemis.runtime.device_pool.device_pool.try_list_devices_async",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        mock_repo.get_running_session_id.return_value = None
+        mock_repo.get_session_status.return_value = "running"
+        mock_repo.get_video_recording_for_session.return_value = {"status": "ready"}
+
+        res = await task_queue_service.enqueue_tasks(
+            ["Open Settings"],
+            profile="flash",
+            device_serials=["dev-1", "dev-2", "dev-3"],
+        )
+
+        assert res["enqueued_count"] == 3
+        assert [t["device_serial"] for t in res["tasks"]] == ["dev-1", "dev-2", "dev-3"]
+        assert TaskQueueService._concurrency_limit() == 1
+
+        # Wait for dev-1 to start; dev-2 and dev-3 must remain PENDING while dev-1 runs.
+        for _ in range(40):
+            if "dev-1" in state.active_runs or "dev-1" in procs_by_serial:
+                break
+            await asyncio.sleep(0.02)
+
+        assert launched_serials == ["dev-1"]
+        pending_during_first = [
+            (item["device_serial"], item["status"]) for item in state.queue_items
+        ]
+        assert ("dev-1", "running") in pending_during_first
+        assert ("dev-2", "pending") in pending_during_first
+        assert ("dev-3", "pending") in pending_during_first
+
+        # Finish dev-1 -> dev-2 must start next, dev-3 stays PENDING.
+        procs_by_serial["dev-1"].finish(0)
+        for _ in range(40):
+            if "dev-2" in procs_by_serial:
+                break
+            await asyncio.sleep(0.02)
+
+        assert launched_serials == ["dev-1", "dev-2"]
+        pending_during_second = {
+            item["device_serial"]: item["status"] for item in state.queue_items
+        }
+        assert pending_during_second.get("dev-2") == "running"
+        assert pending_during_second.get("dev-3") == "pending"
+
+        # Even if dev-2 fails with non-zero exit code, dev-3 must cleanly acquire the slot.
+        procs_by_serial["dev-2"].finish(1)
+        for _ in range(40):
+            if "dev-3" in procs_by_serial:
+                break
+            await asyncio.sleep(0.02)
+
+        assert launched_serials == ["dev-1", "dev-2", "dev-3"]
+        procs_by_serial["dev-3"].finish(0)
+
+        for _ in range(40):
+            if len(state.queue_items) == 0:
+                break
+            await asyncio.sleep(0.02)
+
+        assert len(state.queue_items) == 0
+        assert max(concurrent_peaks) == 1
+        assert [env["ADB_DEVICE_SERIAL"] for env in launched_envs] == [
+            "dev-1",
+            "dev-2",
+            "dev-3",
+        ]
+        assert all(env["ARTEMIS_CONCURRENCY_MODE"] == "global" for env in launched_envs)
+        assert all(env["ARTEMIS_MAX_CONCURRENT_TASKS"] == "1" for env in launched_envs)
+
+        task = state.worker_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass

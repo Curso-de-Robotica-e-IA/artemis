@@ -450,6 +450,8 @@ describe('AgentService activeVideoDeviceSerial tracking', () => {
     });
     service = TestBed.inject(AgentService);
     http = TestBed.inject(HttpTestingController);
+    http.match('/api/status').forEach((req) => req.flush({ status: 'idle', queue: [], active_tasks: [] }));
+    http.match('/api/sessions').forEach((req) => req.flush([]));
   });
 
   afterEach(() => {
@@ -494,5 +496,111 @@ describe('AgentService activeVideoDeviceSerial tracking', () => {
     service.selectSession('usb-sess', true);
     expect(service.activeVideoSessionIdSignal()).toBe('usb-sess');
     expect(service.activeVideoDeviceSerial()).toBe('usb-001');
+  });
+
+  it('submits multi-device batch, seeds pending queue, and auto-follows sequential transitions unless past run is pinned', () => {
+    service
+      .runTask(
+        'Open Settings',
+        'flash',
+        undefined,
+        undefined,
+        undefined,
+        ['dev-1', 'dev-2', 'dev-3']
+      )
+      .subscribe();
+
+    const runReq = http.expectOne('/api/run');
+    expect(runReq.request.body).toEqual({
+      goal: 'Open Settings',
+      profile: 'flash',
+      device_serial: 'dev-1',
+      device_serials: ['dev-1', 'dev-2', 'dev-3']
+    });
+    runReq.flush({
+      status: 'started',
+      enqueued_count: 3,
+      tasks: [
+        { session_id: 's1', goal: 'Open Settings', device_serial: 'dev-1', status: 'pending', start_time: 100 },
+        { session_id: 's2', goal: 'Open Settings', device_serial: 'dev-2', status: 'pending', start_time: 100.001 },
+        { session_id: 's3', goal: 'Open Settings', device_serial: 'dev-3', status: 'pending', start_time: 100.002 }
+      ]
+    });
+
+    expect(service.currentSessionId()).toBe('s1');
+    expect(service.activeVideoDeviceSerial()).toBe('dev-1');
+    expect((service as any).pendingQueue().map((p: any) => p.session_id)).toEqual(['s1', 's2', 's3']);
+
+    // Backend reports s1 running
+    service.fetchStatus();
+    const statusReq1 = http.expectOne('/api/status');
+    statusReq1.flush({
+      status: 'running',
+      session_id: 's1',
+      device_serial: 'dev-1',
+      goal: 'Open Settings',
+      queue: [
+        { session_id: 's2', goal: 'Open Settings', device_serial: 'dev-2', status: 'pending', start_time: 100.001 },
+        { session_id: 's3', goal: 'Open Settings', device_serial: 'dev-3', status: 'pending', start_time: 100.002 }
+      ],
+      active_tasks: [{ session_id: 's1', device_id: 'dev-1', goal: 'Open Settings' }]
+    });
+
+    expect(service.currentSessionId()).toBe('s1');
+
+    // Simulate s1 finishing and s2 becoming RUNNING -> auto-switches main stream to s2
+    (service as any).applySessionEndedStatus('s1', { status: 'completed' });
+    service.fetchStatus();
+    const statusReq2 = http.expectOne('/api/status');
+    statusReq2.flush({
+      status: 'running',
+      session_id: 's2',
+      device_serial: 'dev-2',
+      goal: 'Open Settings',
+      queue: [
+        { session_id: 's3', goal: 'Open Settings', device_serial: 'dev-3', status: 'pending', start_time: 100.002 }
+      ],
+      active_tasks: [{ session_id: 's2', device_id: 'dev-2', goal: 'Open Settings' }]
+    });
+
+    expect(service.currentSessionId()).toBe('s2');
+    expect(service.activeVideoDeviceSerial()).toBe('dev-2');
+
+    // Now user manually selects past/completed run s1 -> s2 finishing -> s3 starting must NOT yank away from s1
+    service.selectSession('s1', true);
+    expect(service.userPinnedSessionId()).toBe('s1');
+
+    (service as any).applySessionEndedStatus('s2', { status: 'failed' });
+    service.fetchStatus();
+    const statusReq3 = http.expectOne('/api/status');
+    statusReq3.flush({
+      status: 'running',
+      session_id: 's3',
+      device_serial: 'dev-3',
+      goal: 'Open Settings',
+      queue: [],
+      active_tasks: [{ session_id: 's3', device_id: 'dev-3', goal: 'Open Settings' }]
+    });
+
+    expect(service.currentSessionId()).toBe('s1');
+  });
+
+  it('switches open video player into live mode when pending selected session starts and resets on toggle close', () => {
+    service.openVideoPlayer('s-pending');
+    expect(service.isVideoWindowOpen()).toBeTrue();
+    expect(service.recordingPlaybackStatus()).toBe('processing');
+
+    service.selectSession('s-pending', false);
+    service.agentStatus.set('running');
+    service.runningSessionId.set('s-pending');
+    (service as any).recordSessionDeviceSerial('s-pending', 'dev-3');
+    service.openVideoPlayer('s-pending');
+
+    expect(service.recordingPlaybackStatus()).toBe('live');
+    expect(service.activeVideoDeviceSerial()).toBe('dev-3');
+
+    service.toggleVideoPlayer();
+    expect(service.isVideoWindowOpen()).toBeFalse();
+    expect(service.activeVideoSessionIdSignal()).toBeNull();
   });
 });

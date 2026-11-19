@@ -112,7 +112,8 @@ export class AgentService {
       const isTerminal = s.status === 'completed' || s.status === 'success' || s.status === 'failed' || s.status === 'cancelled';
       let sStatus = s.status;
       if (!isTerminal) {
-        const isPending = !!pendingMatch && !isCurrentActive;
+        const isPending =
+          !!pendingMatch && !isCurrentActive && s.status !== 'running' && s.status !== 'paused';
         sStatus = isCurrentActive ? (status === 'paused' ? 'paused' : 'running') : (isPending ? 'pending' : s.status);
       } else {
         sStatus = (s.status === 'success') ? 'completed' : s.status;
@@ -470,7 +471,7 @@ export class AgentService {
     expectedOutput?: string,
     enableOutputter?: boolean,
     proTuning?: ProTuningOptions,
-    deviceSerial?: string | null
+    deviceTarget?: string | string[] | null
   ): Observable<any> {
     return new Observable((obs) => {
       const submittedEvent: StartupProgressEvent = {
@@ -492,8 +493,23 @@ export class AgentService {
       if (proTuning?.explorerMode) {
         payload.explorer_mode = proTuning.explorerMode;
       }
-      if (deviceSerial && deviceSerial.trim()) {
-        payload.device_serial = deviceSerial.trim();
+      const rawSerials = Array.isArray(deviceTarget)
+        ? deviceTarget
+        : (deviceTarget ? [deviceTarget] : []);
+      const targetSerials: string[] = [];
+      const seenSerials = new Set<string>();
+      for (const raw of rawSerials) {
+        const clean = typeof raw === 'string' ? raw.trim() : '';
+        if (clean && !seenSerials.has(clean)) {
+          seenSerials.add(clean);
+          targetSerials.push(clean);
+        }
+      }
+      if (targetSerials.length === 1) {
+        payload.device_serial = targetSerials[0];
+      } else if (targetSerials.length > 1) {
+        payload.device_serial = targetSerials[0];
+        payload.device_serials = targetSerials;
       }
       this.clearUserPinnedSession();
       this.http.post<any>('/api/run', payload).subscribe({
@@ -501,11 +517,35 @@ export class AgentService {
           if (res && res.tasks && res.tasks.length > 0) {
             const firstTask = res.tasks[0];
             const newSessionId = firstTask.session_id;
+            const optimisticPending: Session[] = [];
+            res.tasks.forEach((task: any, index: number) => {
+              const tid = task?.session_id;
+              if (!tid) return;
+              const resolvedSerial =
+                normalizeDeviceSerial(task.device_serial)
+                || normalizeDeviceSerial(targetSerials[index])
+                || normalizeDeviceSerial(targetSerials[0]);
+              if (resolvedSerial) {
+                this.recordSessionDeviceSerial(tid, resolvedSerial);
+              }
+              optimisticPending.push({
+                session_id: tid,
+                initial_goal: task.goal || goal,
+                start_time: task.start_time || task.created_at || (Date.now() / 1000 + index * 0.001),
+                status: task.status || 'pending',
+                device_serial: resolvedSerial
+              });
+            });
+
+            if (this.pendingQueue && optimisticPending.length > 0) {
+              this.pendingQueue.update((existing) => {
+                const seen = new Set(existing.map((item) => item.session_id));
+                const additions = optimisticPending.filter((item) => !seen.has(item.session_id));
+                return additions.length > 0 ? [...existing, ...additions] : existing;
+              });
+            }
+
             if (newSessionId) {
-              this.recordSessionDeviceSerial(
-                newSessionId,
-                firstTask.device_serial || deviceSerial || null
-              );
               this.appendStartupProgress(
                 { ...submittedEvent, session_id: newSessionId },
                 newSessionId
@@ -763,7 +803,13 @@ export class AgentService {
    */
   public selectSession(sessionId: string, isUserAction: boolean = false): void {
     if (isUserAction) {
-      if (sessionId && sessionId === this.runningSessionId() && this.agentStatus() === 'running') {
+      const clickedSession = sessionId ? this.sessions().find((s) => s.session_id === sessionId) : null;
+      const isActiveStatus = this.agentStatus() === 'running' || this.agentStatus() === 'paused';
+      const isSelectedRunning =
+        (sessionId && sessionId === this.runningSessionId() && isActiveStatus)
+        || clickedSession?.status === 'running'
+        || clickedSession?.status === 'paused';
+      if (isSelectedRunning) {
         // User explicitly clicked the currently running task -> follow live runner
         this.userPinnedSessionId.set(null);
       } else if (sessionId) {
@@ -903,6 +949,9 @@ export class AgentService {
             if (parsedData?.session_id) {
               this.runningSessionId.set(parsedData.session_id);
               this.recordSessionDeviceSerial(parsedData.session_id, parsedData.device_serial);
+              if (this.userPinnedSessionId() === parsedData.session_id) {
+                this.userPinnedSessionId.set(null);
+              }
             }
             if (parsedData?.initial_goal) {
               this.runningGoal.set(parsedData.initial_goal);
@@ -911,7 +960,11 @@ export class AgentService {
 
             // Auto-follow: if user has not explicitly pinned a historical session, switch view to new active session
             if (!this.userPinnedSessionId() && parsedData?.session_id) {
-              this.selectSession(parsedData.session_id, false);
+              if (this.currentSessionId() !== parsedData.session_id) {
+                this.selectSession(parsedData.session_id, false);
+              } else if (this.isVideoWindowOpen() && this.recordingPlaybackStatus() !== 'live') {
+                this.openVideoPlayer(parsedData.session_id);
+              }
             }
             return;
           }
@@ -924,12 +977,15 @@ export class AgentService {
               this.activeTasks.update(list => list.filter(at => at.session_id !== endedId));
             }
             const remaining = this.activeTasks();
+            const remainingPending = this.pendingQueue().filter(
+              (p) => p.session_id !== String(endedId || '') && (!p.status || p.status === 'pending')
+            );
             if (remaining.length > 0) {
               this.agentStatus.set('running');
               this.runningSessionId.set(remaining[0].session_id);
               this.runningGoal.set(remaining[0].goal || null);
-            } else if (this.pendingQueue().length > 0) {
-              const nextPending = this.pendingQueue()[0];
+            } else if (remainingPending.length > 0) {
+              const nextPending = remainingPending[0];
               this.agentStatus.set('running');
               this.runningSessionId.set(nextPending.session_id);
               this.runningGoal.set(nextPending.initial_goal || null);
@@ -1511,6 +1567,7 @@ export class AgentService {
   private applySessionEndedStatus(sessionId: unknown, data: any): void {
     if (!sessionId) return;
 
+    const cleanSid = String(sessionId);
     const reportedStatus = String(data?.status || '').toLowerCase();
     const status: Session['status'] | null = data?.was_stopped_manually || reportedStatus === 'cancelled'
       ? 'cancelled'
@@ -1521,10 +1578,21 @@ export class AgentService {
           : null;
 
     if (status) {
-      this.activeSessionTracking.delete(String(sessionId));
-      this.setSessionStatus(String(sessionId), status);
+      this.activeSessionTracking.delete(cleanSid);
+      const pendingMatch = this.pendingQueue().find((s) => s.session_id === cleanSid);
+      this.rawSessions.update((sessions) => {
+        const exists = sessions.some((s) => s.session_id === cleanSid);
+        if (exists) {
+          return sessions.map((s) => (s.session_id === cleanSid ? { ...s, status } : s));
+        }
+        if (pendingMatch) {
+          return [{ ...pendingMatch, status }, ...sessions];
+        }
+        return sessions;
+      });
+      this.pendingQueue.update((sessions) => sessions.filter((s) => s.session_id !== cleanSid));
       this.invalidateStatusSignatures();
-      this.activeTasks.update((list) => list.filter((at) => at.session_id !== String(sessionId)));
+      this.activeTasks.update((list) => list.filter((at) => at.session_id !== cleanSid));
     }
   }
 
@@ -1643,6 +1711,9 @@ export class AgentService {
 
           // Auto-select the active session if user has not explicitly pinned a historical session
           if (isActive && data.session_id) {
+            if (this.userPinnedSessionId() === data.session_id) {
+              this.userPinnedSessionId.set(null);
+            }
             const currentId = this.currentSessionId();
             if (!currentId || (!this.userPinnedSessionId() && currentId !== data.session_id)) {
               this.selectSession(data.session_id, false);
@@ -1869,7 +1940,14 @@ export class AgentService {
       return;
     }
 
-    if (session?.status === 'running' || session?.status === 'paused') {
+    const isTargetLive =
+      session?.status === 'running'
+      || session?.status === 'paused'
+      || ((this.agentStatus() === 'running' || this.agentStatus() === 'paused')
+        && this.runningSessionId() === targetSessionId)
+      || this.activeTasks().some((at) => at.session_id === targetSessionId);
+
+    if (isTargetLive) {
       this.activeVideoUrl.set(null);
       this.isVideoLoading.set(false);
       this.recordingPlaybackStatus.set('live');
@@ -2057,7 +2135,7 @@ export class AgentService {
    */
   public toggleVideoPlayer(): void {
     if (this.isVideoWindowOpen()) {
-      this.isVideoWindowOpen.set(false);
+      this.closeVideoPlayer();
     } else {
       this.openVideoPlayer();
     }

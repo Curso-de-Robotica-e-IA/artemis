@@ -614,6 +614,7 @@ describe('HomeComponent Device Connection & Selection Flow', () => {
     const setupView = fixture.nativeElement.querySelector('.setup-guide-view') as HTMLElement;
     expect(setupView.querySelector('.multi-device-switcher')).toBeNull();
     expect(setupView.textContent?.toUpperCase()).not.toContain('SELECT ACTIVE DEVICE');
+    expect(setupView.textContent?.toUpperCase()).not.toContain('SELECT TARGET DEVICES');
 
     // Header actions remain intact
     expect(setupView.textContent).toContain('Change Connection');
@@ -622,49 +623,76 @@ describe('HomeComponent Device Connection & Selection Flow', () => {
     fixture.destroy();
   });
 
-  it('allows single-device selection in Launch Autonomous Task and submits Run Task with chosen serial', () => {
+  it('supports 1-to-N device selection with Select All toggle and dynamic Run Task button labels', () => {
+    const dev3: DeviceInfo = {
+      serial: 'pixel-9-usb',
+      state: 'device',
+      model: 'Pixel 9',
+      product: 'tokay',
+      android_version: '15',
+      screen_resolution: '1080x2424',
+      is_locked: false,
+      is_emulator: false
+    };
+
     const fixture = TestBed.createComponent(HomeComponent);
     const component = fixture.componentInstance;
     fixture.detectChanges();
 
-    flushInitialBootstrap(buildReadiness([dev1, dev2], dev1, 100));
+    flushInitialBootstrap(buildReadiness([dev1, dev2, dev3], dev1, 100));
     fixture.detectChanges();
 
     expect(component.activeTab()).toBe('launcher');
 
     const deviceBar = fixture.nativeElement.querySelector('.composer-device-bar') as HTMLElement | null;
     expect(deviceBar).toBeTruthy();
-    expect(deviceBar!.textContent).toContain('SELECT ACTIVE DEVICE:');
+    expect(deviceBar!.textContent).toContain('SELECT TARGET DEVICES:');
 
     const pills = Array.from(deviceBar!.querySelectorAll<HTMLButtonElement>('.device-chip-btn'));
-    expect(pills.length).toBe(2);
+    expect(pills.length).toBe(3);
     expect(pills[0].classList.contains('selected')).toBeTrue();
-    expect(pills[0].textContent).toContain('✓ Active');
+    expect(pills[0].textContent).toContain('✓ Selected');
     expect(pills[1].classList.contains('selected')).toBeFalse();
-    expect(pills[1].textContent).not.toContain('✓ Active');
+    expect(pills[2].classList.contains('selected')).toBeFalse();
 
-    // Click second device pill -> only second device is active
+    const runBtn = fixture.nativeElement.querySelector('.btn-run-composer') as HTMLButtonElement;
+    expect(runBtn.textContent).toContain('Run Task');
+    expect(runBtn.textContent).not.toContain('Devices');
+
+    // Cannot deselect the last remaining selected device
+    pills[0].click();
+    fixture.detectChanges();
+    expect(pills[0].classList.contains('selected')).toBeTrue();
+
+    // Select second device -> 2 devices selected, label shows Run Task (2 Devices)
     pills[1].click();
     fixture.detectChanges();
-
-    const selectReq = http.expectOne('/api/system/devices/select');
-    expect(selectReq.request.body).toEqual({ serial: '192.168.1.55:5555' });
-    selectReq.flush({
-      status: 'success',
-      selected_serial: '192.168.1.55:5555',
-      report: buildReadiness([dev1, dev2], dev2, 110)
-    });
-    fixture.detectChanges();
-
-    expect(pills[0].classList.contains('selected')).toBeFalse();
-    expect(pills[0].textContent).not.toContain('✓ Active');
+    expect(pills[0].classList.contains('selected')).toBeTrue();
     expect(pills[1].classList.contains('selected')).toBeTrue();
-    expect(pills[1].textContent).toContain('✓ Active');
+    expect(pills[2].classList.contains('selected')).toBeFalse();
+    expect(runBtn.textContent).toContain('Run Task (2 Devices)');
 
-    // Running task passes the chosen active device serial
+    // Select All button appears for N >= 2 devices and toggles all 3 on, then resets to first device
+    const selectAllBtn = deviceBar!.querySelector('.select-all-chip-btn') as HTMLButtonElement | null;
+    expect(selectAllBtn).toBeTruthy();
+    expect(selectAllBtn!.textContent).toContain('Select All (3)');
+
+    selectAllBtn!.click();
+    fixture.detectChanges();
+    expect(pills.every(p => p.classList.contains('selected'))).toBeTrue();
+    expect(runBtn.textContent).toContain('Run Task (3 Devices)');
+
+    selectAllBtn!.click();
+    fixture.detectChanges();
+    expect(pills[0].classList.contains('selected')).toBeTrue();
+    expect(pills[1].classList.contains('selected')).toBeFalse();
+    expect(pills[2].classList.contains('selected')).toBeFalse();
+    expect(runBtn.textContent).toContain('Run Task');
+
+    // Re-select dev1 and dev2 and submit -> submits ordered array of serials
+    pills[1].click();
     component.taskGoal.set('Open Settings');
     fixture.detectChanges();
-    const runBtn = fixture.nativeElement.querySelector('.btn-run-composer') as HTMLButtonElement;
     runBtn.click();
 
     expect(runTaskSpy).toHaveBeenCalledWith(
@@ -673,10 +701,10 @@ describe('HomeComponent Device Connection & Selection Flow', () => {
       undefined,
       undefined,
       undefined,
-      '192.168.1.55:5555'
+      ['emulator-5554', '192.168.1.55:5555']
     );
 
-    // If selected device disconnects while dev1 stays connected, active selection defaults to dev1
+    // If dev2 disconnects and only dev1 remains, Select All hides and dev1 stays selected
     component.systemService.readinessReport.set(buildReadiness([dev1], null, 120));
     fixture.detectChanges();
 
@@ -688,7 +716,9 @@ describe('HomeComponent Device Connection & Selection Flow', () => {
     expect(remainingPills.length).toBe(1);
     expect(remainingPills[0].classList.contains('selected')).toBeTrue();
     expect(remainingPills[0].textContent).toContain('Pixel 8');
-    expect(remainingPills[0].textContent).toContain('✓ Active');
+    expect(fixture.nativeElement.querySelector('.select-all-chip-btn')).toBeNull();
+    expect(runBtn.textContent).toContain('Run Task');
+    expect(runBtn.textContent).not.toContain('Devices');
 
     fixture.destroy();
   });

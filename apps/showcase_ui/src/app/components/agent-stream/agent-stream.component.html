@@ -551,7 +551,7 @@ limitations under the License.
 
   <!-- Event Logs Section -->
   <main class="stream-logs-content">
-    @if (agentService.isSessionContentLoading()) {
+    @if (agentService.isSessionContentLoading() && consolidatedBlocks().length === 0 && startupWorkItems().length === 0) {
       <div class="session-loading-state" aria-live="polite">
         <span class="material-symbols-outlined spin-animation">progress_activity</span>
         <span>Loading run history...</span>
@@ -567,7 +567,7 @@ limitations under the License.
     }
 
     <!-- The phase-based session logs list -->
-    @if (!agentService.isSessionContentLoading() && (phases().length > 0 || showPlanningLoader() || startupWorkItems().length > 0)) {
+    @if ((!agentService.isSessionContentLoading() || consolidatedBlocks().length > 0 || startupWorkItems().length > 0) && (phases().length > 0 || showPlanningLoader() || startupWorkItems().length > 0)) {
       <div class="logs-list-container">
         @if (startupWorkItems().length > 0) {
           <div class="phase-container startup-phase" aria-live="polite">

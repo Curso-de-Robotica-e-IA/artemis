@@ -2023,20 +2023,20 @@
             </div>
           </div>
 
-          <!-- Active Target Device Selector (Single-Device Execution) -->
+          <!-- Target Device Selector (Sequential 1-to-N Execution) -->
           @if (connectedDevices().length > 0) {
             <div class="composer-device-bar">
-              <span class="device-bar-label">SELECT ACTIVE DEVICE:</span>
-              <div class="device-bar-pills" role="radiogroup" aria-label="Select active device">
+              <span class="device-bar-label">SELECT TARGET DEVICES:</span>
+              <div class="device-bar-pills" role="group" aria-label="Select target devices">
                 @for (dev of connectedDevices(); track dev.serial) {
                   <button
                     type="button"
                     class="device-chip-btn"
-                    role="radio"
-                    [attr.aria-checked]="dev.serial === activeDevice()?.serial"
-                    [class.selected]="dev.serial === activeDevice()?.serial"
-                    [title]="dev.serial"
-                    (click)="selectTargetDevice(dev.serial)"
+                    role="checkbox"
+                    [attr.aria-checked]="isDeviceSelected(dev.serial)"
+                    [class.selected]="isDeviceSelected(dev.serial)"
+                    [title]="selectedDeviceCount() === 1 && isDeviceSelected(dev.serial) ? dev.serial + ' (at least one device must stay selected)' : dev.serial"
+                    (click)="toggleTargetDevice(dev.serial)"
                   >
                     <span class="material-symbols-outlined chip-icon">
                       {{ dev.is_emulator ? 'smartphone' : 'phone_android' }}
@@ -2045,9 +2045,24 @@
                     @if (dev.model && dev.model !== dev.serial) {
                       <span class="chip-serial">{{ dev.serial }}</span>
                     }
-                    @if (dev.serial === activeDevice()?.serial) {
-                      <span class="active-check">✓ Active</span>
+                    @if (isDeviceSelected(dev.serial)) {
+                      <span class="active-check">✓ Selected</span>
                     }
+                  </button>
+                }
+                @if (connectedDevices().length >= 2) {
+                  <button
+                    type="button"
+                    class="select-all-chip-btn"
+                    [class.active]="isAllDevicesSelected()"
+                    [attr.aria-pressed]="isAllDevicesSelected()"
+                    [title]="isAllDevicesSelected() ? 'Reset selection to first connected device' : 'Select all connected devices'"
+                    (click)="toggleSelectAllDevices()"
+                  >
+                    <span class="material-symbols-outlined chip-icon">
+                      {{ isAllDevicesSelected() ? 'done_all' : 'select_all' }}
+                    </span>
+                    <span>Select All ({{ connectedDevices().length }})</span>
                   </button>
                 }
               </div>
@@ -2100,14 +2115,14 @@
                 type="button"
                 class="btn-run-composer"
                 [class.btn-run-pro]="selectedProfile() === 'pro'"
-                [disabled]="!taskGoal().trim() || isSubmitting() || !isReady() || !hasConnectedDevices()"
-                [title]="!hasConnectedDevices() ? 'Connect an Android device before running' : (!isReady() ? (adbProbe()?.summary === 'Device Locked' ? 'Unlock the Android device before running' : 'Complete System Setup before running') : 'Run task')"
+                [disabled]="!taskGoal().trim() || isSubmitting() || !isReady() || !hasConnectedDevices() || selectedDeviceCount() === 0"
+                [title]="!hasConnectedDevices() ? 'Connect an Android device before running' : (selectedDeviceCount() === 0 ? 'Select at least one target device' : (!isReady() ? (adbProbe()?.summary === 'Device Locked' ? 'Unlock the Android device before running' : 'Complete System Setup before running') : runTaskButtonLabel()))"
                 (click)="runTask()"
               >
                 @if (isSubmitting()) {
                   <span class="spinner"></span><span>Starting...</span>
                 } @else {
-                  <span class="material-symbols-outlined run-icon">play_arrow</span><span>Run Task</span>
+                  <span class="material-symbols-outlined run-icon">play_arrow</span><span>{{ runTaskButtonLabel() }}</span>
                 }
               </button>
             </div>

@@ -34,6 +34,7 @@ import { StepReplayFrame } from '../../core/models/stream.model';
 import { drawActionCoordinatesOnOverlay } from '../../utils/image-overlay.util';
 import { getActionIcon } from '../../utils/action-formatter.util';
 import { locateTimelineTime, sessionTimeToTimelineTime } from '../../utils/recording-timeline.util';
+import { consumeMjpegStream } from '../../utils/mjpeg-stream.util';
 
 @Component({
   selector: 'app-floating-video-player',
@@ -62,6 +63,19 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
   public videoLoadError = signal<boolean>(false);
   private liveStreamRetryToken = signal<number | null>(null);
   public liveStreamError = signal<boolean>(false);
+  public liveFrameUrl = signal<string | null>(null);
+  private liveStreamAbortController: AbortController | null = null;
+  private activeLiveObjectUrl: string | null = null;
+  private previousLiveObjectUrl: string | null = null;
+  public isLiveStreamActive = computed<boolean>(() => {
+    const mode = this.agentService.playerMode ? this.agentService.playerMode() : 'video';
+    return (
+      this.agentService.isVideoWindowOpen()
+      && !this.agentService.isVideoMinimized()
+      && mode === 'video'
+      && this.agentService.recordingPlaybackStatus() === 'live'
+    );
+  });
   public liveStreamUrl = computed<string>(() => {
     const status = this.agentService.recordingPlaybackStatus?.();
     const sessionId =
@@ -214,13 +228,96 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
       this.seekStepFrame(request.index);
     });
 
+    let prevLiveUrl: string | null = null;
     effect(
-      () => {
-        this.liveStreamUrl();
-        this.liveStreamError.set(false);
+      (onCleanup) => {
+        const active = this.isLiveStreamActive();
+        const url = this.liveStreamUrl();
+        const urlChanged = url !== prevLiveUrl;
+        prevLiveUrl = url;
+
+        if (!active || !url) {
+          this.stopLiveStream(true);
+          this.liveStreamError.set(false);
+          return;
+        }
+
+        if (urlChanged) {
+          this.liveStreamError.set(false);
+        } else if (this.liveStreamError()) {
+          this.stopLiveStream(true);
+          return;
+        }
+
+        this.stopLiveStream(urlChanged);
+        const controller = new AbortController();
+        this.liveStreamAbortController = controller;
+        let receivedFrame = false;
+
+        this.zone.runOutsideAngular(() => {
+          void consumeMjpegStream(url, controller.signal, {
+            onFrame: (frame) => {
+              if (controller.signal.aborted) return;
+              receivedFrame = true;
+              const blob = new Blob([new Uint8Array(frame.bytes)], { type: frame.contentType || 'image/png' });
+              const objectUrl = URL.createObjectURL(blob);
+              const staleUrl = this.previousLiveObjectUrl;
+              this.previousLiveObjectUrl = this.activeLiveObjectUrl;
+              this.activeLiveObjectUrl = objectUrl;
+              if (staleUrl) {
+                URL.revokeObjectURL(staleUrl);
+              }
+              this.zone.run(() => {
+                this.liveStreamError.set(false);
+                this.liveFrameUrl.set(objectUrl);
+              });
+            },
+            onComplete: () => {
+              if (!controller.signal.aborted && !receivedFrame && this.isLiveStreamActive()) {
+                this.zone.run(() => {
+                  this.stopLiveStream(true);
+                  this.liveStreamError.set(true);
+                });
+              }
+            },
+            onError: () => {
+              if (!controller.signal.aborted) {
+                this.zone.run(() => {
+                  this.stopLiveStream(true);
+                  this.liveStreamError.set(true);
+                });
+              }
+            },
+          });
+        });
+
+        onCleanup(() => {
+          if (this.liveStreamAbortController === controller) {
+            this.liveStreamAbortController = null;
+          }
+          controller.abort();
+        });
       },
       { allowSignalWrites: true }
     );
+  }
+
+  private stopLiveStream(clearFrame: boolean = true): void {
+    if (this.liveStreamAbortController) {
+      this.liveStreamAbortController.abort();
+      this.liveStreamAbortController = null;
+    }
+    if (clearFrame) {
+      this.liveFrameUrl.set(null);
+      if (this.activeLiveObjectUrl) {
+        URL.revokeObjectURL(this.activeLiveObjectUrl);
+        this.activeLiveObjectUrl = null;
+      }
+      if (this.previousLiveObjectUrl) {
+        URL.revokeObjectURL(this.previousLiveObjectUrl);
+        this.previousLiveObjectUrl = null;
+      }
+    }
   }
 
   public onLiveStreamError(): void {
@@ -653,6 +750,7 @@ export class FloatingVideoPlayerComponent implements OnDestroy {
   }
 
   public ngOnDestroy(): void {
+    this.stopLiveStream(true);
     if (this.stepTimer) {
       clearTimeout(this.stepTimer);
       this.stepTimer = null;

@@ -226,3 +226,83 @@ async def test_explicit_device_proceeds_when_enumeration_is_indeterminate(monkey
     enqueue_tasks.assert_awaited_once()
     _, kwargs = enqueue_tasks.call_args
     assert kwargs.get("device_serial") == "pixel-10"
+
+
+@pytest.mark.asyncio
+async def test_multi_device_run_validates_all_serials_and_enqueues_in_order(monkeypatch):
+    unlocked_probe = ProbeResult(
+        id="android_adb",
+        category=ProbeCategory.DEVICE,
+        title="Device / Emulator Connected",
+        status=ProbeStatus.PASS,
+        is_blocker=True,
+        summary="Connected",
+        description="Ready.",
+    )
+    probed_targets: list[str | None] = []
+
+    async def fake_probe(target_serial: str | None = None):
+        probed_targets.append(target_serial)
+        return unlocked_probe
+
+    enqueue_tasks = AsyncMock(
+        return_value={
+            "status": "started",
+            "tasks": [
+                {"session_id": "s1", "device_serial": "pixel-1"},
+                {"session_id": "s2", "device_serial": "pixel-2"},
+            ],
+            "enqueued_count": 2,
+            "total_queued": 2,
+        }
+    )
+    monkeypatch.setattr(
+        tasks.device_pool,
+        "try_list_devices_async",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(serial="pixel-1", state="device"),
+                SimpleNamespace(serial="pixel-2", state="device"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(tasks.readiness_engine, "run_device_submission_probe", fake_probe)
+    monkeypatch.setattr(tasks.task_queue_service, "enqueue_tasks", enqueue_tasks)
+
+    result = await tasks.run_task(
+        RunRequest(
+            goal="Open Settings",
+            profile="pro",
+            device_serials=["pixel-1", "pixel-2", "pixel-1"],
+        )
+    )
+
+    assert result["enqueued_count"] == 2
+    assert probed_targets == ["pixel-1", "pixel-2"]
+    enqueue_tasks.assert_awaited_once()
+    _, kwargs = enqueue_tasks.call_args
+    assert kwargs.get("device_serials") == ["pixel-1", "pixel-2"]
+
+
+@pytest.mark.asyncio
+async def test_multi_device_run_rejects_without_partial_enqueue_when_one_device_is_offline(
+    monkeypatch,
+):
+    enqueue_tasks = AsyncMock()
+    monkeypatch.setattr(
+        tasks.device_pool,
+        "try_list_devices_async",
+        AsyncMock(return_value=[SimpleNamespace(serial="pixel-1", state="device")]),
+    )
+    monkeypatch.setattr(tasks.task_queue_service, "enqueue_tasks", enqueue_tasks)
+
+    result = await tasks.run_task(
+        RunRequest(
+            goal="Open Settings",
+            device_serials=["pixel-1", "missing-dev"],
+        )
+    )
+
+    assert result["status"] == "rejected"
+    assert "not connected" in result["error"]
+    enqueue_tasks.assert_not_awaited()

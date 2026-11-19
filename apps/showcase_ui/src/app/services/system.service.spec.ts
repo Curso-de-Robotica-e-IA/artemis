@@ -633,4 +633,89 @@ describe('SystemService readiness polling', () => {
     expect(service.activeDevice()).toBeNull();
     expect(service.selectedDeviceSerial()).toBeNull();
   });
+
+  it('supports 1-to-N device selection toggling, Select All reset, and disconnected device pruning', () => {
+    const devA = {
+      serial: 'usb-001',
+      state: 'device',
+      model: 'Pixel 8',
+      product: 'shiba',
+      android_version: '14',
+      screen_resolution: '1080x2400',
+      is_locked: false,
+      is_emulator: false
+    };
+    const devB = {
+      serial: '192.168.1.42:5555',
+      state: 'device',
+      model: 'SM S928B',
+      product: 'e3q',
+      android_version: '15',
+      screen_resolution: '1440x3120',
+      is_locked: false,
+      is_emulator: false
+    };
+    const devC = {
+      serial: 'emulator-5554',
+      state: 'device',
+      model: 'Pixel Fold',
+      product: 'felix',
+      android_version: '14',
+      screen_resolution: '1840x2208',
+      is_locked: false,
+      is_emulator: true
+    };
+
+    const reportWith = (devices: any[], timestamp: number): SystemReadinessReport => ({
+      overall_ready: devices.length > 0,
+      blocker_count: 3,
+      passed_blocker_count: devices.length > 0 ? 3 : 2,
+      probes: [
+        {
+          id: 'android_adb',
+          category: 'device',
+          title: 'Android ADB',
+          status: devices.length > 0 ? 'pass' : 'warn',
+          is_blocker: true,
+          summary: `${devices.length} connected`,
+          description: 'Ready',
+          metadata: { devices },
+          actions: []
+        }
+      ],
+      active_device: devices[0] ?? null,
+      os_type: 'linux',
+      timestamp
+    });
+
+    service.fetchReadiness().subscribe();
+    http.expectOne('/api/system/readiness').flush(reportWith([devA, devB, devC], 100));
+
+    // Default selects first connected device
+    expect(service.selectedDeviceSerials()).toEqual(['usb-001']);
+
+    // Cannot deselect the last remaining selected device
+    service.toggleDeviceSelection('usb-001');
+    expect(service.selectedDeviceSerials()).toEqual(['usb-001']);
+
+    // Can add arbitrary subsets (2 of 3)
+    service.toggleDeviceSelection('192.168.1.42:5555');
+    expect(service.selectedDeviceSerials()).toEqual(['usb-001', '192.168.1.42:5555']);
+
+    // Select All toggles all N connected devices, then toggles back to first device
+    service.toggleSelectAllDevices();
+    expect(service.selectedDeviceSerials()).toEqual(['usb-001', '192.168.1.42:5555', 'emulator-5554']);
+
+    service.toggleSelectAllDevices();
+    expect(service.selectedDeviceSerials()).toEqual(['usb-001']);
+
+    // Select B and C, then disconnect B -> C stays selected without reverting to A
+    service.setSelectedDeviceSerials(['192.168.1.42:5555', 'emulator-5554']);
+    expect(service.selectedDeviceSerials()).toEqual(['192.168.1.42:5555', 'emulator-5554']);
+
+    service.fetchReadiness().subscribe();
+    http.expectOne('/api/system/readiness').flush(reportWith([devA, devC], 110));
+    expect(service.selectedDeviceSerials()).toEqual(['emulator-5554']);
+    expect(service.selectedDevices().map(d => d.serial)).toEqual(['emulator-5554']);
+  });
 });

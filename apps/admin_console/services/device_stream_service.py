@@ -244,7 +244,9 @@ class DeviceStreamService:
     ) -> tuple[str | None, AdbEndpoint, bool]:
         """Resolve the target `(serial, endpoint, is_bound_target)` for live streaming."""
         explicit_serial = _clean_serial(serial)
-        clean_sid = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+        clean_sid = (
+            session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+        )
 
         endpoint = current_adb_endpoint()
         session_serial: str | None = None
@@ -413,16 +415,52 @@ class DeviceStreamService:
                 if self._workers.get(worker.key) is worker:
                     self._workers.pop(worker.key, None)
 
+    _TERMINAL_SESSION_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+    @classmethod
+    def _is_session_terminal(cls, session_id: str | None) -> bool:
+        """Return True once a session-scoped live stream belongs to a finished session."""
+        clean_sid = _clean_serial(session_id)
+        if not clean_sid:
+            return False
+
+        if clean_sid in state.active_runs or any(
+            isinstance(run, Mapping) and _clean_serial(run.get("session_id")) == clean_sid
+            for run in state.active_runs.values()
+        ):
+            return False
+
+        if any(
+            isinstance(item, Mapping)
+            and _clean_serial(item.get("session_id")) == clean_sid
+            and str(item.get("status") or "").strip().lower() in {"pending", "running", "paused"}
+            for item in state.queue_items
+        ):
+            return False
+
+        try:
+            db_status = session_repo.get_session_status(clean_sid)
+        except (OSError, sqlite3.Error, ValueError, RuntimeError):
+            return False
+
+        return str(db_status or "").strip().lower() in cls._TERMINAL_SESSION_STATUSES
+
     async def mjpeg_frame_generator(
         self,
         serial: str | None = None,
         session_id: str | None = None,
+        request: Any = None,
     ) -> AsyncGenerator[bytes, None]:
         """Async generator streaming MJPEG multipart bytes for the target device."""
-        worker = await self._acquire_worker(serial=serial, session_id=session_id)
+        clean_sid = _clean_serial(session_id)
+        worker = await self._acquire_worker(serial=serial, session_id=clean_sid)
         try:
             last_sent_time = 0.0
+            last_status_check = 0.0
             while True:
+                if request is not None and await request.is_disconnected():
+                    break
+
                 if worker.latest_frame and worker.last_frame_time > last_sent_time:
                     last_sent_time = worker.last_frame_time
                     frame_bytes = worker.latest_frame
@@ -435,6 +473,14 @@ class DeviceStreamService:
                         + frame_bytes
                         + b"\r\n"
                     )
+
+                if clean_sid:
+                    now = time.monotonic()
+                    if now - last_status_check >= 0.4:
+                        last_status_check = now
+                        if self._is_session_terminal(clean_sid):
+                            break
+
                 await asyncio.sleep(0.04)
         finally:
             await self._release_worker(worker)

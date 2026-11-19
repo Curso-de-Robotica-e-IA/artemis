@@ -19,7 +19,7 @@ Exposes real-time screen streaming endpoints for the Web UI.
 
 from urllib.parse import urlencode
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
@@ -31,16 +31,24 @@ router = APIRouter(tags=["stream"])
 
 
 @router.get("/api/stream/device-live")
-async def stream_device_live(serial: str | None = None, session_id: str | None = None):
+async def stream_device_live(
+    request: Request,
+    serial: str | None = None,
+    session_id: str | None = None,
+):
     """Streams live device screen frames as multipart MJPEG."""
     return StreamingResponse(
-        device_stream_service.mjpeg_frame_generator(serial=serial, session_id=session_id),
+        device_stream_service.mjpeg_frame_generator(
+            serial=serial,
+            session_id=session_id,
+            request=request,
+        ),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )
 

@@ -352,19 +352,17 @@ class TaskQueueService:
 
     @classmethod
     def _concurrency_limit(cls) -> int:
-        """Return 0 for per-device concurrency, or the global task limit."""
-        return DeviceExecutionLock.resolve_env_concurrency()
+        """Enforce strict global sequential execution (at most 1 running task at a time)."""
+        return 1
 
     @classmethod
     async def queue_worker(cls):
-        """Persistent dispatcher scheduling pending tasks onto devices.
+        """Persistent dispatcher scheduling pending tasks onto devices sequentially.
 
-        Scans the queue and launches each eligible task as an independent
-        coroutine. Admission is governed by _concurrency_limit(): 0 admits one
-        task per device so distinct devices execute concurrently, N>=1 admits
-        at most N tasks across all devices. Per-device FIFO ordering and
-        cross-process mutual exclusion remain enforced by DeviceExecutionLock
-        inside each worker process.
+        Scans the FIFO queue and launches at most one running task globally at
+        any time, regardless of how many distinct devices are queued. Subsequent
+        tasks remain in ``pending`` state until the active run completes,
+        fails, or is stopped.
         """
         print(
             f"[QueueWorker] Dispatcher initialized (concurrency limit: {cls._concurrency_limit()})."
@@ -395,36 +393,17 @@ class TaskQueueService:
 
     @classmethod
     def _dispatch_pending_tasks(cls) -> None:
-        """Launch every pending task admissible under the current concurrency limit."""
-        limit = cls._concurrency_limit()
+        """Launch at most one pending task globally in FIFO order."""
         state.prune_finished_runs()
-        if limit == 1 and state.is_running:
+        if state.is_running:
+            return
+        if any(not task.done() for task in cls._run_tasks):
+            return
+        if any(
+            isinstance(item, dict) and item.get("status") == "running" for item in state.queue_items
+        ):
             return
 
-        # Dispatched-but-not-yet-spawned runs are only visible as queue items in
-        # "running" state, so admission must count those too -- active_runs alone
-        # lags behind by the subprocess startup latency.
-        in_flight = [
-            i for i in state.queue_items if isinstance(i, dict) and i.get("status") == "running"
-        ]
-        capacity = None
-        if limit >= 1:
-            # Registered workers still have running queue rows until finalization.
-            active_pids = {
-                getattr(run.get("process"), "pid", None) for run in state.active_runs.values()
-            } - {None}
-            starting = sum(
-                str(item.get("session_id")) not in state.active_runs
-                and item.get("pid") not in active_pids
-                for item in in_flight
-            )
-            capacity = limit - len(state.active_runs) - starting
-            if capacity <= 0:
-                return
-        busy_devices = state.busy_device_ids | {
-            cls._task_target(i).lock_key for i in in_flight if i.get("device_serial")
-        }
-        dispatched_any = False
         loop = asyncio.get_running_loop()
         for item in list(state.queue_items):
             if not (isinstance(item, dict) and item.get("status") == "pending"):
@@ -434,33 +413,14 @@ class TaskQueueService:
                 cls._remove_task(sess_id)
                 continue
 
-            device = item.get("device_serial")
-            target = cls._task_target(item)
-            if limit == 0:
-                # A task without a resolved device may bind to any serial, so it
-                # only launches on an otherwise idle scheduler; the device lock
-                # then allocates freely without contending against active runs.
-                if device is None and (state.active_runs or in_flight or dispatched_any):
-                    continue
-                if device is not None and target.lock_key in busy_devices:
-                    continue
-            elif limit > 1 and device is not None and target.lock_key in busy_devices:
-                # A second worker for this device would wait on its lock.
-                continue
-
             item["status"] = "running"
-            dispatched_any = True
-            if device is not None:
-                busy_devices.add(target.lock_key)
             run_task = loop.create_task(cls._execute_task_item(item))
             # Hold a strong reference: asyncio keeps only weak refs to running
             # tasks, and a collected run would strand its queue item forever.
             cls._run_tasks.add(run_task)
             run_task.add_done_callback(cls._run_tasks.discard)
-            if capacity is not None:
-                capacity -= 1
-                if capacity <= 0:
-                    break
+            # Strict global concurrency of 1: leave remaining tasks pending.
+            return
 
     @classmethod
     def _begin_task_run(
@@ -533,6 +493,8 @@ class TaskQueueService:
             env["ARTEMIS_SESSION_ID"] = str(sess_id)
         env["ARTEMIS_TASK_INGRESS"] = str(task_item.get("ingress", "frontend"))
         env["ARTEMIS_TASK_WORKER"] = "1"
+        env["ARTEMIS_CONCURRENCY_MODE"] = "global"
+        env["ARTEMIS_MAX_CONCURRENT_TASKS"] = "1"
         target.endpoint.apply_to_environment(env)
         env[DeviceExecutionLock.LOCK_SCOPE_ENV] = target.lock_scope
         queue_ticket = task_item.get("queue_ticket")
@@ -567,6 +529,10 @@ class TaskQueueService:
         if device_serial:
             cmd.extend(["--device-serial", str(device_serial)])
             env["ADB_DEVICE_SERIAL"] = str(device_serial)
+            env["ARTEMIS_DEVICE_ID"] = str(device_serial)
+        else:
+            env.pop("ADB_DEVICE_SERIAL", None)
+            env.pop("ARTEMIS_DEVICE_ID", None)
         return cmd, env
 
     @classmethod
@@ -1148,8 +1114,9 @@ class TaskQueueService:
         conversation_id: str | None = None,
         verification_level: str | None = None,
         explorer_mode: str | None = None,
+        device_serials: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Enqueues one or more goals and wakes up the background worker.
+        """Enqueues one or more goals across 1..N target devices and wakes the worker.
 
         ``verification_level`` and ``explorer_mode`` are Pro-profile tuning knobs
         forwarded to the worker as ``--verification-level`` / ``--explorer-pro-mode``;
@@ -1165,48 +1132,73 @@ class TaskQueueService:
         now = time.time()
         endpoint = current_adb_endpoint()
 
-        duplicate_response = cls._find_duplicate_submission(
-            goals, session_id, device_serial, endpoint, now
-        )
-        if duplicate_response is not None:
-            return duplicate_response
+        explicit_serials: list[str] = []
+        seen_serials: set[str] = set()
+        for raw in device_serials or []:
+            clean = str(raw or "").strip()
+            if clean and clean not in seen_serials:
+                seen_serials.add(clean)
+                explicit_serials.append(clean)
+        if not explicit_serials and device_serial:
+            clean = str(device_serial).strip()
+            if clean:
+                explicit_serials.append(clean)
 
-        rejection_response = await cls._reject_unavailable_device(device_serial)
-        if rejection_response is not None:
-            return rejection_response
+        if len(explicit_serials) <= 1:
+            single_serial_arg = explicit_serials[0] if explicit_serials else None
+            duplicate_response = cls._find_duplicate_submission(
+                goals, session_id, single_serial_arg, endpoint, now
+            )
+            if duplicate_response is not None:
+                return duplicate_response
 
-        single_session_id = session_id if (session_id and len(goals) == 1) else None
-        if not device_serial:
+        for explicit in explicit_serials:
+            rejection_response = await cls._reject_unavailable_device(explicit)
+            if rejection_response is not None:
+                return rejection_response
+
+        target_serials: list[str | None]
+        if explicit_serials:
+            target_serials = list(explicit_serials)
+        else:
             # Device enumeration may block on ADB.
             from artemis.runtime import device_pool
 
             try:
-                device_serial = await device_pool.select_device_async()
+                resolved_serial = await device_pool.select_device_async()
             except Exception:
-                device_serial = None
-        for i, goal in enumerate(goals):
-            task_item = cls._create_queue_item(
-                goal,
-                i,
-                now,
-                endpoint,
-                single_session_id,
-                profile,
-                expected_output,
-                enable_outputter,
-                locked_app_package,
-                app_path,
-                device_serial,
-                ingress,
-                conversation_id,
-                verification_level=verification_level,
-                explorer_mode=explorer_mode,
-            )
-            state.queue_items.append(task_item)
-            enqueued_tasks.append(task_item)
-            cls._broadcast_startup_progress(
-                task_item["session_id"], "queued", "Task received and queued"
-            )
+                resolved_serial = None
+            target_serials = [resolved_serial]
+
+        single_session_id = (
+            session_id if (session_id and len(goals) == 1 and len(target_serials) <= 1) else None
+        )
+        item_index = 0
+        for goal in goals:
+            for target_serial in target_serials:
+                task_item = cls._create_queue_item(
+                    goal,
+                    item_index,
+                    now,
+                    endpoint,
+                    single_session_id,
+                    profile,
+                    expected_output,
+                    enable_outputter,
+                    locked_app_package,
+                    app_path,
+                    target_serial,
+                    ingress,
+                    conversation_id,
+                    verification_level=verification_level,
+                    explorer_mode=explorer_mode,
+                )
+                item_index += 1
+                state.queue_items.append(task_item)
+                enqueued_tasks.append(task_item)
+                cls._broadcast_startup_progress(
+                    task_item["session_id"], "queued", "Task received and queued"
+                )
 
         # Wake worker immediately
         state.wake_event.set()
@@ -1214,7 +1206,7 @@ class TaskQueueService:
         return {
             "status": "queued" if state.is_running else "started",
             "tasks": enqueued_tasks,
-            "enqueued_count": len(goals),
+            "enqueued_count": len(enqueued_tasks),
             "total_queued": len(state.queue_tasks),
         }
 

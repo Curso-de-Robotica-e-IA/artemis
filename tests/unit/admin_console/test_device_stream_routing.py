@@ -58,9 +58,7 @@ def _clean_server_state(monkeypatch):
     monkeypatch.setattr(dss_mod.DeviceExecutionLock, "get_active_owners", lambda: {})
     monkeypatch.setattr(dss_mod.DeviceExecutionLock, "get_queued_tasks", lambda: [])
     monkeypatch.setattr(dss_mod.session_repo, "get_session_by_id", lambda _sid: None)
-    monkeypatch.setattr(
-        dss_mod.session_repo, "get_video_recording_for_session", lambda _sid: None
-    )
+    monkeypatch.setattr(dss_mod.session_repo, "get_video_recording_for_session", lambda _sid: None)
     monkeypatch.setattr(dss_mod.readiness_engine, "get_probe_target_serial", lambda: None)
 
     yield
@@ -152,12 +150,16 @@ async def test_stream_service_falls_back_to_active_run_and_probe_target_before_f
     )
 
     # 1. Idle preferred serial selected in UI
-    monkeypatch.setattr(dss_mod.readiness_engine, "get_probe_target_serial", lambda: "192.168.1.55:5555")
+    monkeypatch.setattr(
+        dss_mod.readiness_engine, "get_probe_target_serial", lambda: "192.168.1.55:5555"
+    )
     assert await service.get_device_serial() == "192.168.1.55:5555"
 
     # 2. Running task overrides idle preference
     state.active_session_id = "usb-run"
-    state.queue_items.append({"session_id": "usb-run", "device_serial": "usb-001", "status": "running"})
+    state.queue_items.append(
+        {"session_id": "usb-run", "device_serial": "usb-001", "status": "running"}
+    )
     assert await service.get_device_serial() == "usb-001"
 
 
@@ -252,3 +254,76 @@ async def test_api_status_includes_top_level_device_serial_for_active_run(monkey
     payload = res.json()
     assert payload["session_id"] == "wifi-sess"
     assert payload["device_serial"] == "192.168.1.55:5555"
+
+
+@pytest.mark.asyncio
+async def test_mjpeg_generator_stops_and_releases_worker_on_client_disconnect(monkeypatch):
+    service = DeviceStreamService()
+    monkeypatch.setattr(dss_mod, "find_adb", lambda: None)
+    monkeypatch.setattr(
+        dss_mod.session_repo,
+        "get_session_status",
+        lambda _sid: "running",
+    )
+
+    disconnected = False
+
+    class _FakeRequest:
+        async def is_disconnected(self) -> bool:
+            return disconnected
+
+    gen = service.mjpeg_frame_generator(
+        serial="usb-001",
+        session_id="live-sess",
+        request=_FakeRequest(),
+    )
+
+    async def _drain():
+        chunks = []
+        async for chunk in gen:
+            chunks.append(chunk)
+        return chunks
+
+    task = asyncio.create_task(_drain())
+    await asyncio.sleep(0.1)
+    assert len(service._workers) == 1
+    disconnected = True
+    chunks = await asyncio.wait_for(task, timeout=2.0)
+    assert chunks == []
+    assert service._workers == {}
+
+
+@pytest.mark.asyncio
+async def test_mjpeg_generator_stops_when_scoped_session_reaches_terminal_status(monkeypatch):
+    service = DeviceStreamService()
+    monkeypatch.setattr(dss_mod, "find_adb", lambda: None)
+    status_box = {"status": "running"}
+    monkeypatch.setattr(
+        dss_mod.session_repo,
+        "get_session_status",
+        lambda _sid: status_box["status"],
+    )
+
+    state.active_runs["sess-1"] = {
+        "process": None,
+        "device_id": "usb-001",
+        "goal": "Test",
+        "profile": "flash",
+    }
+
+    gen = service.mjpeg_frame_generator(serial="usb-001", session_id="sess-1")
+
+    async def _drain():
+        async for _ in gen:
+            pass
+
+    drain_task = asyncio.create_task(_drain())
+    await asyncio.sleep(0.1)
+    assert len(service._workers) == 1
+
+    # Simulate task completion: active_runs clears and DB status becomes completed.
+    state.active_runs.pop("sess-1", None)
+    status_box["status"] = "completed"
+
+    await asyncio.wait_for(drain_task, timeout=2.0)
+    assert service._workers == {}

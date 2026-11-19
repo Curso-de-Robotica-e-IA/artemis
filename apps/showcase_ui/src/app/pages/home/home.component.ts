@@ -484,10 +484,21 @@ export class HomeComponent implements OnInit, OnDestroy {
   public isCredentialsReady = computed(() => this.systemService.isCredentialsReady());
   public isDeviceReady = computed(() => this.systemService.isDeviceReady());
 
-  // Device information
+  // Device information & 1-to-N sequential target selection
   public activeDevice = computed(() => this.systemService.activeDevice());
   public connectedDevices = computed(() => this.systemService.connectedDevices());
+  public selectedDeviceSerials = computed(() => this.systemService.selectedDeviceSerials());
+  public selectedDevices = computed(() => this.systemService.selectedDevices());
+  public selectedDeviceCount = computed(() => this.selectedDevices().length);
   public selectedDeviceSerial = computed(() => this.systemService.selectedDeviceSerial());
+  public isAllDevicesSelected = computed(() => {
+    const connectedCount = this.connectedDevices().length;
+    return connectedCount > 1 && this.selectedDeviceCount() === connectedCount;
+  });
+  public runTaskButtonLabel = computed(() => {
+    const count = this.selectedDeviceCount();
+    return count > 1 ? `Run Task (${count} Devices)` : 'Run Task';
+  });
   public hasConnectedDevices = computed(() => this.connectedDevices().length > 0);
   public installedAvds = computed(() => this.systemService.installedAvds());
   public emulatorPath = computed(() => this.systemService.emulatorPath());
@@ -1630,12 +1641,20 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.systemService.dismissEmulatorStatus().subscribe();
   }
 
+  public isDeviceSelected(serial: string): boolean {
+    return this.selectedDeviceSerials().includes(serial);
+  }
+
+  public toggleTargetDevice(serial: string): void {
+    this.systemService.toggleDeviceSelection(serial);
+  }
+
+  public toggleSelectAllDevices(): void {
+    this.systemService.toggleSelectAllDevices();
+  }
+
   public selectTargetDevice(serial: string): void {
-    const cleanSerial = (serial || '').trim();
-    if (!cleanSerial) {
-      return;
-    }
-    this.systemService.selectDevice(cleanSerial).subscribe();
+    this.toggleTargetDevice(serial);
   }
 
   public formatDeviceResolution(resolution: string | null | undefined): string {
@@ -1716,7 +1735,20 @@ export class HomeComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const targetSerial = this.activeDevice()?.serial || this.selectedDeviceSerial() || undefined;
+    const selectedSerials = this.selectedDevices().map(device => device.serial);
+    const fallbackSerial = this.activeDevice()?.serial || this.selectedDeviceSerial();
+    const targetSerials = selectedSerials.length > 0
+      ? selectedSerials
+      : (fallbackSerial ? [fallbackSerial] : []);
+
+    if (targetSerials.length === 0) {
+      this.errorMessage.set('Please select at least one target device before running.');
+      return;
+    }
+
+    const deviceTarget: string | string[] =
+      targetSerials.length > 1 ? targetSerials : targetSerials[0];
+
     this.isSubmitting.set(true);
     this.errorMessage.set(null);
 
@@ -1731,11 +1763,12 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.selectedProfile() === 'pro'
           ? { verificationLevel: this.verificationLevel().id, explorerMode: this.explorerMode().id }
           : undefined,
-        targetSerial
+        deviceTarget
       )
       .subscribe({
         next: () => {
           this.isSubmitting.set(false);
+          this.agentService.fetchStatus?.();
           this.router.navigate(['/workspace']);
         },
         error: (err) => {

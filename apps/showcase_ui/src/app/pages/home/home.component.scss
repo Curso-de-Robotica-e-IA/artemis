@@ -4668,6 +4668,45 @@ $text-light: #94a3b8;
                 border-color: $card-border-hover;
               }
             }
+
+            .select-all-chip-btn {
+              display: inline-flex;
+              align-items: center;
+              gap: 5px;
+              padding: 0 10px;
+              height: 30px;
+              background: #f8fafc;
+              border: 1px dashed $card-border-hover;
+              border-radius: 8px;
+              font-family: inherit;
+              font-size: 12px;
+              font-weight: 600;
+              color: $text-secondary;
+              cursor: pointer;
+              transition: all 0.15s ease;
+
+              .chip-icon {
+                font-size: 15px;
+                color: $text-muted;
+              }
+
+              &.active {
+                background: $primary-light;
+                border-style: solid;
+                border-color: $primary;
+                color: $primary-dark;
+
+                .chip-icon {
+                  color: $primary;
+                }
+              }
+
+              &:hover:not(.active) {
+                background: #f1f5f9;
+                border-color: $text-muted;
+                color: $text-main;
+              }
+            }
           }
         }
 

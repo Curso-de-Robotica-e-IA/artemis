@@ -42,6 +42,41 @@ except ImportError:
 router = APIRouter(tags=["tasks"])
 
 
+def _resolve_requested_serials(request: RunRequest) -> list[str]:
+    """Return deduplicated target device serials preserving user selection order."""
+    serials: list[str] = []
+    seen: set[str] = set()
+    for raw in request.device_serials or []:
+        clean = str(raw or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            serials.append(clean)
+    if not serials and request.device_serial:
+        clean = str(request.device_serial).strip()
+        if clean:
+            serials.append(clean)
+    return serials
+
+
+def _raise_if_device_locked(device_probe: Any, target_serial: str | None) -> None:
+    """Abort task submission with HTTP 409 if the probed device is locked."""
+    if not device_probe or device_probe.summary not in {"Device Locked", "Lock State Unknown"}:
+        return
+    locked_serial = (
+        device_probe.metadata.get("active_device", {}).get("serial") or target_serial or ""
+    )
+    detail = (
+        f"Android device {locked_serial} is locked. Unlock it and enter the home screen before running a task.".replace(
+            "  ", " "
+        ).strip()
+        if device_probe.summary == "Device Locked"
+        else f"Android device {locked_serial} lock state could not be verified. Keep it unlocked on the home screen and try again.".replace(
+            "  ", " "
+        ).strip()
+    )
+    raise HTTPException(status_code=409, detail=detail)
+
+
 @router.get("/api/tasks/presets")
 async def get_task_presets(
     category: str = "recommended",
@@ -113,15 +148,56 @@ async def run_task(request: RunRequest):
                 "total_queued": len(state.queue_tasks),
             }
 
+    requested_serials = _resolve_requested_serials(request)
+
+    if len(requested_serials) > 1:
+        for explicit_serial in requested_serials:
+            try:
+                rejection = await device_pool.validate_explicit_serial_async(explicit_serial)
+            except Exception:
+                rejection = None
+            if rejection:
+                return {
+                    "status": "rejected",
+                    "error": rejection,
+                    "tasks": [],
+                    "enqueued_count": 0,
+                    "total_queued": len(state.queue_tasks),
+                }
+
+        for explicit_serial in requested_serials:
+            device_probe = await readiness_engine.run_device_submission_probe(
+                target_serial=explicit_serial
+            )
+            _raise_if_device_locked(device_probe, explicit_serial)
+
+        return await task_queue_service.enqueue_tasks(
+            incoming_goals,
+            profile=request.profile or "flash",
+            expected_output=request.expected_output,
+            enable_outputter=request.enable_outputter,
+            verification_level=request.verification_level,
+            explorer_mode=request.explorer_mode,
+            locked_app_package=request.locked_app_package,
+            app_path=request.app_path,
+            device_serial=requested_serials[0],
+            device_serials=requested_serials,
+            ingress=request.ingress or "frontend",
+            session_id=None,
+            conversation_id=request.conversation_id,
+        )
+
+    single_serial = requested_serials[0] if requested_serials else None
+
     # Reject an explicit unknown/offline target before running the more
     # expensive readiness probe. Besides producing a stable SDK response,
     # this avoids probing the currently active device for a serial that can
     # never be selected. Only a successful, non-empty enumeration may reject:
     # an indeterminate one (adb blip, startup) lets the submission queue and
     # fail downstream with a clear error instead.
-    if request.device_serial:
+    if single_serial:
         try:
-            rejection = await device_pool.validate_explicit_serial_async(request.device_serial)
+            rejection = await device_pool.validate_explicit_serial_async(single_serial)
         except Exception:
             rejection = None
         if rejection:
@@ -140,29 +216,16 @@ async def run_task(request: RunRequest):
     # With no explicit serial the probe itself resolves a live target (it
     # prefers the diagnostics target preference, then any unlocked ready
     # device); the verified serial is bound below.
-    target_serial = request.device_serial
+    target_serial = single_serial
     device_probe = await readiness_engine.run_device_submission_probe(target_serial=target_serial)
-    if device_probe and device_probe.summary in {"Device Locked", "Lock State Unknown"}:
-        locked_serial = (
-            device_probe.metadata.get("active_device", {}).get("serial") or target_serial or ""
-        )
-        detail = (
-            f"Android device {locked_serial} is locked. Unlock it and enter the home screen before running a task.".replace(
-                "  ", " "
-            ).strip()
-            if device_probe.summary == "Device Locked"
-            else f"Android device {locked_serial} lock state could not be verified. Keep it unlocked on the home screen and try again.".replace(
-                "  ", " "
-            ).strip()
-        )
-        raise HTTPException(status_code=409, detail=detail)
+    _raise_if_device_locked(device_probe, target_serial)
 
     if device_probe and device_probe.metadata.get("active_device"):
         verified_serial = device_probe.metadata["active_device"].get("serial")
         # Only auto-selected targets may be re-bound to the probed device. An
         # explicitly requested serial is never silently replaced -- if it is
         # invalid, enqueue_tasks rejects the submission with a clear error.
-        if verified_serial and not request.device_serial:
+        if verified_serial and not single_serial:
             target_serial = verified_serial
 
     return await task_queue_service.enqueue_tasks(

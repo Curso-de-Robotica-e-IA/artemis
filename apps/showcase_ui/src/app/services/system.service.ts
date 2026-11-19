@@ -166,7 +166,10 @@ export class SystemService {
   public blockerCount = computed(() => this.totalStepCount());
   public passedBlockerCount = computed(() => this.passedStepCount());
   public probes = computed(() => this.readinessReport()?.probes ?? []);
-  public selectedDeviceSerial = signal<string | null>(null);
+  public selectedDeviceSerials = signal<string[]>([]);
+  public selectedDeviceSerial = computed<string | null>(
+    () => this.selectedDeviceSerials()[0] ?? null
+  );
   public osType = computed<'linux' | 'darwin' | 'windows'>(() => {
     const raw = this.readinessReport()?.os_type;
     if (raw === 'windows' || raw === 'win32') return 'windows';
@@ -210,6 +213,23 @@ export class SystemService {
       }
     }
     return devices[0];
+  });
+
+  // Selected target devices preserving the user's execution order across 1..N devices
+  public selectedDevices = computed<DeviceInfo[]>(() => {
+    const devices = this.connectedDevices();
+    if (devices.length === 0) {
+      return [];
+    }
+    const bySerial = new Map(devices.map(d => [d.serial, d]));
+    const resolved: DeviceInfo[] = [];
+    for (const serial of this.selectedDeviceSerials()) {
+      const match = bySerial.get(serial);
+      if (match) {
+        resolved.push(match);
+      }
+    }
+    return resolved;
   });
 
   // Installed local AVD emulators from metadata
@@ -350,23 +370,38 @@ export class SystemService {
   }
 
   /**
-   * Keep the selected active device serial valid across device connects and disconnects.
+   * Prune disconnected serials and keep at least one connected target device selected.
    */
   private syncSelectedDevice(devices: DeviceInfo[], reportActiveSerial?: string | null): void {
-    const current = untracked(() => this.selectedDeviceSerial());
+    const current = untracked(() => this.selectedDeviceSerials());
     if (devices.length === 0) {
-      if (current !== null) {
-        this.selectedDeviceSerial.set(null);
+      if (current.length > 0) {
+        this.selectedDeviceSerials.set([]);
       }
       return;
     }
-    if (current && devices.some(d => d.serial === current)) {
+    const connectedSet = new Set(devices.map(d => d.serial));
+    const valid: string[] = [];
+    const seen = new Set<string>();
+    for (const serial of current) {
+      if (connectedSet.has(serial) && !seen.has(serial)) {
+        seen.add(serial);
+        valid.push(serial);
+      }
+    }
+    if (valid.length > 0) {
+      if (
+        valid.length !== current.length ||
+        valid.some((serial, idx) => current[idx] !== serial)
+      ) {
+        this.selectedDeviceSerials.set(valid);
+      }
       return;
     }
     const fallbackSerial =
-      (reportActiveSerial && devices.find(d => d.serial === reportActiveSerial)?.serial) ||
+      (reportActiveSerial && connectedSet.has(reportActiveSerial) ? reportActiveSerial : null) ||
       devices[0].serial;
-    this.selectedDeviceSerial.set(fallbackSerial);
+    this.selectedDeviceSerials.set([fallbackSerial]);
   }
 
   /**
@@ -607,7 +642,68 @@ export class SystemService {
    */
   public setSelectedDeviceSerial(serial: string | null): void {
     const cleaned = (serial || '').trim();
-    this.selectedDeviceSerial.set(cleaned || null);
+    this.selectedDeviceSerials.set(cleaned ? [cleaned] : []);
+  }
+
+  /**
+   * Replace the ordered list of selected target device serials.
+   */
+  public setSelectedDeviceSerials(serials: readonly string[]): void {
+    const connectedSet = new Set(this.connectedDevices().map(d => d.serial));
+    const next: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of serials) {
+      const cleaned = (raw || '').trim();
+      if (!cleaned || seen.has(cleaned)) {
+        continue;
+      }
+      if (connectedSet.size > 0 && !connectedSet.has(cleaned)) {
+        continue;
+      }
+      seen.add(cleaned);
+      next.push(cleaned);
+    }
+    this.selectedDeviceSerials.set(next);
+  }
+
+  /**
+   * Toggle selection of a connected device without allowing zero remaining devices.
+   */
+  public toggleDeviceSelection(serial: string): void {
+    const cleaned = (serial || '').trim();
+    if (!cleaned) {
+      return;
+    }
+    if (!this.connectedDevices().some(d => d.serial === cleaned)) {
+      return;
+    }
+    const current = this.selectedDeviceSerials();
+    if (current.includes(cleaned)) {
+      if (current.length <= 1) {
+        return;
+      }
+      this.selectedDeviceSerials.set(current.filter(s => s !== cleaned));
+      return;
+    }
+    this.selectedDeviceSerials.set([...current, cleaned]);
+  }
+
+  /**
+   * Select all connected devices in order, or reset back to the first connected device.
+   */
+  public toggleSelectAllDevices(): void {
+    const devices = this.connectedDevices();
+    if (devices.length === 0) {
+      this.selectedDeviceSerials.set([]);
+      return;
+    }
+    const current = this.selectedDeviceSerials();
+    const allSelected = devices.every(d => current.includes(d.serial));
+    if (allSelected) {
+      this.selectedDeviceSerials.set([devices[0].serial]);
+    } else {
+      this.selectedDeviceSerials.set(devices.map(d => d.serial));
+    }
   }
 
   /**

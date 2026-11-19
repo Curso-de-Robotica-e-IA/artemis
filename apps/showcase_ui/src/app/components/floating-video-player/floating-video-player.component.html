@@ -104,7 +104,8 @@ limitations under the License.
             <div class="live-stream-container">
               <img
                 class="live-screen-img"
-                [src]="liveStreamUrl()"
+                [attr.src]="liveFrameUrl()"
+                [attr.data-stream-url]="liveStreamUrl()"
                 (error)="onLiveStreamError()"
                 alt="Live Device Screen"
                 />
