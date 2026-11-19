@@ -474,6 +474,7 @@ def create_touch_api_app(
                 end=(req.end_nx, req.end_ny),
                 duration_ms=req.duration_ms,
             )
+            time.sleep(1)
             return _action_result_to_response(res)
         except (RuntimeError, OSError, ValueError, TimeoutError) as exc:
             return JSONResponse(

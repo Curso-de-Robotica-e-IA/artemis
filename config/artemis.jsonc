@@ -8,11 +8,11 @@
   // ------------------------------------------------------------------------------
   "default": {
     "provider": "ollama",
-    "model": "ornith-1.5:35b",
+    "model": "qwen3.8:27b",
     "thinking_level": "medium",
     "fallback": {
       "provider": "ollama",
-      "model": "ornith-1.5:35b",
+      "model": "qwen3.8:27b",
       "thinking_level": "medium"
     }
   },
