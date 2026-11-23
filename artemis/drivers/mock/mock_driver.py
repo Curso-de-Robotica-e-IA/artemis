@@ -124,6 +124,26 @@ class MockDeviceDriver(BaseDeviceDriver):
         )
         return True
 
+    async def drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        self.action_history.append(
+            {
+                "action": "drag",
+                "start": (start_x, start_y),
+                "end": (end_x, end_y),
+                "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+            }
+        )
+        return True
+
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],

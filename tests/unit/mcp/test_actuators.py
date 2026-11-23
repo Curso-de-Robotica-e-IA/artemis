@@ -75,6 +75,22 @@ async def test_swipe_reports_normalized_endpoints(actuator):
 
 
 @pytest.mark.asyncio
+async def test_drag_converts_normalized_and_reports_hold_ms(actuator):
+    res = await actuator.drag((200, 400), (800, 400), hold_ms=1500, duration_ms=500)
+    assert res.ok
+    assert res.message == "Dragged from [200, 400] to [800, 400] (normalized, held 1500ms)."
+    assert res.normalized_coordinates == [200, 400, 800, 400]
+    assert res.duration_ms == 500
+    assert actuator.action_history[-1] == {
+        "action": "drag",
+        "start": (200, 800),
+        "end": (800, 800),
+        "hold_ms": 1500,
+        "duration_ms": 500,
+    }
+
+
+@pytest.mark.asyncio
 async def test_press_key_forwards_unknown_keycode_to_driver(actuator):
     # Arbitrary keycodes (KEYCODE_* names, numeric codes) pass through to the driver,
     # matching the historical adb_server behavior of accepting any Android key event.

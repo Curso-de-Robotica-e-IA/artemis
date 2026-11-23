@@ -41,6 +41,7 @@ logger = get_logger(__name__)
 __all__ = [
     "DeviceConfigRequest",
     "DeviceConfigResponse",
+    "DragRequest",
     "EraseCharRequest",
     "FocusAndClearRequest",
     "InputTextRequest",
@@ -129,6 +130,17 @@ class SwipeRequest(BaseModel):
     start_ny: int = Field(..., ge=0, le=1000)
     end_nx: int = Field(..., ge=0, le=1000)
     end_ny: int = Field(..., ge=0, le=1000)
+    duration_ms: int = Field(default=400, ge=1)
+
+
+class DragRequest(BaseModel):
+    """Request payload for ``POST /drag``."""
+
+    start_nx: int = Field(..., ge=0, le=1000)
+    start_ny: int = Field(..., ge=0, le=1000)
+    end_nx: int = Field(..., ge=0, le=1000)
+    end_ny: int = Field(..., ge=0, le=1000)
+    hold_ms: int = Field(default=1000, ge=0)
     duration_ms: int = Field(default=400, ge=1)
 
 
@@ -482,6 +494,27 @@ def create_touch_api_app(
                 status_code=500,
             )
 
+    async def drag_endpoint(request: Request) -> JSONResponse:
+        try:
+            payload = await request.json()
+            req = DragRequest.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+            return _validation_error_response(exc)
+        try:
+            act = await _get_actuator()
+            res = await act.drag(
+                start=(req.start_nx, req.start_ny),
+                end=(req.end_nx, req.end_ny),
+                hold_ms=req.hold_ms,
+                duration_ms=req.duration_ms,
+            )
+            return _action_result_to_response(res)
+        except (RuntimeError, OSError, ValueError, TimeoutError) as exc:
+            return JSONResponse(
+                TouchActionResponse(ok=False, message=str(exc), error=str(exc)).model_dump(),
+                status_code=500,
+            )
+
     async def input_text_endpoint(request: Request) -> JSONResponse:
         try:
             payload = await request.json()
@@ -558,6 +591,7 @@ def create_touch_api_app(
         Route("/tap-sequence", tap_sequence_endpoint, methods=["POST"]),
         Route("/long-press", long_press_endpoint, methods=["POST"]),
         Route("/swipe", swipe_endpoint, methods=["POST"]),
+        Route("/drag", drag_endpoint, methods=["POST"]),
         Route("/input-text", input_text_endpoint, methods=["POST"]),
         Route("/focus-and-clear", focus_and_clear_endpoint, methods=["POST"]),
         Route("/erase-char", erase_char_endpoint, methods=["POST"]),

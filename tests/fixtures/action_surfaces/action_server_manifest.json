@@ -562,6 +562,126 @@
       "type": "object"
     }
   },
+  "drag": {
+    "description": "Press and hold at a 0-1000 normalized start [x, y] coordinate, then drag continuously to an end [x, y] coordinate without lifting.",
+    "inputSchema": {
+      "properties": {
+        "start": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Start",
+          "type": "array"
+        },
+        "end": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "End",
+          "type": "array"
+        },
+        "hold_ms": {
+          "default": 1000,
+          "title": "Hold Ms",
+          "type": "integer"
+        },
+        "duration_ms": {
+          "default": 400,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "dragArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "ActionCode": {
+          "description": "Machine-readable outcome classification for a device action.",
+          "enum": [
+            "OK",
+            "INVALID_ARGS",
+            "TARGET_NOT_FOUND",
+            "DEVICE_ERROR",
+            "PACKAGE_NOT_FOUND",
+            "TIMEOUT",
+            "UNSUPPORTED"
+          ],
+          "title": "ActionCode",
+          "type": "string"
+        }
+      },
+      "description": "Outcome of one device action, independent of any transport or agent.",
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/ActionCode"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "normalized_coordinates": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalized Coordinates"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        }
+      },
+      "required": [
+        "ok",
+        "code",
+        "action",
+        "message"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    }
+  },
   "press_key": {
     "description": "Press a device key (home, back, enter, delete, tab, search, menu, app_switch).",
     "inputSchema": {

@@ -811,6 +811,7 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
     """Failure contexts describe what the agent tried to do, not an outcome."""
     from artemis.utils.task_tree import (
         action_intent_phrase,
+        format_action_clean,
         format_action_intent,
         format_incident_clean,
     )
@@ -825,6 +826,30 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
         == "tap 'Wi-Fi row' (self-described) at [500, 520]"
     )
     assert format_action_intent({"action": "swipe", "direction": "up"}) == "swipe up"
+    assert (
+        format_action_intent(
+            {
+                "action": "drag",
+                "coordinates": [200, 400, 800, 400],
+                "hold_ms": 1500,
+                "duration_ms": 500,
+                "target_text": "Chrome",
+            }
+        )
+        == "drag 'Chrome' from [200, 400] to [800, 400] (held 1500ms) over 500ms"
+    )
+    assert (
+        format_action_clean(
+            {
+                "action": "drag",
+                "args": {"start": 1, "end": [800, 400], "hold_ms": 1500, "duration_ms": 500},
+                "normalized_start_coordinates": [500, 520],
+                "normalized_end_coordinates": [800, 400],
+                "target_text": "Wi-Fi",
+            }
+        )
+        == "Dragged 'Wi-Fi' from [500, 520] to [800, 400] (held 1500ms) over 500ms"
+    )
     assert (
         format_action_intent(
             {

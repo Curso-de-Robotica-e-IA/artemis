@@ -162,6 +162,21 @@ async def test_touch_routes_delegation(
             assert res_sw.ok
             assert "[500, 800] to [500, 200]" in res_sw.message
 
+            # 5. Drag (/drag)
+            res_drag = await actuator.drag((250, 400), (750, 400), hold_ms=1500, duration_ms=500)
+            assert res_drag.ok
+            assert "[250, 400] to [750, 400]" in res_drag.message
+            assert "held 1500ms" in res_drag.message
+            assert res_drag.normalized_coordinates == [250, 400, 750, 400]
+            assert res_drag.duration_ms == 500
+            assert mock_underlying_actuator.action_history[-1] == {
+                "action": "drag",
+                "start": (270, 960),
+                "end": (810, 960),
+                "hold_ms": 1500,
+                "duration_ms": 500,
+            }
+
 
 @pytest.mark.asyncio
 async def test_text_and_key_routes(
@@ -211,6 +226,16 @@ async def test_touch_api_validation_and_error_handling(touch_app):
         assert resp_invalid.status_code == 422
         data_invalid = resp_invalid.json()
         assert data_invalid["ok"] is False
+
+        # Invalid drag payloads should return 422
+        for bad_drag in (
+            {"start_nx": 1001, "start_ny": 500, "end_nx": 500, "end_ny": 500},
+            {"start_nx": 200, "start_ny": 500, "end_nx": 500, "end_ny": 500, "hold_ms": -10},
+            {"start_nx": 200, "start_ny": 500, "end_nx": 500, "end_ny": 500, "duration_ms": 0},
+        ):
+            resp_bad_drag = await http_client.post("/drag", json=bad_drag)
+            assert resp_bad_drag.status_code == 422
+            assert resp_bad_drag.json()["ok"] is False
 
         # Failure querying screen size in /device should return 500
         with patch(

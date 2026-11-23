@@ -185,6 +185,20 @@ class McpActionExecutor:
                     # coordinates of an index target (the model named an index,
                     # not a point).
                     target_coordinates = wire_args.get("target")
+                elif raw_name == "drag":
+                    s_pt, e_pt = wire_args.get("start"), wire_args.get("end")
+                    if (
+                        isinstance(s_pt, list)
+                        and len(s_pt) == 2
+                        and isinstance(e_pt, list)
+                        and len(e_pt) == 2
+                    ):
+                        target_coordinates = [
+                            int(s_pt[0]),
+                            int(s_pt[1]),
+                            int(e_pt[0]),
+                            int(e_pt[1]),
+                        ]
                 extension = raw_name not in (REQUIRED_ACTIONS | OPTIONAL_ACTIONS)
 
                 if extension:
@@ -364,6 +378,9 @@ class McpActionExecutor:
 
         if raw_name == "swipe":
             return self._translate_swipe(args, state, index_elements=index_elements)
+
+        if raw_name == "drag":
+            return self._translate_drag(args, state, index_elements=index_elements)
 
         if raw_name == "press_key":
             return "press_key", {"key": args.get("key", "BACK")}, None, {}
@@ -631,6 +648,75 @@ class McpActionExecutor:
             )
 
         raise _ArgError(f"Error during swipe: Invalid direction: {args}")
+
+    def _resolve_endpoint(
+        self,
+        raw: Any,
+        label: str,
+        state: Any,
+        *,
+        index_elements: list[dict[str, Any]] | None = None,
+    ) -> list[int]:
+        """Resolves a destination point (element index or normalized [x, y]) without
+        requiring a separate description."""
+        target = normalize_coordinate_target(raw)
+        if isinstance(target, bool):
+            target = None
+        if isinstance(target, (int, float)):
+            coords, _ = self._resolve_index(
+                int(target), label, state, index_elements=index_elements
+            )
+            return coords
+        if isinstance(target, (list, tuple)) and len(target) == 2:
+            return [int(target[0]), int(target[1])]
+        raise _ArgError(
+            f"Error during {label}: Invalid end target format: {raw!r}. Use an element"
+            " index from the Visible UI Elements list (e.g. 7) or normalized [x, y]"
+            " coordinates."
+        )
+
+    def _translate_drag(
+        self,
+        args: dict[str, Any],
+        state: Any,
+        *,
+        index_elements: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
+        start_norm, recorded = self._resolve_target(
+            args.get("start"),
+            "drag",
+            args,
+            state,
+            index_elements=index_elements,
+        )
+        end_norm = self._resolve_endpoint(
+            args.get("end"),
+            "drag",
+            state,
+            index_elements=index_elements,
+        )
+        raw_hold = args.get("hold_ms", args.get("hold_duration", 1000))
+        raw_dur = args.get("duration_ms", args.get("duration", 400))
+        try:
+            hold_ms = int(1000 if raw_hold is None else raw_hold)
+            duration_ms = int(400 if raw_dur is None else raw_dur)
+        except (ValueError, TypeError) as exc:
+            raise _ArgError(f"Error during drag: Invalid hold_ms or duration_ms: {exc}") from exc
+        if hold_ms < 0:
+            raise _ArgError(f"Error during drag: hold_ms must be >= 0, got {hold_ms}.")
+        if duration_ms < 1:
+            raise _ArgError(f"Error during drag: duration_ms must be >= 1, got {duration_ms}.")
+        return (
+            "drag",
+            {
+                "start": start_norm,
+                "end": end_norm,
+                "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+            },
+            None,
+            recorded,
+        )
 
     # --- Non-device tools (stay agent-side) ------------------------------------------
 

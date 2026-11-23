@@ -107,6 +107,21 @@ class UnifiedMobileControllerBase:
         success = await self._driver.swipe(start_x, start_y, end_x, end_y, duration_ms=duration)
         return None if success else f"Swipe failed from ({start_x},{start_y}) to ({end_x},{end_y})"
 
+    async def drag_coords(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration: int = 400,
+    ) -> str | None:
+        """Press, hold, and drag continuously between two coordinate points."""
+        success = await self._driver.drag(
+            start_x, start_y, end_x, end_y, hold_ms=hold_ms, duration_ms=duration
+        )
+        return None if success else f"Drag failed from ({start_x},{start_y}) to ({end_x},{end_y})"
+
     async def type_text(self, text: str, clear_existing: bool = True) -> bool:
         return await self._driver.input_text(text, clear_existing=clear_existing)
 

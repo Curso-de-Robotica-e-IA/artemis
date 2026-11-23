@@ -1347,6 +1347,79 @@ class OperatorNode:
                 }
             ], None
 
+        elif tool_name == "drag":
+            start_arg = args.get("start")
+            end_arg = args.get("end")
+            start_el, err = resolve_target_element(start_arg, args.get("target_description"))
+            if err:
+                return [], err
+
+            # Destination can be an element index or normalized [x, y] without requiring a description.
+            end_center: list[int] | None = None
+            if isinstance(end_arg, (int, float)) and not isinstance(end_arg, bool):
+                end_idx = int(end_arg)
+                indexed_elements = getattr(state, "indexed_elements", None) or []
+                if 1 <= end_idx <= len(indexed_elements):
+                    end_center = indexed_elements[end_idx - 1].get("center")
+                else:
+                    return (
+                        [],
+                        (
+                            f"Error: Invalid drag end index {end_idx}. Active"
+                            f" index range is 1 to {len(indexed_elements)}."
+                        ),
+                    )
+            elif isinstance(end_arg, (list, tuple)) and len(end_arg) == 2:
+                try:
+                    ex_n, ey_n = map(float, end_arg)
+                    end_center = [
+                        int(max(0, min(width - 1, ex_n * width / 1000))),
+                        int(max(0, min(height - 1, ey_n * height / 1000))),
+                    ]
+                except (ValueError, TypeError):
+                    return [], f"Error: Invalid drag end coordinates {end_arg}."
+            else:
+                return (
+                    [],
+                    (
+                        f"Error: Invalid drag end parameter {end_arg}. Must be index"
+                        " (int) or normalized coordinates [x, y]."
+                    ),
+                )
+
+            if not (isinstance(end_center, (list, tuple)) and len(end_center) == 2):
+                return [], f"Error: Drag end target {end_arg} has no usable center."
+
+            raw_hold = args.get("hold_ms", args.get("hold_duration", 1000))
+            raw_dur = args.get("duration_ms", args.get("duration", 400))
+            try:
+                hold_ms = int(1000 if raw_hold is None else raw_hold)
+                duration_ms = int(400 if raw_dur is None else raw_dur)
+            except (ValueError, TypeError):
+                return [], "Error: 'hold_ms' and 'duration_ms' must be integers."
+            if hold_ms < 0:
+                return [], f"Error: 'hold_ms' must be >= 0, got {hold_ms}."
+            if duration_ms < 1:
+                return [], f"Error: 'duration_ms' must be >= 1, got {duration_ms}."
+
+            x1, y1 = int(start_el["center"][0]), int(start_el["center"][1])
+            x2, y2 = int(end_center[0]), int(end_center[1])
+            nx1, ny1 = int(round(x1 * 1000.0 / width)), int(round(y1 * 1000.0 / height))
+            nx2, ny2 = int(round(x2 * 1000.0 / width)), int(round(y2 * 1000.0 / height))
+            return [
+                {
+                    "action": "drag",
+                    "coordinates": [x1, y1, x2, y2],
+                    COORDINATE_SPACE_KEY: COORDINATE_SPACE_PIXEL,
+                    "normalized_coordinates": [nx1, ny1, nx2, ny2],
+                    "normalized_start_coordinates": [nx1, ny1],
+                    "normalized_end_coordinates": [nx2, ny2],
+                    "hold_ms": hold_ms,
+                    "duration_ms": duration_ms,
+                    **target_fields(start_el),
+                }
+            ], None
+
         elif tool_name == "press_key":
             key = args.get("key") or args.get("keycode")
             if not key:

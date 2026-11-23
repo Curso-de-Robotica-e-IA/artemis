@@ -33,6 +33,7 @@ OPERATOR_DEVICE_TOOLS = (
     "click",
     "input_text",
     "swipe",
+    "drag",
     "press_key",
     "manage_app",
     "wait_for_delay",
@@ -131,10 +132,12 @@ def test_reduced_enums_stay_well_formed():
         available_tools=OPERATOR_PROMPT_TOOLSET - {"manage_app", "wait_for_delay"},
     )
     assert (
-        "Physical device actions (`click`, `input_text`, `swipe`, `press_key`, `long_press`)" in out
+        "Physical device actions (`click`, `input_text`, `swipe`, `drag`, `press_key`, `long_press`)"
+        in out
     )
     assert (
-        "Turn-Ending Action (`click`, `swipe`, `input_text`, `long_press`, or `press_key`)" in out
+        "Turn-Ending Action (`click`, `swipe`, `drag`, `input_text`, `long_press`, or `press_key`)"
+        in out
     )
 
 
@@ -143,11 +146,11 @@ def test_full_set_enum_slots_render_verbatim():
     template = load_operator_prompts()["main_template"]
     out = apply_operator_prompt_contract(template)
     assert (
-        "Physical device actions (`click`, `input_text`, `swipe`, `press_key`,"
+        "Physical device actions (`click`, `input_text`, `swipe`, `drag`, `press_key`,"
         " `manage_app`, `wait_for_delay`, `long_press`)" in out
     )
     assert (
-        "Turn-Ending Action (`click`, `swipe`, `input_text`, `long_press`,"
+        "Turn-Ending Action (`click`, `swipe`, `drag`, `input_text`, `long_press`,"
         " `press_key`, `manage_app`, or `wait_for_delay`)" in out
     )
     assert "Helper/Subagent tools (`ask_explorer`, `ask_diagnoser`, `video_analyzer`)" in out
@@ -170,14 +173,21 @@ def _render_flash(available_tools: frozenset[str]) -> str:
     return Template(template_text).render(goal="test goal", available_tools=available_tools)
 
 
-FLASH_FULL = frozenset({"manage_app", "wait_for_delay", "click_sequence", "click", "swipe"})
+FLASH_FULL = frozenset({"manage_app", "wait_for_delay", "click_sequence", "click", "swipe", "drag"})
 
 
 def test_flash_full_set_keeps_both_segments():
     out = _render_flash(FLASH_FULL)
     assert "**App Launching**" in out
     assert "**Timed Waiting & Transitions**" in out
+    assert "**Press-Hold-and-Drag (`drag`)**" in out
     assert "{%" not in out
+
+
+def test_flash_without_drag_drops_drag_guidance():
+    out = _render_flash(FLASH_FULL - {"drag"})
+    assert "**Press-Hold-and-Drag" not in out
+    assert not _tool_refs(out, "drag")
 
 
 def test_flash_without_manage_app_drops_app_launching():

@@ -224,6 +224,38 @@ class HttpTouchActuator(AdbActuator):
             object.__setattr__(res, "duration_ms", duration_ms)
         return res
 
+    async def drag(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        if err := await self._ensure_device_configured():
+            return err
+        effective_timeout = max(self.timeout_s, (max(0, hold_ms) + max(0, duration_ms)) / 1000.0 + 10.0)
+        res = await self._post(
+            "/drag",
+            {
+                "start_nx": start[0],
+                "start_ny": start[1],
+                "end_nx": end[0],
+                "end_ny": end[1],
+                "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+            },
+            action="drag",
+            timeout_s=effective_timeout,
+        )
+        if res.ok:
+            object.__setattr__(
+                res,
+                "normalized_coordinates",
+                [int(start[0]), int(start[1]), int(end[0]), int(end[1])],
+            )
+            object.__setattr__(res, "duration_ms", duration_ms)
+        return res
+
     async def input_text(
         self,
         text: str,

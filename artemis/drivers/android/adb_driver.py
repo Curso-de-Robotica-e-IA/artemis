@@ -20,7 +20,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
-from adbutils import AdbClient, AdbDevice
+from adbutils import AdbClient, AdbDevice, AdbError
 from artemis.config.paths import get_temp_dir
 from artemis.drivers.base import BaseDeviceDriver, KeyCode, ScreenData, SwipeDirection
 from artemis.toolchain import find_ffmpeg, find_scrcpy
@@ -302,6 +302,63 @@ class AndroidAdbDriver(BaseDeviceDriver):
             return True
         except Exception as e:
             logger.error(f"Swipe failed from ({start_x},{start_y}) to ({end_x},{end_y}): {e}")
+            return False
+
+    async def drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Performs a continuous press-hold-drag-release gesture via ADB motionevent.
+
+        Falls back to ``input draganddrop`` on older Android builds where
+        ``input motionevent`` is unavailable.
+        """
+        hold_ms = max(0, int(hold_ms))
+        duration_ms = max(1, int(duration_ms))
+        steps = max(2, min(15, max(1, duration_ms // 50)))
+        step_delay_s = (duration_ms / 1000.0) / steps
+
+        parts = [f"input motionevent DOWN {start_x} {start_y}"]
+        if hold_ms > 0:
+            parts.append(f"sleep {hold_ms / 1000.0:.3f}")
+        for i in range(1, steps + 1):
+            t = i / steps
+            mx = round(start_x + (end_x - start_x) * t)
+            my = round(start_y + (end_y - start_y) * t)
+            parts.append(f"input motionevent MOVE {mx} {my}")
+            if step_delay_s >= 0.005:
+                parts.append(f"sleep {step_delay_s:.3f}")
+        parts.append(f"input motionevent UP {end_x} {end_y}")
+        cmd = " && ".join(parts)
+
+        try:
+            logger.info(
+                f"[ADB] drag ({start_x},{start_y}) -> ({end_x},{end_y})"
+                f" hold={hold_ms}ms duration={duration_ms}ms ({steps} steps)"
+            )
+            out = await asyncio.to_thread(self.device.shell, cmd)
+            out_lower = str(out or "").lower()
+            if "unknown command" in out_lower or "usage:" in out_lower or "error:" in out_lower:
+                fallback_cmd = (
+                    f"input draganddrop {start_x} {start_y} {end_x} {end_y} {duration_ms}"
+                )
+                logger.warning(
+                    f"[ADB] 'input motionevent' unsupported ({str(out).strip()}); "
+                    f"falling back to: {fallback_cmd}"
+                )
+                fallback_out = await asyncio.to_thread(self.device.shell, fallback_cmd)
+                fb_lower = str(fallback_out or "").lower()
+                if "unknown command" in fb_lower or "usage:" in fb_lower or "error:" in fb_lower:
+                    logger.error(f"Drag fallback failed: {str(fallback_out).strip()}")
+                    return False
+            return True
+        except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
+            logger.error(f"Drag failed from ({start_x},{start_y}) to ({end_x},{end_y}): {e}")
             return False
 
     async def swipe_direction(

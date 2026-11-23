@@ -57,7 +57,7 @@ py = round((ny / 1000.0) * screen_height)
 
 ### 2.2. Formato Padrão de Resposta (`TouchActionResponse`)
 
-Todas as rotas de ação (`POST /tap`, `/tap-sequence`, `/long-press`, `/swipe`, `/input-text`, `/focus-and-clear`, `/erase-char`, `/press-key`) **devem** retornar um JSON com a seguinte estrutura:
+Todas as rotas de ação (`POST /tap`, `/tap-sequence`, `/long-press`, `/swipe`, `/drag`, `/input-text`, `/focus-and-clear`, `/erase-char`, `/press-key`) **devem** retornar um JSON com a seguinte estrutura:
 
 ```json
 {
@@ -335,7 +335,48 @@ Executa um gesto linear de arraste/deslize do ponto inicial `(start_nx, start_ny
 
 ---
 
-### 3.7. `POST /input-text` — Digitação de Texto (`InputTextRequest`)
+### 3.7. `POST /drag` — Pressionar, Segurar e Arrastar (`DragRequest`)
+
+Pressiona e mantém o toque na coordenada inicial `(start_nx, start_ny)` durante `hold_ms` milissegundos e, **sem soltar o dedo**, arrasta continuamente até `(end_nx, end_ny)` em `duration_ms` milissegundos (comportamento real de *click-and-drag* / *drag-and-drop*, como mover ícones na tela inicial, arrastar widgets ou reordenar listas).
+
+- **Método:** `POST`
+- **Rota:** `/drag`
+
+**Campos do Request JSON (`DragRequest`):**
+
+| Campo | Tipo | Obrigatório | Padrão | Restrições | Descrição |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `start_nx` | `int` | Sim | — | `0 <= start_nx <= 1000` | Coordenada X inicial normalizada (onde segurar). |
+| `start_ny` | `int` | Sim | — | `0 <= start_ny <= 1000` | Coordenada Y inicial normalizada (onde segurar). |
+| `end_nx` | `int` | Sim | — | `0 <= end_nx <= 1000` | Coordenada X final normalizada (onde soltar). |
+| `end_ny` | `int` | Sim | — | `0 <= end_ny <= 1000` | Coordenada Y final normalizada (onde soltar). |
+| `hold_ms` | `int` | Não | `1000` | `>= 0` | Tempo em milissegundos segurando no ponto inicial antes de iniciar o movimento. |
+| `duration_ms` | `int` | Não | `400` | `>= 1` | Duração do movimento de arraste em milissegundos após o tempo de espera inicial. |
+
+**Exemplo de Request:**
+```json
+{
+  "start_nx": 250,
+  "start_ny": 400,
+  "end_nx": 750,
+  "end_ny": 400,
+  "hold_ms": 1500,
+  "duration_ms": 500
+}
+```
+
+**Exemplo de Response (`200 OK`):**
+```json
+{
+  "ok": true,
+  "message": "Dragged from [250, 400] to [750, 400] (normalized, held 1500ms).",
+  "error": null
+}
+```
+
+---
+
+### 3.8. `POST /input-text` — Digitação de Texto (`InputTextRequest`)
 
 Insere texto no campo atualmente em foco no dispositivo.
 
@@ -368,7 +409,7 @@ Insere texto no campo atualmente em foco no dispositivo.
 
 ---
 
-### 3.8. `POST /focus-and-clear` — Focar e Limpar Campo de Texto (`FocusAndClearRequest`)
+### 3.9. `POST /focus-and-clear` — Focar e Limpar Campo de Texto (`FocusAndClearRequest`)
 
 Toca no campo localizado em `(nx, ny)` para focá-lo e apaga todo o conteúdo de texto existente nele.
 
@@ -401,7 +442,7 @@ Toca no campo localizado em `(nx, ny)` para focá-lo e apaga todo o conteúdo de
 
 ---
 
-### 3.9. `POST /erase-char` — Apagar Caractere(s) (`EraseCharRequest`)
+### 3.10. `POST /erase-char` — Apagar Caractere(s) (`EraseCharRequest`)
 
 Envia o comando de apagar caractere (`KEYCODE_DEL` / Backspace) uma ou mais vezes no campo em foco. Aceita corpo vazio `{}` (assumindo `times=1`).
 
@@ -432,7 +473,7 @@ Envia o comando de apagar caractere (`KEYCODE_DEL` / Backspace) uma ou mais veze
 
 ---
 
-### 3.10. `POST /press-key` — Pressionar Tecla do Sistema (`PressKeyRequest`)
+### 3.11. `POST /press-key` — Pressionar Tecla do Sistema (`PressKeyRequest`)
 
 Aciona uma tecla física/sistema do dispositivo.
 
@@ -467,7 +508,7 @@ Aciona uma tecla física/sistema do dispositivo.
 
 Ao criar uma nova implementação da Touch API (por exemplo, para controlar outro sistema operacional, hardware embarcado ou dispositivo via protocolo proprietário):
 
-1. **Implemente todas as rotas acima** (`GET /health`, `POST /device`, `POST /tap`, `POST /tap-sequence`, `POST /long-press`, `POST /swipe`, `POST /input-text`, `POST /focus-and-clear`, `POST /erase-char`, `POST /press-key`).
+1. **Implemente todas as rotas acima** (`GET /health`, `POST /device`, `POST /tap`, `POST /tap-sequence`, `POST /long-press`, `POST /swipe`, `POST /drag`, `POST /input-text`, `POST /focus-and-clear`, `POST /erase-char`, `POST /press-key`).
 2. **Valide os limites de coordenadas (`0..1000`)**: retorne status `422` com `{"ok": false, "message": "...", "error": "..."}` caso receba valores fora do intervalo.
 3. **Converta de `0..1000` para a unidade nativa do seu atuador**: utilize a resolução obtida/configurada para transformar `(nx, ny)` em pixels, milímetros ou passos de motor.
 4. **Respeite o formato `TouchActionResponse`**: sempre retorne um objeto JSON contendo `"ok"` (`bool`), `"message"` (`str`) e `"error"` (`str | null`).

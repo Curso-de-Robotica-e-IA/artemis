@@ -82,6 +82,14 @@ class Actuator(Protocol):
         duration_ms: int = 400,
     ) -> ActionResult: ...
 
+    async def drag(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> ActionResult: ...
+
     async def press_key(self, key: str) -> ActionResult: ...
 
     async def manage_app(self, action: str, app_name: str) -> ActionResult: ...

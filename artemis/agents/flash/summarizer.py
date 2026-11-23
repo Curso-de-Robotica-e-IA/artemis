@@ -329,15 +329,25 @@ class VisualStepSummarizer(StepMemoryService):
         own_verb = args.pop("action", None)
         if own_verb is not None and own_verb != action_name:
             args.setdefault("intent", own_verb)
-        # Flash's coordinate swipe names its points ``start``/``end``; the
+        # Flash's coordinate swipe/drag names its points ``start``/``end``; the
         # history renderer reads ``start_coordinates``/``end_coordinates``.
-        if action_name == "swipe":
+        if action_name in ("swipe", "drag"):
             raw = args.get("args") if isinstance(args.get("args"), dict) else {}
             start = args.get("start", raw.get("start"))
             end = args.get("end", raw.get("end"))
-            if start is not None and end is not None:
+            if (
+                isinstance(start, (list, tuple))
+                and len(start) == 2
+                and isinstance(end, (list, tuple))
+                and len(end) == 2
+            ):
                 args.setdefault("start_coordinates", start)
                 args.setdefault("end_coordinates", end)
+            if action_name == "drag":
+                if "hold_ms" not in args and raw.get("hold_ms") is not None:
+                    args["hold_ms"] = raw["hold_ms"]
+                if "duration_ms" not in args and raw.get("duration_ms") is not None:
+                    args["duration_ms"] = raw["duration_ms"]
         try:
             first = {**args, "action": action_name}
             actions = [first, *extra] if isinstance(extra, list) and extra else first

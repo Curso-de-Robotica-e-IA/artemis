@@ -251,6 +251,29 @@ class AdbActuator:
             duration_ms=duration_ms,
         )
 
+    async def drag(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        nx1, ny1 = start
+        nx2, ny2 = end
+        px1, py1 = self._to_px(nx1, ny1)
+        px2, py2 = self._to_px(nx2, ny2)
+        err = await self.controller.drag_coords(
+            px1, py1, px2, py2, hold_ms=hold_ms, duration=duration_ms
+        )
+        if err:
+            return ActionResult.failure("drag", f"Error dragging: {err}", detail=str(err))
+        return ActionResult.success(
+            "drag",
+            f"Dragged from [{nx1}, {ny1}] to [{nx2}, {ny2}] (normalized, held {hold_ms}ms).",
+            normalized_coordinates=[int(nx1), int(ny1), int(nx2), int(ny2)],
+            duration_ms=duration_ms,
+        )
+
     async def press_key(self, key: str) -> ActionResult:
         key_str = str(key).lower()
         if not key_str:

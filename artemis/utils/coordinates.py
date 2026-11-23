@@ -535,6 +535,7 @@ def normalize_step_actions(step_dict: dict[str, Any]) -> dict[str, Any]:
         "long_press",
         "input_text",
         "swipe",
+        "drag",
         "press_key",
         "object_detection",
         "manage_app",

@@ -679,6 +679,13 @@ class FlashRunner:
             isinstance(resolved, (list, tuple)) and len(resolved) == 2
         ):
             return [int(resolved[0]), int(resolved[1])], None, None
+        if name == "drag":
+            if isinstance(resolved, (list, tuple)) and len(resolved) == 4:
+                norm_coords = [int(v) for v in resolved]
+                return norm_coords, norm_coords[:2], norm_coords[2:]
+            kind, target_val, _ = parse_swipe_parameters(args)
+            if kind == "coords" and isinstance(target_val, list) and len(target_val) == 4:
+                return target_val, target_val[:2], target_val[2:]
         if name == "swipe":
             kind, target_val, _ = parse_swipe_parameters(args)
             if kind == "coords" and isinstance(target_val, list) and len(target_val) == 4:

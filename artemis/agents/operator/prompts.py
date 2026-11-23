@@ -84,6 +84,7 @@ _PHYSICAL_ACTIONS_ORDER = OPERATOR_SHELL_ORDER
 _TURN_ENDING_ORDER = (
     "click",
     "swipe",
+    "drag",
     "input_text",
     "long_press",
     "press_key",

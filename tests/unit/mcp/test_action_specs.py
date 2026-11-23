@@ -83,6 +83,7 @@ def test_tool_declarations_match_fixture():
         "LONG_PRESS_TOOL": "long_press",
         "INPUT_TEXT_TOOL": "input_text",
         "SWIPE_TOOL": "swipe",
+        "DRAG_TOOL": "drag",
         "PRESS_KEY_TOOL": "press_key",
         "MANAGE_APP_TOOL": "manage_app",
         "WAIT_FOR_DELAY_TOOL": "wait_for_delay",
@@ -121,6 +122,7 @@ def test_validator_declaration_order_is_stable():
         "long_press",
         "input_text",
         "swipe",
+        "drag",
         "press_key",
         "read_note",
         "list_notes",
@@ -185,7 +187,7 @@ def test_point_targets_accept_an_index_or_coordinates_in_both_profiles():
 
 
 def test_shared_descriptions_are_identical_between_profiles():
-    for name in ("swipe", "press_key", "manage_app", "wait_for_delay"):
+    for name in ("swipe", "drag", "press_key", "manage_app", "wait_for_delay"):
         assert tool_declaration(name).description == operator_shell_tool(name).description
 
 

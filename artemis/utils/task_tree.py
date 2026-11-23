@@ -138,6 +138,37 @@ def format_action_clean(action_obj) -> str:
         dragged = _target_label(action_obj, fallback="")
         dragged_str = f" {dragged}" if dragged else ""
         return f"Swiped{dragged_str} from {start_coords} to {end_coords}{duration_str}"
+    elif act_type == "drag":
+        raw_args = action_obj.get("args") if isinstance(action_obj.get("args"), dict) else {}
+        hold_ms = action_obj.get("hold_ms")
+        if hold_ms is None:
+            hold_ms = raw_args.get("hold_ms")
+        duration = (
+            action_obj.get("duration_ms")
+            or action_obj.get("duration")
+            or raw_args.get("duration_ms")
+            or raw_args.get("duration")
+        )
+        hold_str = f" (held {hold_ms}ms)" if hold_ms is not None else ""
+        duration_str = f" over {duration}ms" if duration else ""
+
+        start_coords = action_obj.get("start_coordinates")
+        end_coords = action_obj.get("end_coordinates")
+        if (not start_coords or not end_coords) and "coordinates" in action_obj:
+            coords_list = action_obj.get("coordinates")
+            if isinstance(coords_list, list) and len(coords_list) == 4:
+                start_coords = coords_list[:2]
+                end_coords = coords_list[2:]
+        if not start_coords or not end_coords:
+            start_coords = action_obj.get("normalized_start_coordinates")
+            end_coords = action_obj.get("normalized_end_coordinates")
+        if not start_coords:
+            start_coords = action_obj.get("start") or raw_args.get("start")
+        if not end_coords:
+            end_coords = action_obj.get("end") or raw_args.get("end")
+        dragged = _target_label(action_obj, fallback="")
+        dragged_str = f" {dragged}" if dragged else ""
+        return f"Dragged{dragged_str} from {start_coords} to {end_coords}{hold_str}{duration_str}"
     elif act_type == "press_key":
         return f"Pressed key '{keycode}'"
     elif act_type == "launch_app":
@@ -231,6 +262,7 @@ _INTENT_PREFIXES: tuple[tuple[str, str], ...] = (
     ("Tapped ", "tap "),
     ("Inputted ", "type "),
     ("Swiped ", "swipe "),
+    ("Dragged ", "drag "),
     ("Pressed key ", "press key "),
     ("Launched app ", "launch app "),
     ("Stopped app ", "stop app "),
@@ -410,6 +442,7 @@ def format_tool_call_clean(
         "click_sequence",
         "tap_sequence",
         "swipe",
+        "drag",
         "input_text",
         "focus_and_input_text",
         "press_key",
@@ -465,6 +498,11 @@ def format_tool_call_clean(
             "time_in_ms": args.get("time_in_ms"),
             "duration": (args.get("duration") or args.get("duration_ms") or args.get("time_in_ms")),
             "duration_ms": args.get("duration_ms"),
+            "hold_ms": args.get("hold_ms"),
+            "start": args.get("start"),
+            "end": args.get("end"),
+            "start_coordinates": args.get("start_coordinates"),
+            "end_coordinates": args.get("end_coordinates"),
             "times": args.get("times") or args.get("click_times"),
             "click_times": args.get("click_times"),
             "direction": args.get("direction") or args.get("action_direction"),
@@ -520,6 +558,8 @@ def format_tool_call_clean(
                 "Error during click: ",
                 "Swipe failed: ",
                 "Error during swipe: ",
+                "Error during drag: ",
+                "Error dragging: ",
                 "Error executing key press: ",
                 "Error executing app launch: ",
                 "Error launching app: ",
@@ -819,6 +859,7 @@ def _render_step_detailed(
         ACTION_TOOLS = {
             "click",
             "swipe",
+            "drag",
             "input_text",
             "press_key",
             "long_press",

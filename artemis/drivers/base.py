@@ -140,6 +140,19 @@ class BaseDeviceDriver(ABC):
         ...
 
     @abstractmethod
+    async def drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Performs a press-and-hold followed by a continuous drag to end pixel coordinates."""
+        ...
+
+    @abstractmethod
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],
@@ -223,6 +236,21 @@ class BaseDeviceDriver(ABC):
         ex = int(max(0, min(width - 1, end_norm[0] * width / 1000.0)))
         ey = int(max(0, min(height - 1, end_norm[1] * height / 1000.0)))
         return await self.swipe(sx, sy, ex, ey, duration_ms=duration_ms)
+
+    async def drag_normalized(
+        self,
+        start_norm: list[int],
+        end_norm: list[int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Presses, holds, and drags between normalized (0-1000 scale) screen coordinates."""
+        width, height = self.screen_size
+        sx = int(max(0, min(width - 1, start_norm[0] * width / 1000.0)))
+        sy = int(max(0, min(height - 1, start_norm[1] * height / 1000.0)))
+        ex = int(max(0, min(width - 1, end_norm[0] * width / 1000.0)))
+        ey = int(max(0, min(height - 1, end_norm[1] * height / 1000.0)))
+        return await self.drag(sx, sy, ex, ey, hold_ms=hold_ms, duration_ms=duration_ms)
 
     async def find_element(
         self, query: ElementQuery, screen_data: ScreenData | None = None

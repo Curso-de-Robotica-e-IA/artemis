@@ -244,6 +244,8 @@ INPUT_TEXT_TOOL = tool_declaration("input_text")
 
 SWIPE_TOOL = tool_declaration("swipe")
 
+DRAG_TOOL = tool_declaration("drag")
+
 PRESS_KEY_TOOL = tool_declaration("press_key")
 
 READ_NOTE_TOOL = ToolDeclaration(
@@ -330,6 +332,7 @@ VALIDATOR_TOOLS_DECLARATION: list[ToolDeclaration] = [
     LONG_PRESS_TOOL,
     INPUT_TEXT_TOOL,
     SWIPE_TOOL,
+    DRAG_TOOL,
     PRESS_KEY_TOOL,
     READ_NOTE_TOOL,
     LIST_NOTES_TOOL,

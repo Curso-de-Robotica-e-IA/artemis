@@ -56,6 +56,16 @@ async def test_mock_driver_actions():
     assert await driver.swipe(100, 200, 300, 400) is True
     assert driver.action_history[-1]["action"] == "swipe"
 
+    # 3b. Drag (press, hold, and drag)
+    assert await driver.drag(100, 200, 300, 400, hold_ms=1500, duration_ms=500) is True
+    assert driver.action_history[-1] == {
+        "action": "drag",
+        "start": (100, 200),
+        "end": (300, 400),
+        "hold_ms": 1500,
+        "duration_ms": 500,
+    }
+
     # 4. Swipe direction
     assert await driver.swipe_direction(SwipeDirection.UP) is True
     assert driver.action_history[-1]["direction"] == "up"
@@ -100,6 +110,53 @@ async def test_android_driver_with_mock_adb():
     # Test press key
     await driver.press_key(KeyCode.BACK)
     mock_adb_device.shell.assert_called_with("input keyevent 4")
+
+
+@pytest.mark.asyncio
+async def test_android_driver_drag_motionevent_and_fallback():
+    """AndroidAdbDriver.drag uses continuous motionevent DOWN->sleep->MOVE->UP with draganddrop fallback."""
+    mock_adb_client = MagicMock()
+    mock_adb_device = MagicMock()
+    mock_adb_client.device.return_value = mock_adb_device
+    mock_adb_device.shell.return_value = ""
+
+    driver = AndroidAdbDriver(
+        device_id="emulator-5554",
+        adb_client=mock_adb_client,
+        width=1080,
+        height=2400,
+    )
+
+    ok = await driver.drag(100, 200, 500, 200, hold_ms=1500, duration_ms=200)
+    assert ok is True
+    cmd = mock_adb_device.shell.call_args.args[0]
+    assert cmd.startswith("input motionevent DOWN 100 200 && sleep 1.500 && input motionevent MOVE ")
+    assert "input motionevent MOVE 500 200" in cmd
+    assert cmd.endswith("input motionevent UP 500 200")
+
+    # hold_ms=0 skips the initial hold sleep
+    mock_adb_device.shell.reset_mock()
+    ok_no_hold = await driver.drag(100, 200, 500, 200, hold_ms=0, duration_ms=100)
+    assert ok_no_hold is True
+    cmd_no_hold = mock_adb_device.shell.call_args.args[0]
+    assert cmd_no_hold.startswith("input motionevent DOWN 100 200 && input motionevent MOVE ")
+
+    # Fallback to input draganddrop if device does not support input motionevent
+    mock_adb_device.shell.reset_mock()
+    mock_adb_device.shell.side_effect = ["Error: Unknown command: motionevent", ""]
+    ok_fb = await driver.drag(100, 200, 500, 600, hold_ms=1200, duration_ms=500)
+    assert ok_fb is True
+    assert mock_adb_device.shell.call_count == 2
+    assert mock_adb_device.shell.call_args_list[1].args[0] == "input draganddrop 100 200 500 600 500"
+
+    # Returns False when both motionevent and fallback fail
+    mock_adb_device.shell.reset_mock()
+    mock_adb_device.shell.side_effect = [
+        "Error: Unknown command: motionevent",
+        "Error: Unknown command: draganddrop",
+    ]
+    ok_fail = await driver.drag(100, 200, 500, 600, hold_ms=1200, duration_ms=500)
+    assert ok_fail is False
 
 
 @pytest.mark.asyncio

@@ -911,6 +911,95 @@ async def test_long_press_action_translation():
 
 
 @pytest.mark.asyncio
+async def test_drag_action_translation():
+    from artemis.agents.operator.operator import OperatorNode
+    from artemis.mcp.action_names import to_canonical_call
+    from unittest.mock import MagicMock
+    from artemis.graph.state import State
+
+    mock_ctx = MagicMock()
+    node = OperatorNode(mock_ctx, transcript_config=LEGACY_TRANSCRIPT)
+    mock_state = MagicMock(spec=State)
+    mock_state.indexed_points = [[200, 300], [400, 500]]
+    mock_state.indexed_elements = [
+        {
+            "center": [200, 300],
+            "text": "App Icon",
+            "bounds": "[100,100][300,500]",
+            "class": "android.widget.TextView",
+            "resource_id": "icon_1",
+        },
+        {
+            "center": [400, 500],
+            "text": "Folder",
+            "bounds": "[300,400][500,600]",
+            "class": "android.widget.FrameLayout",
+            "resource_id": "folder_1",
+        },
+    ]
+
+    # 1. Index start -> coordinate end
+    actions, err = node._translate_and_validate_tool(
+        {
+            "name": "drag",
+            "args": {"start": 1, "end": [500, 600], "hold_ms": 2000, "duration_ms": 600},
+        },
+        mock_state,
+    )
+    assert err is None
+    assert actions == [
+        {
+            "action": "drag",
+            "coordinates": [200, 300, 540, 1440],
+            "coordinate_space": "pixel",
+            "normalized_coordinates": [185, 125, 500, 600],
+            "normalized_start_coordinates": [185, 125],
+            "normalized_end_coordinates": [500, 600],
+            "hold_ms": 2000,
+            "duration_ms": 600,
+            "target_text": "App Icon",
+            "target_bounds": "[100,100][300,500]",
+            "target_resource_id": "icon_1",
+            "target_class": "android.widget.TextView",
+        }
+    ]
+
+    # Verify Validator canonical call translation
+    canonical_name, wire_args = to_canonical_call(actions[0])
+    assert canonical_name == "drag"
+    assert wire_args == {
+        "start": [185, 125],
+        "end": [500, 600],
+        "hold_ms": 2000,
+        "duration_ms": 600,
+    }
+
+    # 2. Coordinate start without target_description is rejected
+    actions, err = node._translate_and_validate_tool(
+        {"name": "drag", "args": {"start": [200, 400], "end": [800, 400]}},
+        mock_state,
+    )
+    assert actions == [] and "target_description" in err
+
+    # 3. Coordinate start with target_description succeeds
+    actions, err = node._translate_and_validate_tool(
+        {
+            "name": "drag",
+            "args": {
+                "start": [200, 400],
+                "end": [800, 400],
+                "target_description": "home widget",
+            },
+        },
+        mock_state,
+    )
+    assert err is None
+    assert actions[0]["hold_ms"] == 1000
+    assert actions[0]["duration_ms"] == 400
+    assert actions[0]["target_description"] == "home widget"
+
+
+@pytest.mark.asyncio
 async def test_operator_no_defer_for_note_updating():
     from artemis.agents.operator.operator import OperatorNode
     from artemis.context import ArtemisContext

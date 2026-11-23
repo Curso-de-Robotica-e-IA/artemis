@@ -170,6 +170,7 @@ def test_index_resolution_uses_the_live_device_resolution():
         ("long_press", {"target": [500, 600]}, "long press"),
         ("input_text", {"text": "hi", "target": [500, 600]}, "input text"),
         ("swipe", {"start": [200, 600], "end": [800, 600]}, "swipe"),
+        ("drag", {"start": [200, 600], "end": [800, 600]}, "drag"),
     ],
 )
 def test_coordinate_targets_without_description_are_refused(name, args, label):
@@ -347,3 +348,63 @@ def test_click_sequence_accepts_a_serialized_pair_list():
         _state(),
     )
     assert wire_args["sequence"] == [[500, 600], [10, 10]]
+
+
+def test_drag_resolves_indices_and_coordinates():
+    executor = _make_executor()
+    # Index start -> coordinate end (no target_description needed)
+    wire_name, wire_args, _, recorded = executor._translate(
+        "drag",
+        {"start": 1, "end": [800, 200], "hold_ms": 1800, "duration_ms": 600},
+        _indexed_state(),
+    )
+    assert wire_name == "drag"
+    assert wire_args == {
+        "start": [500, 520],
+        "end": [800, 200],
+        "hold_ms": 1800,
+        "duration_ms": 600,
+    }
+    assert recorded["target_text"] == "Wi-Fi"
+    assert "target_description" not in recorded
+
+    # Index start -> index end
+    _, wire_args2, _, _ = executor._translate(
+        "drag",
+        {"start": 1, "end": 2},
+        _indexed_state(),
+    )
+    assert wire_args2 == {
+        "start": [500, 520],
+        "end": [500, 300],
+        "hold_ms": 1000,
+        "duration_ms": 400,
+    }
+
+    # Coordinate start with target_description -> coordinate end
+    _, wire_args3, _, recorded3 = executor._translate(
+        "drag",
+        {
+            "start": [200, 400],
+            "end": [700, 400],
+            "target_description": "Chrome icon",
+            "hold_ms": 2000,
+            "duration_ms": 500,
+        },
+        _state(),
+    )
+    assert wire_args3 == {
+        "start": [200, 400],
+        "end": [700, 400],
+        "hold_ms": 2000,
+        "duration_ms": 500,
+    }
+    assert recorded3 == {"target_description": "Chrome icon"}
+
+    # Invalid hold_ms / duration_ms refused
+    with pytest.raises(_ArgError, match="hold_ms"):
+        executor._translate("drag", {"start": 1, "end": [800, 200], "hold_ms": -1}, _indexed_state())
+    with pytest.raises(_ArgError, match="duration_ms"):
+        executor._translate(
+            "drag", {"start": 1, "end": [800, 200], "duration_ms": 0}, _indexed_state()
+        )

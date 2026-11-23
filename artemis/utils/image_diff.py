@@ -80,8 +80,8 @@ def check_ui_change(
         logger.info(f"Action: {action_name} | Global UI change ratio: {global_change_ratio:.4f}")
 
         # 4. Strategy based on action type
-        if action_name == "swipe":
-            # Swipe expects large scale movement
+        if action_name in ("swipe", "drag"):
+            # Swipe/drag expects large scale movement
             return global_change_ratio > full_screen_threshold
 
         # For tap and others, check ROI if coordinates are available
