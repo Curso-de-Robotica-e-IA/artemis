@@ -153,6 +153,29 @@ class BaseDeviceDriver(ABC):
         ...
 
     @abstractmethod
+    async def drag_and_hold(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Presses, holds, and drags to end pixel coordinates without releasing the touch."""
+        ...
+
+    @abstractmethod
+    async def drop(
+        self,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Moves an actively held touch to optional end pixel coordinates and releases it."""
+        ...
+
+    @abstractmethod
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],
@@ -251,6 +274,34 @@ class BaseDeviceDriver(ABC):
         ex = int(max(0, min(width - 1, end_norm[0] * width / 1000.0)))
         ey = int(max(0, min(height - 1, end_norm[1] * height / 1000.0)))
         return await self.drag(sx, sy, ex, ey, hold_ms=hold_ms, duration_ms=duration_ms)
+
+    async def drag_and_hold_normalized(
+        self,
+        start_norm: list[int],
+        end_norm: list[int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Presses, holds, and drags between normalized coordinates without releasing."""
+        width, height = self.screen_size
+        sx = int(max(0, min(width - 1, start_norm[0] * width / 1000.0)))
+        sy = int(max(0, min(height - 1, start_norm[1] * height / 1000.0)))
+        ex = int(max(0, min(width - 1, end_norm[0] * width / 1000.0)))
+        ey = int(max(0, min(height - 1, end_norm[1] * height / 1000.0)))
+        return await self.drag_and_hold(sx, sy, ex, ey, hold_ms=hold_ms, duration_ms=duration_ms)
+
+    async def drop_normalized(
+        self,
+        end_norm: list[int] | None = None,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Moves an actively held touch to optional normalized coordinates and releases it."""
+        if end_norm is None:
+            return await self.drop(duration_ms=duration_ms)
+        width, height = self.screen_size
+        ex = int(max(0, min(width - 1, end_norm[0] * width / 1000.0)))
+        ey = int(max(0, min(height - 1, end_norm[1] * height / 1000.0)))
+        return await self.drop(ex, ey, duration_ms=duration_ms)
 
     async def find_element(
         self, query: ElementQuery, screen_data: ScreenData | None = None

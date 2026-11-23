@@ -256,6 +256,66 @@ class HttpTouchActuator(AdbActuator):
             object.__setattr__(res, "duration_ms", duration_ms)
         return res
 
+    async def drag_and_hold(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        if err := await self._ensure_device_configured():
+            return err
+        effective_timeout = max(
+            self.timeout_s, (max(0, hold_ms) + max(0, duration_ms)) / 1000.0 + 10.0
+        )
+        res = await self._post(
+            "/drag-hold",
+            {
+                "start_nx": start[0],
+                "start_ny": start[1],
+                "end_nx": end[0],
+                "end_ny": end[1],
+                "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+            },
+            action="drag_and_hold",
+            timeout_s=effective_timeout,
+        )
+        if res.ok:
+            object.__setattr__(
+                res,
+                "normalized_coordinates",
+                [int(start[0]), int(start[1]), int(end[0]), int(end[1])],
+            )
+            object.__setattr__(res, "duration_ms", duration_ms)
+        return res
+
+    async def drop(
+        self,
+        target: tuple[int, int] | None = None,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        if err := await self._ensure_device_configured():
+            return err
+        payload: dict[str, Any] = {"duration_ms": duration_ms}
+        if target is not None:
+            payload["end_nx"] = target[0]
+            payload["end_ny"] = target[1]
+        effective_timeout = max(self.timeout_s, max(0, duration_ms) / 1000.0 + 10.0)
+        res = await self._post(
+            "/drop",
+            payload,
+            action="drop",
+            timeout_s=effective_timeout,
+        )
+        if res.ok:
+            if target is not None:
+                object.__setattr__(
+                    res, "normalized_coordinates", [int(target[0]), int(target[1])]
+                )
+            object.__setattr__(res, "duration_ms", duration_ms)
+        return res
+
     async def input_text(
         self,
         text: str,

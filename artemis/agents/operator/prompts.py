@@ -85,6 +85,8 @@ _TURN_ENDING_ORDER = (
     "click",
     "swipe",
     "drag",
+    "drag_and_hold",
+    "drop",
     "input_text",
     "long_press",
     "press_key",

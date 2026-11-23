@@ -91,6 +91,39 @@ async def test_drag_converts_normalized_and_reports_hold_ms(actuator):
 
 
 @pytest.mark.asyncio
+async def test_drag_and_hold_then_drop(actuator):
+    # Dropping without an active hold fails cleanly
+    res_fail = await actuator.drop((500, 100))
+    assert not res_fail.ok
+
+    # Drag and hold keeps pointer pressed
+    res_hold = await actuator.drag_and_hold((200, 600), (200, 500), hold_ms=1200, duration_ms=300)
+    assert res_hold.ok
+    assert "not released" in res_hold.message
+    assert res_hold.normalized_coordinates == [200, 600, 200, 500]
+    assert actuator.action_history[-1]["action"] == "drag_and_hold"
+
+    # Drop onto revealed target
+    res_drop = await actuator.drop((500, 100), duration_ms=350)
+    assert res_drop.ok
+    assert res_drop.message == "Dropped at [500, 100] (normalized)."
+    assert res_drop.normalized_coordinates == [500, 100]
+    assert actuator.action_history[-1] == {
+        "action": "drop",
+        "from": (200, 1000),
+        "end": (500, 200),
+        "duration_ms": 350,
+    }
+
+    # Drop in place
+    res_hold2 = await actuator.drag_and_hold((200, 600), (200, 500), hold_ms=500, duration_ms=200)
+    assert res_hold2.ok
+    res_drop_in_place = await actuator.drop()
+    assert res_drop_in_place.ok
+    assert res_drop_in_place.message == "Dropped in place at held position."
+
+
+@pytest.mark.asyncio
 async def test_press_key_forwards_unknown_keycode_to_driver(actuator):
     # Arbitrary keycodes (KEYCODE_* names, numeric codes) pass through to the driver,
     # matching the historical adb_server behavior of accepting any Android key event.

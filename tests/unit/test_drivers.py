@@ -66,6 +66,19 @@ async def test_mock_driver_actions():
         "duration_ms": 500,
     }
 
+    # 3c. Drag-and-hold then drop
+    assert await driver.drop(500, 100) is False  # nothing held yet
+    assert await driver.drag_and_hold(100, 200, 100, 150, hold_ms=1000, duration_ms=300) is True
+    assert driver.action_history[-1]["action"] == "drag_and_hold"
+    assert driver.action_history[-1]["continuing"] is False
+    assert await driver.drop(500, 100, duration_ms=400) is True
+    assert driver.action_history[-1] == {
+        "action": "drop",
+        "from": (100, 150),
+        "end": (500, 100),
+        "duration_ms": 400,
+    }
+
     # 4. Swipe direction
     assert await driver.swipe_direction(SwipeDirection.UP) is True
     assert driver.action_history[-1]["direction"] == "up"
@@ -157,6 +170,67 @@ async def test_android_driver_drag_motionevent_and_fallback():
     ]
     ok_fail = await driver.drag(100, 200, 500, 600, hold_ms=1200, duration_ms=500)
     assert ok_fail is False
+
+
+@pytest.mark.asyncio
+async def test_android_driver_drag_and_hold_then_drop_and_auto_release():
+    """drag_and_hold omits UP, continuation omits DOWN, drop emits MOVE->UP, and unrelated actions auto-release."""
+    mock_adb_client = MagicMock()
+    mock_adb_device = MagicMock()
+    mock_adb_client.device.return_value = mock_adb_device
+    mock_adb_device.shell.return_value = ""
+
+    driver = AndroidAdbDriver(
+        device_id="emulator-5554",
+        adb_client=mock_adb_client,
+        width=1080,
+        height=2400,
+    )
+
+    # Dropping without an active hold returns False
+    assert await driver.drop(500, 100) is False
+    mock_adb_device.shell.assert_not_called()
+
+    # 1. Fresh drag_and_hold sends DOWN -> sleep -> MOVE without UP
+    assert await driver.drag_and_hold(200, 1200, 200, 1000, hold_ms=1200, duration_ms=200) is True
+    cmd1 = mock_adb_device.shell.call_args.args[0]
+    assert cmd1.startswith("input motionevent DOWN 200 1200 && sleep 1.200 && input motionevent MOVE ")
+    assert "UP" not in cmd1
+    assert driver._held_position == (200, 1000)
+
+    # 2. Continuing drag_and_hold moves from held position without a new DOWN or UP
+    mock_adb_device.shell.reset_mock()
+    assert await driver.drag_and_hold(200, 1000, 400, 800, hold_ms=0, duration_ms=200) is True
+    cmd2 = mock_adb_device.shell.call_args.args[0]
+    assert "DOWN" not in cmd2
+    assert "UP" not in cmd2
+    assert "input motionevent MOVE 400 800" in cmd2
+    assert driver._held_position == (400, 800)
+
+    # 3. Drop moves from held position to target and sends UP
+    mock_adb_device.shell.reset_mock()
+    assert await driver.drop(540, 150, duration_ms=200) is True
+    cmd3 = mock_adb_device.shell.call_args.args[0]
+    assert "DOWN" not in cmd3
+    assert "input motionevent MOVE 540 150" in cmd3
+    assert cmd3.endswith("input motionevent UP 540 150")
+    assert driver._held_position is None
+
+    # 4. In-place drop sends only UP at held position
+    mock_adb_device.shell.reset_mock()
+    assert await driver.drag_and_hold(300, 900, 300, 900, hold_ms=500, duration_ms=100) is True
+    mock_adb_device.shell.reset_mock()
+    assert await driver.drop() is True
+    mock_adb_device.shell.assert_called_once_with("input motionevent UP 300 900")
+    assert driver._held_position is None
+
+    # 5. Unrelated action (tap) auto-releases active held touch before tapping
+    assert await driver.drag_and_hold(300, 900, 350, 850, hold_ms=500, duration_ms=100) is True
+    mock_adb_device.shell.reset_mock()
+    assert await driver.tap(500, 500) is True
+    assert mock_adb_device.shell.call_args_list[0].args[0] == "input motionevent UP 350 850"
+    assert mock_adb_device.shell.call_args_list[1].args[0] == "input tap 500 500"
+    assert driver._held_position is None
 
 
 @pytest.mark.asyncio

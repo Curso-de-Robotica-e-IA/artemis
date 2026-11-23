@@ -69,6 +69,29 @@ async def test_drag_end_to_end():
         await session.aclose()
 
 
+async def test_drag_and_hold_then_drop_end_to_end():
+    actuator = MockActuator(width=1000, height=2000)
+    session = await _session_for(actuator)
+    try:
+        res_hold = await session.call(
+            "drag_and_hold",
+            {"start": [200, 500], "end": [200, 400], "hold_ms": 1500, "duration_ms": 300},
+        )
+        assert res_hold.ok
+        assert "not released" in res_hold.message
+        res_drop = await session.call("drop", {"target": [500, 100], "duration_ms": 400})
+        assert res_drop.ok
+        assert res_drop.message == "Dropped at [500, 100] (normalized)."
+        assert actuator.action_history[-1] == {
+            "action": "drop",
+            "from": (200, 800),
+            "end": (500, 200),
+            "duration_ms": 400,
+        }
+    finally:
+        await session.aclose()
+
+
 async def test_device_refusal_is_not_a_protocol_error():
     """A failed action reaches the caller as ok=False, never as an exception."""
     actuator = MockActuator()
@@ -90,7 +113,16 @@ async def test_partial_actuator_hides_optional_tools():
         listed = {t.name for t in (await session._session.list_tools()).tools}
         assert "click_sequence" in listed
         assert "observe_screen" in listed
-        for absent in ("click", "swipe", "drag", "manage_app", "wait_for_text", "open_link"):
+        for absent in (
+            "click",
+            "swipe",
+            "drag",
+            "drag_and_hold",
+            "drop",
+            "manage_app",
+            "wait_for_text",
+            "open_link",
+        ):
             assert absent not in listed
     finally:
         await session.aclose()

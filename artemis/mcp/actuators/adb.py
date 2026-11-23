@@ -274,6 +274,64 @@ class AdbActuator:
             duration_ms=duration_ms,
         )
 
+    async def drag_and_hold(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        nx1, ny1 = start
+        nx2, ny2 = end
+        px1, py1 = self._to_px(nx1, ny1)
+        px2, py2 = self._to_px(nx2, ny2)
+        err = await self.controller.drag_and_hold_coords(
+            px1, py1, px2, py2, hold_ms=hold_ms, duration=duration_ms
+        )
+        if err:
+            return ActionResult.failure(
+                "drag_and_hold", f"Error during drag and hold: {err}", detail=str(err)
+            )
+        return ActionResult.success(
+            "drag_and_hold",
+            f"Dragged from [{nx1}, {ny1}] to [{nx2}, {ny2}] and holding"
+            f" (normalized, held {hold_ms}ms, not released).",
+            normalized_coordinates=[int(nx1), int(ny1), int(nx2), int(ny2)],
+            duration_ms=duration_ms,
+        )
+
+    async def drop(
+        self,
+        target: tuple[int, int] | None = None,
+        duration_ms: int = 400,
+    ) -> ActionResult:
+        coords: list[int] | None = None
+        px: int | None = None
+        py: int | None = None
+        if target is not None:
+            nx, ny = target
+            px, py = self._to_px(nx, ny)
+            coords = [int(nx), int(ny)]
+        err = await self.controller.drop_coords(px, py, duration=duration_ms)
+        if err:
+            return ActionResult.failure(
+                "drop",
+                f"Error dropping: {err}",
+                detail=str(err),
+                normalized_coordinates=coords,
+            )
+        msg = (
+            f"Dropped at [{coords[0]}, {coords[1]}] (normalized)."
+            if coords is not None
+            else "Dropped in place at held position."
+        )
+        return ActionResult.success(
+            "drop",
+            msg,
+            normalized_coordinates=coords,
+            duration_ms=duration_ms,
+        )
+
     async def press_key(self, key: str) -> ActionResult:
         key_str = str(key).lower()
         if not key_str:

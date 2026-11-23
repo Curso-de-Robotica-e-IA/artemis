@@ -234,7 +234,7 @@
     "type": "function",
     "function": {
       "name": "drag",
-      "description": "[ACTION] Press, hold, and continuously drag an item from a start location to an end location without lifting the finger.\n\nUse this whenever the UI requires pressing and holding first before dragging \u2014 such as moving home-screen app icons or widgets, drag-and-drop between containers, or reordering list items that activate on long press. For ordinary scrolling or sliders that do not require an initial hold, use a standard swipe gesture instead.",
+      "description": "[ACTION] Press, hold, drag an item from a start location to an end location, and release (drop) it in one continuous gesture.\n\nUse this when both the start item and final drop destination are already visible on screen \u2014 such as moving home-screen app icons or widgets to a known spot, drag-and-drop between containers, or reordering list items that activate on long press. If the drop target (such as a 'Remove' or 'Uninstall' bar) only appears while the item is actively being held, use a drag-and-hold gesture instead so you can inspect the screen before dropping. For ordinary scrolling or sliders that do not require an initial hold, use a standard swipe gesture instead.",
       "parameters": {
         "properties": {
           "start": {
@@ -292,6 +292,119 @@
           "start",
           "end"
         ],
+        "type": "object"
+      }
+    }
+  },
+  "drag_and_hold": {
+    "type": "function",
+    "function": {
+      "name": "drag_and_hold",
+      "description": "[ACTION] Press, hold, and drag an item from start to end WITHOUT releasing the finger (keeps the touch actively pressed on screen).\n\nUse this when UI drop zones or options (such as 'Remove', 'Uninstall', folder creation, or home-screen edge page switching) ONLY appear while the item is being held and dragged. The next screenshot is captured while the finger remains pressed so you can observe the revealed target and then release onto it with a drop action. Calling this again while already holding continues moving the held item without lifting.",
+      "parameters": {
+        "properties": {
+          "start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            ],
+            "description": "Start location to press and hold. Can be an element index number (int, e.g. 3) OR normalized coordinates (list of 2 integers, e.g. [500, 600])."
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            ],
+            "description": "Intermediate location to move to while keeping the finger pressed (often slightly offset from start, e.g. 50-100 units up, to enter drag mode and reveal drop targets). Accepts an element index (int) OR normalized coordinates [x, y]."
+          },
+          "target_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "What is being picked up and held, in a few words (e.g. 'Chrome app icon'). REQUIRED when start is a coordinate pair; ignored when start is an element index."
+          },
+          "hold_ms": {
+            "default": 1000,
+            "description": "How long to press and hold at the start location in milliseconds before moving (e.g. 1000 for 1s, 2000 for 2s). Default is 1000.",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "default": 400,
+            "description": "Duration of the movement from start to end in milliseconds after the hold completes. Default is 400.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "drop": {
+    "type": "function",
+    "function": {
+      "name": "drop",
+      "description": "[ACTION] Move an actively held drag-and-hold touch to the target destination and release (drop) the finger.\n\nUse this after a drag-and-hold once the revealed drop zone (such as 'Remove' or 'Uninstall') is visible on screen. Omit target to release the finger in place at its current held position.",
+      "parameters": {
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional drop destination: an element index number (int, e.g. 2) OR normalized coordinates (list of 2 integers, e.g. [500, 100]). Omit to release in place at the current held position."
+          },
+          "target_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "What the drop destination is, in a few words (e.g. 'Remove zone', 'Uninstall button'). REQUIRED when target is a coordinate pair; ignored for an element index or in-place release."
+          },
+          "duration_ms": {
+            "default": 400,
+            "description": "Duration in milliseconds to move from the currently held position to target before releasing. Default is 400.",
+            "type": "integer"
+          }
+        },
         "type": "object"
       }
     }

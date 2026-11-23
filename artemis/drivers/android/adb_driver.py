@@ -88,6 +88,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
         self._device: AdbDevice | None = None
         self._recording_process: asyncio.subprocess.Process | None = None
         self._recording_output_path: Path | None = None
+        self._held_position: tuple[int, int] | None = None
 
     @property
     def device_id(self) -> str:
@@ -113,10 +114,46 @@ class AndroidAdbDriver(BaseDeviceDriver):
 
     async def disconnect(self) -> None:
         """Clean up ongoing recordings and tunnels."""
+        await self._release_held_if_active()
         if self._recording_process:
             await self.stop_video_recording()
         if self._ui_adb_client and hasattr(self._ui_adb_client, "disconnect"):
             await asyncio.to_thread(self._ui_adb_client.disconnect)
+
+    @staticmethod
+    def _build_move_commands(
+        from_x: int,
+        from_y: int,
+        to_x: int,
+        to_y: int,
+        duration_ms: int,
+    ) -> list[str]:
+        """Builds interpolated ``input motionevent MOVE`` shell commands."""
+        duration_ms = max(1, int(duration_ms))
+        steps = max(2, min(15, max(1, duration_ms // 50)))
+        step_delay_s = (duration_ms / 1000.0) / steps
+        parts: list[str] = []
+        for i in range(1, steps + 1):
+            t = i / steps
+            mx = round(from_x + (to_x - from_x) * t)
+            my = round(from_y + (to_y - from_y) * t)
+            parts.append(f"input motionevent MOVE {mx} {my}")
+            if step_delay_s >= 0.005:
+                parts.append(f"sleep {step_delay_s:.3f}")
+        return parts
+
+    async def _release_held_if_active(self) -> None:
+        """Releases any active drag-and-hold pointer so the touchscreen never stays stuck."""
+        if self._held_position is None:
+            return
+        hx, hy = self._held_position
+        self._held_position = None
+        try:
+            cmd = f"input motionevent UP {hx} {hy}"
+            logger.info(f"[ADB] Auto-releasing held touch: {cmd}")
+            await asyncio.to_thread(self.device.shell, cmd)
+        except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
+            logger.debug(f"Auto-release of held touch failed at ({hx}, {hy}): {e}")
 
     async def get_screen_data(self, skip_settling: bool = False) -> ScreenData:
         """Captures screenshot and XML hierarchy concurrently."""
@@ -267,6 +304,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
         times: int = 1,
         delay_ms: int = 100,
     ) -> bool:
+        await self._release_held_if_active()
         try:
             if duration_ms >= 500:
                 cmd = f"input swipe {x} {y} {x} {y} {duration_ms}"
@@ -295,6 +333,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
         end_y: int,
         duration_ms: int = 400,
     ) -> bool:
+        await self._release_held_if_active()
         try:
             cmd = f"input swipe {start_x} {start_y} {end_x} {end_y} {duration_ms}"
             logger.info(f"[ADB] {cmd}")
@@ -318,28 +357,21 @@ class AndroidAdbDriver(BaseDeviceDriver):
         Falls back to ``input draganddrop`` on older Android builds where
         ``input motionevent`` is unavailable.
         """
+        await self._release_held_if_active()
         hold_ms = max(0, int(hold_ms))
         duration_ms = max(1, int(duration_ms))
-        steps = max(2, min(15, max(1, duration_ms // 50)))
-        step_delay_s = (duration_ms / 1000.0) / steps
 
         parts = [f"input motionevent DOWN {start_x} {start_y}"]
         if hold_ms > 0:
             parts.append(f"sleep {hold_ms / 1000.0:.3f}")
-        for i in range(1, steps + 1):
-            t = i / steps
-            mx = round(start_x + (end_x - start_x) * t)
-            my = round(start_y + (end_y - start_y) * t)
-            parts.append(f"input motionevent MOVE {mx} {my}")
-            if step_delay_s >= 0.005:
-                parts.append(f"sleep {step_delay_s:.3f}")
+        parts.extend(self._build_move_commands(start_x, start_y, end_x, end_y, duration_ms))
         parts.append(f"input motionevent UP {end_x} {end_y}")
         cmd = " && ".join(parts)
 
         try:
             logger.info(
                 f"[ADB] drag ({start_x},{start_y}) -> ({end_x},{end_y})"
-                f" hold={hold_ms}ms duration={duration_ms}ms ({steps} steps)"
+                f" hold={hold_ms}ms duration={duration_ms}ms"
             )
             out = await asyncio.to_thread(self.device.shell, cmd)
             out_lower = str(out or "").lower()
@@ -359,6 +391,99 @@ class AndroidAdbDriver(BaseDeviceDriver):
             return True
         except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
             logger.error(f"Drag failed from ({start_x},{start_y}) to ({end_x},{end_y}): {e}")
+            return False
+
+    async def drag_and_hold(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Presses, holds, and drags to end coordinates WITHOUT lifting the touch.
+
+        If a touch is already held from an earlier ``drag_and_hold`` call, continues
+        moving from the currently held position without issuing a second ``DOWN``.
+        """
+        hold_ms = max(0, int(hold_ms))
+        duration_ms = max(1, int(duration_ms))
+
+        if self._held_position is None:
+            parts = [f"input motionevent DOWN {start_x} {start_y}"]
+            if hold_ms > 0:
+                parts.append(f"sleep {hold_ms / 1000.0:.3f}")
+            if (end_x, end_y) != (start_x, start_y):
+                parts.extend(
+                    self._build_move_commands(start_x, start_y, end_x, end_y, duration_ms)
+                )
+            else:
+                parts.append(f"input motionevent MOVE {end_x} {end_y}")
+        else:
+            hx, hy = self._held_position
+            parts = []
+            if (end_x, end_y) != (hx, hy):
+                parts.extend(self._build_move_commands(hx, hy, end_x, end_y, duration_ms))
+            else:
+                parts.append(f"input motionevent MOVE {end_x} {end_y}")
+            if hold_ms > 0:
+                parts.append(f"sleep {hold_ms / 1000.0:.3f}")
+
+        cmd = " && ".join(parts)
+        try:
+            logger.info(
+                f"[ADB] drag_and_hold ({start_x},{start_y}) -> ({end_x},{end_y})"
+                f" hold={hold_ms}ms duration={duration_ms}ms (continuing={self._held_position is not None})"
+            )
+            out = await asyncio.to_thread(self.device.shell, cmd)
+            out_lower = str(out or "").lower()
+            if "unknown command" in out_lower or "usage:" in out_lower or "error:" in out_lower:
+                logger.error(
+                    f"[ADB] 'input motionevent' failed during drag_and_hold: {str(out).strip()}"
+                )
+                return False
+            self._held_position = (int(end_x), int(end_y))
+            return True
+        except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
+            logger.error(
+                f"Drag-and-hold failed from ({start_x},{start_y}) to ({end_x},{end_y}): {e}"
+            )
+            return False
+
+    async def drop(
+        self,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 400,
+    ) -> bool:
+        """Moves an actively held touch to optional end coordinates and releases it."""
+        if self._held_position is None:
+            logger.warning("[ADB] Drop requested with no active held touch.")
+            return False
+
+        hx, hy = self._held_position
+        tx = hx if end_x is None else int(end_x)
+        ty = hy if end_y is None else int(end_y)
+        duration_ms = max(1, int(duration_ms))
+
+        parts: list[str] = []
+        if (tx, ty) != (hx, hy):
+            parts.extend(self._build_move_commands(hx, hy, tx, ty, duration_ms))
+        parts.append(f"input motionevent UP {tx} {ty}")
+        cmd = " && ".join(parts)
+
+        self._held_position = None
+        try:
+            logger.info(f"[ADB] drop ({hx},{hy}) -> ({tx},{ty}) duration={duration_ms}ms")
+            out = await asyncio.to_thread(self.device.shell, cmd)
+            out_lower = str(out or "").lower()
+            if "unknown command" in out_lower or "usage:" in out_lower or "error:" in out_lower:
+                logger.error(f"[ADB] 'input motionevent' failed during drop: {str(out).strip()}")
+                return False
+            return True
+        except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
+            logger.error(f"Drop failed at ({tx},{ty}): {e}")
             return False
 
     async def swipe_direction(
@@ -460,6 +585,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
             return False
 
     async def press_key(self, key: KeyCode | str | int) -> bool:
+        await self._release_held_if_active()
         try:
             keycode_val = key
             if isinstance(key, (KeyCode, str)):

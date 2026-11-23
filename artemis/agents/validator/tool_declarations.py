@@ -246,6 +246,10 @@ SWIPE_TOOL = tool_declaration("swipe")
 
 DRAG_TOOL = tool_declaration("drag")
 
+DRAG_AND_HOLD_TOOL = tool_declaration("drag_and_hold")
+
+DROP_TOOL = tool_declaration("drop")
+
 PRESS_KEY_TOOL = tool_declaration("press_key")
 
 READ_NOTE_TOOL = ToolDeclaration(
@@ -333,6 +337,8 @@ VALIDATOR_TOOLS_DECLARATION: list[ToolDeclaration] = [
     INPUT_TEXT_TOOL,
     SWIPE_TOOL,
     DRAG_TOOL,
+    DRAG_AND_HOLD_TOOL,
+    DROP_TOOL,
     PRESS_KEY_TOOL,
     READ_NOTE_TOOL,
     LIST_NOTES_TOOL,

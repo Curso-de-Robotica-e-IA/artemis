@@ -96,6 +96,25 @@ class CloudDeviceDriver(BaseDeviceDriver):
     ) -> bool:
         return True
 
+    async def drag_and_hold(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        return True
+
+    async def drop(
+        self,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 400,
+    ) -> bool:
+        return True
+
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],

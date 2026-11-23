@@ -563,8 +563,8 @@ def draw_action_overlay_on_image(
 
         action = (action_name or "").lower()
 
-        # 1. Single Click / Tap
-        if action in ("click", "tap", "click_coordinate", "long_click", "press"):
+        # 1. Single Click / Tap / Drop
+        if action in ("click", "tap", "click_coordinate", "long_click", "press", "drop"):
             coord = (
                 action_args.get("target")
                 or action_args.get("coordinates")
@@ -684,7 +684,7 @@ def draw_action_overlay_on_image(
                         )
 
         # 3. Swipe / Drag / Scroll
-        elif action in ("swipe", "drag", "scroll"):
+        elif action in ("swipe", "drag", "drag_and_hold", "scroll"):
             kind, target, _ = parse_swipe_parameters(action_args)
             start_pt, end_pt = None, None
 

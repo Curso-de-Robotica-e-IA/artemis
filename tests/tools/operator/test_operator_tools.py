@@ -26,6 +26,8 @@ async def test_operator_shell_tools():
         "input_text": {"text": "hello", "target": 1, "clear_exist": True},
         "swipe": {"gesture": "up"},
         "drag": {"start": 1, "end": [500, 200], "hold_ms": 1000, "duration_ms": 400},
+        "drag_and_hold": {"start": 1, "end": [500, 400], "hold_ms": 1000, "duration_ms": 400},
+        "drop": {"target": [500, 100], "target_description": "Remove zone", "duration_ms": 400},
         "press_key": {"key": "ENTER"},
         "manage_app": {"action": "launch", "app_name": "Settings"},
         "wait_for_delay": {"time_in_ms": 1000},

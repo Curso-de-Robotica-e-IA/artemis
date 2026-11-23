@@ -75,7 +75,7 @@ AGENT_TOOL_NAMES: frozenset[str] = (
 )
 
 #: Actions whose ``target`` is a single point: an element index or an [x, y] pair.
-_POINT_TARGET_ACTIONS: frozenset[str] = frozenset({"click", "long_press", "input_text"})
+_POINT_TARGET_ACTIONS: frozenset[str] = frozenset({"click", "long_press", "input_text", "drop"})
 
 
 class _ArgError(ValueError):
@@ -185,7 +185,7 @@ class McpActionExecutor:
                     # coordinates of an index target (the model named an index,
                     # not a point).
                     target_coordinates = wire_args.get("target")
-                elif raw_name == "drag":
+                elif raw_name in ("drag", "drag_and_hold"):
                     s_pt, e_pt = wire_args.get("start"), wire_args.get("end")
                     if (
                         isinstance(s_pt, list)
@@ -381,6 +381,14 @@ class McpActionExecutor:
 
         if raw_name == "drag":
             return self._translate_drag(args, state, index_elements=index_elements)
+
+        if raw_name == "drag_and_hold":
+            return self._translate_drag(
+                args, state, action_name="drag_and_hold", index_elements=index_elements
+            )
+
+        if raw_name == "drop":
+            return self._translate_drop(args, state, index_elements=index_elements)
 
         if raw_name == "press_key":
             return "press_key", {"key": args.get("key", "BACK")}, None, {}
@@ -680,18 +688,20 @@ class McpActionExecutor:
         args: dict[str, Any],
         state: Any,
         *,
+        action_name: str = "drag",
         index_elements: list[dict[str, Any]] | None = None,
     ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
+        label = "drag and hold" if action_name == "drag_and_hold" else "drag"
         start_norm, recorded = self._resolve_target(
             args.get("start"),
-            "drag",
+            label,
             args,
             state,
             index_elements=index_elements,
         )
         end_norm = self._resolve_endpoint(
             args.get("end"),
-            "drag",
+            label,
             state,
             index_elements=index_elements,
         )
@@ -701,19 +711,55 @@ class McpActionExecutor:
             hold_ms = int(1000 if raw_hold is None else raw_hold)
             duration_ms = int(400 if raw_dur is None else raw_dur)
         except (ValueError, TypeError) as exc:
-            raise _ArgError(f"Error during drag: Invalid hold_ms or duration_ms: {exc}") from exc
+            raise _ArgError(
+                f"Error during {label}: Invalid hold_ms or duration_ms: {exc}"
+            ) from exc
         if hold_ms < 0:
-            raise _ArgError(f"Error during drag: hold_ms must be >= 0, got {hold_ms}.")
+            raise _ArgError(f"Error during {label}: hold_ms must be >= 0, got {hold_ms}.")
         if duration_ms < 1:
-            raise _ArgError(f"Error during drag: duration_ms must be >= 1, got {duration_ms}.")
+            raise _ArgError(f"Error during {label}: duration_ms must be >= 1, got {duration_ms}.")
         return (
-            "drag",
+            action_name,
             {
                 "start": start_norm,
                 "end": end_norm,
                 "hold_ms": hold_ms,
                 "duration_ms": duration_ms,
             },
+            None,
+            recorded,
+        )
+
+    def _translate_drop(
+        self,
+        args: dict[str, Any],
+        state: Any,
+        *,
+        index_elements: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
+        raw_target = args.get("target")
+        if raw_target is None:
+            raw_target = args.get("coordinates")
+        target: list[int] | None = None
+        recorded: dict[str, Any] = {}
+        if raw_target is not None:
+            target, recorded = self._resolve_target(
+                raw_target,
+                "drop",
+                args,
+                state,
+                index_elements=index_elements,
+            )
+        raw_dur = args.get("duration_ms", args.get("duration", 400))
+        try:
+            duration_ms = int(400 if raw_dur is None else raw_dur)
+        except (ValueError, TypeError) as exc:
+            raise _ArgError(f"Error during drop: Invalid duration_ms: {exc}") from exc
+        if duration_ms < 1:
+            raise _ArgError(f"Error during drop: duration_ms must be >= 1, got {duration_ms}.")
+        return (
+            "drop",
+            {"target": target, "duration_ms": duration_ms},
             None,
             recorded,
         )

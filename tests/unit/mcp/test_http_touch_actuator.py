@@ -177,6 +177,35 @@ async def test_touch_routes_delegation(
                 "duration_ms": 500,
             }
 
+            # 6. Drag-and-hold (/drag-hold) then Drop (/drop)
+            res_dh = await actuator.drag_and_hold(
+                (250, 600), (250, 500), hold_ms=1200, duration_ms=300
+            )
+            assert res_dh.ok
+            assert "not released" in res_dh.message
+            assert res_dh.normalized_coordinates == [250, 600, 250, 500]
+            assert mock_underlying_actuator.action_history[-1]["action"] == "drag_and_hold"
+
+            res_drop = await actuator.drop((500, 100), duration_ms=350)
+            assert res_drop.ok
+            assert "[500, 100]" in res_drop.message
+            assert res_drop.normalized_coordinates == [500, 100]
+            assert mock_underlying_actuator.action_history[-1] == {
+                "action": "drop",
+                "from": (270, 1200),
+                "end": (540, 240),
+                "duration_ms": 350,
+            }
+
+            # 7. Drag-and-hold then in-place Drop (/drop with no target)
+            res_dh2 = await actuator.drag_and_hold(
+                (250, 600), (250, 500), hold_ms=500, duration_ms=200
+            )
+            assert res_dh2.ok
+            res_drop_in_place = await actuator.drop()
+            assert res_drop_in_place.ok
+            assert "in place" in res_drop_in_place.message
+
 
 @pytest.mark.asyncio
 async def test_text_and_key_routes(
@@ -236,6 +265,26 @@ async def test_touch_api_validation_and_error_handling(touch_app):
             resp_bad_drag = await http_client.post("/drag", json=bad_drag)
             assert resp_bad_drag.status_code == 422
             assert resp_bad_drag.json()["ok"] is False
+
+            resp_bad_dh = await http_client.post("/drag-hold", json=bad_drag)
+            assert resp_bad_dh.status_code == 422
+            assert resp_bad_dh.json()["ok"] is False
+
+        # Invalid drop payloads (only one of end_nx/end_ny or invalid duration) -> 422
+        for bad_drop in (
+            {"end_nx": 500},
+            {"end_ny": 100},
+            {"end_nx": 1200, "end_ny": 100},
+            {"duration_ms": 0},
+        ):
+            resp_bad_drop = await http_client.post("/drop", json=bad_drop)
+            assert resp_bad_drop.status_code == 422
+            assert resp_bad_drop.json()["ok"] is False
+
+        # Dropping with no active held touch returns 500 with ok=False
+        resp_no_hold = await http_client.post("/drop", json={"end_nx": 500, "end_ny": 100})
+        assert resp_no_hold.status_code == 500
+        assert resp_no_hold.json()["ok"] is False
 
         # Failure querying screen size in /device should return 500
         with patch(

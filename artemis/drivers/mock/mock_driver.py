@@ -40,6 +40,7 @@ class MockDeviceDriver(BaseDeviceDriver):
         self.action_history: list[dict[str, Any]] = []
         self.connected = True
         self.recording = False
+        self._held_position: tuple[int, int] | None = None
 
         # Create blank 1x1 black image for minimal mock bytes
         img = Image.new("RGB", (width, height), color="black")
@@ -63,6 +64,7 @@ class MockDeviceDriver(BaseDeviceDriver):
         self.connected = True
 
     async def disconnect(self) -> None:
+        self._held_position = None
         self.connected = False
 
     async def get_screen_data(self, skip_settling: bool = False) -> ScreenData:
@@ -84,6 +86,7 @@ class MockDeviceDriver(BaseDeviceDriver):
         times: int = 1,
         delay_ms: int = 100,
     ) -> bool:
+        self._held_position = None
         self.action_history.append(
             {
                 "action": "tap",
@@ -114,6 +117,7 @@ class MockDeviceDriver(BaseDeviceDriver):
         end_y: int,
         duration_ms: int = 400,
     ) -> bool:
+        self._held_position = None
         self.action_history.append(
             {
                 "action": "swipe",
@@ -133,12 +137,58 @@ class MockDeviceDriver(BaseDeviceDriver):
         hold_ms: int = 1000,
         duration_ms: int = 400,
     ) -> bool:
+        self._held_position = None
         self.action_history.append(
             {
                 "action": "drag",
                 "start": (start_x, start_y),
                 "end": (end_x, end_y),
                 "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+            }
+        )
+        return True
+
+    async def drag_and_hold(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration_ms: int = 400,
+    ) -> bool:
+        continuing = self._held_position is not None
+        self._held_position = (end_x, end_y)
+        self.action_history.append(
+            {
+                "action": "drag_and_hold",
+                "start": (start_x, start_y),
+                "end": (end_x, end_y),
+                "hold_ms": hold_ms,
+                "duration_ms": duration_ms,
+                "continuing": continuing,
+            }
+        )
+        return True
+
+    async def drop(
+        self,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 400,
+    ) -> bool:
+        if self._held_position is None:
+            return False
+        hx, hy = self._held_position
+        tx = hx if end_x is None else end_x
+        ty = hy if end_y is None else end_y
+        self._held_position = None
+        self.action_history.append(
+            {
+                "action": "drop",
+                "from": (hx, hy),
+                "end": (tx, ty),
                 "duration_ms": duration_ms,
             }
         )
@@ -170,6 +220,7 @@ class MockDeviceDriver(BaseDeviceDriver):
         return True
 
     async def press_key(self, key: KeyCode | str | int) -> bool:
+        self._held_position = None
         key_val = key.value if hasattr(key, "value") else str(key).lower()
         self.action_history.append(
             {

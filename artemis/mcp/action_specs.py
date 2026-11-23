@@ -223,6 +223,22 @@ async def _wire_drag(actuator: Any, a: dict[str, Any]) -> ActionResult:
     )
 
 
+async def _wire_drag_and_hold(actuator: Any, a: dict[str, Any]) -> ActionResult:
+    start, end = a["start"], a["end"]
+    return await actuator.drag_and_hold(
+        (int(start[0]), int(start[1])),
+        (int(end[0]), int(end[1])),
+        hold_ms=a["hold_ms"],
+        duration_ms=a["duration_ms"],
+    )
+
+
+async def _wire_drop(actuator: Any, a: dict[str, Any]) -> ActionResult:
+    target = a["target"]
+    norm = (int(target[0]), int(target[1])) if target else None
+    return await actuator.drop(norm, duration_ms=a["duration_ms"])
+
+
 async def _wire_press_key(actuator: Any, a: dict[str, Any]) -> ActionResult:
     return await actuator.press_key(a["key"])
 
@@ -574,14 +590,17 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="drag",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press, hold, and continuously drag an item from a start location"
-                " to an end location without lifting the finger.\n"
+                "[ACTION] Press, hold, drag an item from a start location to an end"
+                " location, and release (drop) it in one continuous gesture.\n"
                 "\n"
-                "Use this whenever the UI requires pressing and holding first before"
-                " dragging — such as moving home-screen app icons or widgets,"
-                " drag-and-drop between containers, or reordering list items that"
-                " activate on long press. For ordinary scrolling or sliders that do not"
-                " require an initial hold, use a standard swipe gesture instead."
+                "Use this when both the start item and final drop destination are already"
+                " visible on screen — such as moving home-screen app icons or widgets to"
+                " a known spot, drag-and-drop between containers, or reordering list items"
+                " that activate on long press. If the drop target (such as a 'Remove' or"
+                " 'Uninstall' bar) only appears while the item is actively being held, use"
+                " a drag-and-hold gesture instead so you can inspect the screen before"
+                " dropping. For ordinary scrolling or sliders that do not require an"
+                " initial hold, use a standard swipe gesture instead."
             ),
             params=(
                 ParamSpec(
@@ -643,6 +662,141 @@ _SPECS: tuple[ActionSpec, ...] = (
             " (an index is resolved client-side against the indexed element list); the"
             " wire takes coordinates only. target_description: recorded, never sent"
             " to the wire; required only when start is a coordinate pair."
+        ),
+    ),
+    ActionSpec(
+        name="drag_and_hold",
+        operator=OperatorDialect(
+            description=(
+                "[ACTION] Press, hold, and drag an item from start to end WITHOUT releasing"
+                " the finger (keeps the touch actively pressed on screen).\n"
+                "\n"
+                "Use this when UI drop zones or options (such as 'Remove', 'Uninstall',"
+                " folder creation, or home-screen edge page switching) ONLY appear while"
+                " the item is being held and dragged. The next screenshot is captured"
+                " while the finger remains pressed so you can observe the revealed target"
+                " and then release onto it with a drop action. Calling this again while"
+                " already holding continues moving the held item without lifting."
+            ),
+            params=(
+                ParamSpec(
+                    "start",
+                    IndexOrCoords,
+                    "Start location to press and hold. Can be an element index number"
+                    " (int, e.g. 3) OR normalized coordinates (list of 2 integers, e.g."
+                    " [500, 600]).",
+                ),
+                ParamSpec(
+                    "end",
+                    IndexOrCoords,
+                    "Intermediate location to move to while keeping the finger pressed"
+                    " (often slightly offset from start, e.g. 50-100 units up, to enter"
+                    " drag mode and reveal drop targets). Accepts an element index (int)"
+                    " OR normalized coordinates [x, y].",
+                ),
+                ParamSpec(
+                    "target_description",
+                    str | None,
+                    "What is being picked up and held, in a few words (e.g. 'Chrome app"
+                    " icon'). REQUIRED when start is a coordinate pair; ignored when"
+                    " start is an element index.",
+                    required=False,
+                    default=None,
+                ),
+                ParamSpec(
+                    "hold_ms",
+                    int,
+                    "How long to press and hold at the start location in milliseconds"
+                    " before moving (e.g. 1000 for 1s, 2000 for 2s). Default is 1000.",
+                    required=False,
+                    default=1000,
+                ),
+                ParamSpec(
+                    "duration_ms",
+                    int,
+                    "Duration of the movement from start to end in milliseconds after"
+                    " the hold completes. Default is 400.",
+                    required=False,
+                    default=400,
+                ),
+            ),
+        ),
+        wire=WireDialect(
+            description=(
+                "Press, hold, and drag from a 0-1000 normalized start [x, y] coordinate"
+                " to end [x, y] without releasing the touch."
+            ),
+            params=(
+                ParamSpec("start", list[int]),
+                ParamSpec("end", list[int]),
+                ParamSpec("hold_ms", int, required=False, default=1000),
+                ParamSpec("duration_ms", int, required=False, default=400),
+            ),
+            bind=_wire_drag_and_hold,
+        ),
+        differences=(
+            "start/end: the agent dialect accepts an element index or a coordinate pair"
+            " (an index is resolved client-side against the indexed element list); the"
+            " wire takes coordinates only. target_description: recorded, never sent"
+            " to the wire; required only when start is a coordinate pair."
+        ),
+    ),
+    ActionSpec(
+        name="drop",
+        operator=OperatorDialect(
+            description=(
+                "[ACTION] Move an actively held drag-and-hold touch to the target"
+                " destination and release (drop) the finger.\n"
+                "\n"
+                "Use this after a drag-and-hold once the revealed drop zone (such as"
+                " 'Remove' or 'Uninstall') is visible on screen. Omit target to release"
+                " the finger in place at its current held position."
+            ),
+            params=(
+                ParamSpec(
+                    "target",
+                    IndexOrCoords | None,
+                    "Optional drop destination: an element index number (int, e.g. 2) OR"
+                    " normalized coordinates (list of 2 integers, e.g. [500, 100]). Omit"
+                    " to release in place at the current held position.",
+                    required=False,
+                    default=None,
+                ),
+                ParamSpec(
+                    "target_description",
+                    str | None,
+                    "What the drop destination is, in a few words (e.g. 'Remove zone',"
+                    " 'Uninstall button'). REQUIRED when target is a coordinate pair;"
+                    " ignored for an element index or in-place release.",
+                    required=False,
+                    default=None,
+                ),
+                ParamSpec(
+                    "duration_ms",
+                    int,
+                    "Duration in milliseconds to move from the currently held position"
+                    " to target before releasing. Default is 400.",
+                    required=False,
+                    default=400,
+                ),
+            ),
+        ),
+        wire=WireDialect(
+            description=(
+                "Move an actively held touch to an optional 0-1000 normalized [x, y]"
+                " target and release it."
+            ),
+            params=(
+                ParamSpec("target", list[int] | None, required=False, default=None),
+                ParamSpec("duration_ms", int, required=False, default=400),
+            ),
+            bind=_wire_drop,
+        ),
+        differences=(
+            "target: the agent dialect accepts an element index, a coordinate pair, or"
+            " omitted/None for in-place release; the wire takes coordinates or None."
+            " target_description: recorded, never sent to the wire; required only when"
+            " target is a coordinate pair."
         ),
     ),
     ActionSpec(
@@ -772,6 +926,8 @@ OPERATOR_SHELL_ORDER: tuple[str, ...] = (
     "input_text",
     "swipe",
     "drag",
+    "drag_and_hold",
+    "drop",
     "press_key",
     "manage_app",
     "wait_for_delay",
@@ -786,6 +942,8 @@ EXCEPTION_PREFIXES: dict[str, str] = {
     "input_text": "Error during input text",
     "swipe": "Error during swipe",
     "drag": "Error during drag",
+    "drag_and_hold": "Error during drag and hold",
+    "drop": "Error during drop",
     "press_key": "Error during press_key",
     "manage_app": "Error during manage_app",
     "wait_for_delay": "Error during wait_for_delay",

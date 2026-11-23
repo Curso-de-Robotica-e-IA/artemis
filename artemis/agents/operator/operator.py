@@ -1347,7 +1347,7 @@ class OperatorNode:
                 }
             ], None
 
-        elif tool_name == "drag":
+        elif tool_name in ("drag", "drag_and_hold"):
             start_arg = args.get("start")
             end_arg = args.get("end")
             start_el, err = resolve_target_element(start_arg, args.get("target_description"))
@@ -1408,7 +1408,7 @@ class OperatorNode:
             nx2, ny2 = int(round(x2 * 1000.0 / width)), int(round(y2 * 1000.0 / height))
             return [
                 {
-                    "action": "drag",
+                    "action": tool_name,
                     "coordinates": [x1, y1, x2, y2],
                     COORDINATE_SPACE_KEY: COORDINATE_SPACE_PIXEL,
                     "normalized_coordinates": [nx1, ny1, nx2, ny2],
@@ -1417,6 +1417,37 @@ class OperatorNode:
                     "hold_ms": hold_ms,
                     "duration_ms": duration_ms,
                     **target_fields(start_el),
+                }
+            ], None
+
+        elif tool_name == "drop":
+            target = args.get("target")
+            raw_dur = args.get("duration_ms", args.get("duration", 400))
+            try:
+                duration_ms = int(400 if raw_dur is None else raw_dur)
+            except (ValueError, TypeError):
+                return [], "Error: 'duration_ms' must be an integer."
+            if duration_ms < 1:
+                return [], f"Error: 'duration_ms' must be >= 1, got {duration_ms}."
+
+            if target is None:
+                return [{"action": "drop", "duration_ms": duration_ms}], None
+
+            el, err = resolve_target_element(target, args.get("target_description"))
+            if err:
+                return [], err
+            norm_c = [
+                int(round(el["center"][0] * 1000.0 / width)),
+                int(round(el["center"][1] * 1000.0 / height)),
+            ]
+            return [
+                {
+                    "action": "drop",
+                    "coordinates": el["center"],
+                    COORDINATE_SPACE_KEY: COORDINATE_SPACE_PIXEL,
+                    "normalized_coordinates": norm_c,
+                    "duration_ms": duration_ms,
+                    **target_fields(el),
                 }
             ], None
 

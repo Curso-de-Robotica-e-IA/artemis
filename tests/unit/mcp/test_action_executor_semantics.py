@@ -171,6 +171,8 @@ def test_index_resolution_uses_the_live_device_resolution():
         ("input_text", {"text": "hi", "target": [500, 600]}, "input text"),
         ("swipe", {"start": [200, 600], "end": [800, 600]}, "swipe"),
         ("drag", {"start": [200, 600], "end": [800, 600]}, "drag"),
+        ("drag_and_hold", {"start": [200, 600], "end": [200, 500]}, "drag and hold"),
+        ("drop", {"target": [500, 100]}, "drop"),
     ],
 )
 def test_coordinate_targets_without_description_are_refused(name, args, label):
@@ -408,3 +410,48 @@ def test_drag_resolves_indices_and_coordinates():
         executor._translate(
             "drag", {"start": 1, "end": [800, 200], "duration_ms": 0}, _indexed_state()
         )
+
+
+def test_drag_and_hold_and_drop_translation():
+    executor = _make_executor()
+    wire_name, wire_args, _, recorded = executor._translate(
+        "drag_and_hold",
+        {"start": 1, "end": [500, 400], "hold_ms": 1200, "duration_ms": 300},
+        _indexed_state(),
+    )
+    assert wire_name == "drag_and_hold"
+    assert wire_args == {
+        "start": [500, 520],
+        "end": [500, 400],
+        "hold_ms": 1200,
+        "duration_ms": 300,
+    }
+    assert recorded["target_text"] == "Wi-Fi"
+
+    # Drop onto coordinate target with description
+    drop_name, drop_args, _, drop_rec = executor._translate(
+        "drop",
+        {"target": [500, 90], "target_description": "Remove zone", "duration_ms": 350},
+        _state(),
+    )
+    assert drop_name == "drop"
+    assert drop_args == {"target": [500, 90], "duration_ms": 350}
+    assert drop_rec == {"target_description": "Remove zone"}
+
+    # Drop onto indexed element
+    _, drop_idx_args, _, drop_idx_rec = executor._translate(
+        "drop",
+        {"target": 2},
+        _indexed_state(),
+    )
+    assert drop_idx_args == {"target": [500, 300], "duration_ms": 400}
+    assert drop_idx_rec["target_text"] == "Search settings"
+
+    # Drop in place (no target -> no description required)
+    _, drop_in_place, _, drop_in_place_rec = executor._translate("drop", {}, _state())
+    assert drop_in_place == {"target": None, "duration_ms": 400}
+    assert drop_in_place_rec == {}
+
+    # Invalid duration_ms refused
+    with pytest.raises(_ArgError, match="duration_ms"):
+        executor._translate("drop", {"duration_ms": 0}, _state())

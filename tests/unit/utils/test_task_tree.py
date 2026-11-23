@@ -853,6 +853,30 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
     assert (
         format_action_intent(
             {
+                "action": "drag_and_hold",
+                "coordinates": [200, 600, 200, 500],
+                "hold_ms": 1000,
+                "duration_ms": 400,
+                "target_text": "Chrome",
+            }
+        )
+        == "drag and hold 'Chrome' from [200, 600] to [200, 500] (held 1000ms) over 400ms"
+    )
+    assert (
+        format_action_intent(
+            {
+                "action": "drop",
+                "coordinates": [500, 90],
+                "target_description": "Remove zone",
+                "duration_ms": 350,
+            }
+        )
+        == "drop onto 'Remove zone' (self-described) at [500, 90] over 350ms"
+    )
+    assert format_action_intent({"action": "drop", "duration_ms": 400}) == "drop in place over 400ms"
+    assert (
+        format_action_intent(
+            {
                 "action": "input_text",
                 "text": "hello",
                 "target_text": "Search",

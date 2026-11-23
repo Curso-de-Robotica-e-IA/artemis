@@ -998,6 +998,49 @@ async def test_drag_action_translation():
     assert actions[0]["duration_ms"] == 400
     assert actions[0]["target_description"] == "home widget"
 
+    # 4. drag_and_hold translation + canonical call
+    dh_actions, err = node._translate_and_validate_tool(
+        {
+            "name": "drag_and_hold",
+            "args": {"start": 1, "end": [200, 400], "hold_ms": 1500, "duration_ms": 300},
+        },
+        mock_state,
+    )
+    assert err is None
+    assert dh_actions[0]["action"] == "drag_and_hold"
+    dh_canon, dh_wire = to_canonical_call(dh_actions[0])
+    assert dh_canon == "drag_and_hold"
+    assert dh_wire == {
+        "start": [185, 125],
+        "end": [200, 400],
+        "hold_ms": 1500,
+        "duration_ms": 300,
+    }
+
+    # 5. drop translation (coordinate target with description, and in-place) + canonical call
+    drop_err_actions, drop_err = node._translate_and_validate_tool(
+        {"name": "drop", "args": {"target": [500, 90]}}, mock_state
+    )
+    assert drop_err_actions == [] and "target_description" in drop_err
+
+    drop_actions, err = node._translate_and_validate_tool(
+        {
+            "name": "drop",
+            "args": {"target": [500, 90], "target_description": "Remove zone", "duration_ms": 350},
+        },
+        mock_state,
+    )
+    assert err is None
+    drop_canon, drop_wire = to_canonical_call(drop_actions[0])
+    assert drop_canon == "drop"
+    assert drop_wire == {"target": [500, 90], "duration_ms": 350}
+
+    drop_in_place, err = node._translate_and_validate_tool(
+        {"name": "drop", "args": {}}, mock_state
+    )
+    assert err is None
+    assert to_canonical_call(drop_in_place[0]) == ("drop", {"target": None, "duration_ms": 400})
+
 
 @pytest.mark.asyncio
 async def test_operator_no_defer_for_note_updating():

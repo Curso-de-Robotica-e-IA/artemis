@@ -122,6 +122,39 @@ class UnifiedMobileControllerBase:
         )
         return None if success else f"Drag failed from ({start_x},{start_y}) to ({end_x},{end_y})"
 
+    async def drag_and_hold_coords(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        hold_ms: int = 1000,
+        duration: int = 400,
+    ) -> str | None:
+        """Press, hold, and drag continuously without releasing the touch."""
+        success = await self._driver.drag_and_hold(
+            start_x, start_y, end_x, end_y, hold_ms=hold_ms, duration_ms=duration
+        )
+        return (
+            None
+            if success
+            else f"Drag-and-hold failed from ({start_x},{start_y}) to ({end_x},{end_y})"
+        )
+
+    async def drop_coords(
+        self,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration: int = 400,
+    ) -> str | None:
+        """Move an actively held touch to optional end coordinates and release it."""
+        success = await self._driver.drop(end_x=end_x, end_y=end_y, duration_ms=duration)
+        if success:
+            return None
+        if end_x is not None and end_y is not None:
+            return f"Drop failed at ({end_x},{end_y}) (ensure drag_and_hold is active)"
+        return "Drop failed (no active held drag to release)"
+
     async def type_text(self, text: str, clear_existing: bool = True) -> bool:
         return await self._driver.input_text(text, clear_existing=clear_existing)
 
