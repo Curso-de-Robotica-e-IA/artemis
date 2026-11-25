@@ -414,6 +414,15 @@ class UnifiedMobileController(UnifiedMobileControllerBase):
         max_duration_seconds: int = DEFAULT_MAX_DURATION_SECONDS,
     ) -> VideoRecordingResult:
         """Start screen recording on Android device using scrcpy."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            logger.info("Screen recording (scrcpy) is disabled in non-invasive mode.")
+            return VideoRecordingResult(
+                success=False,
+                message="Screen recording (scrcpy) is disabled in non-invasive mode.",
+            )
+
         self._segment_cache.clear()
         device_id = self._get_device_id()
 

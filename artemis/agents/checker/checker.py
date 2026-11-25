@@ -212,6 +212,10 @@ async def _execute_probe(ctx: ArtemisContext, argv: list[str]) -> str:
     A failed probe answers with a :class:`ToolFailure` so the tool loop marks
     the result as an error structurally rather than by its wording.
     """
+    from artemis.config.settings import is_non_invasive_mode
+
+    if is_non_invasive_mode():
+        return ToolFailure("Device ADB probes are disabled in non-invasive mode.")
     try:
         adb_client = ctx.get_adb_client()
         device = adb_client.device(serial=ctx.device.device_id)
@@ -256,6 +260,10 @@ def _load_prompts() -> dict[str, str]:
 
 
 def probes_enabled(ctx: ArtemisContext) -> bool:
+    from artemis.config.settings import is_non_invasive_mode
+
+    if is_non_invasive_mode():
+        return False
     setup = getattr(ctx, "execution_setup", None)
     return not (setup and getattr(setup, "disable_device_probes", False))
 

@@ -31,7 +31,7 @@ import re
 import time
 from typing import Any
 
-from artemis.config.settings import is_vision_only_mode
+from artemis.config.settings import is_non_invasive_mode
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.action_manifest import DEVICE_ACTIONS, ExtensionTool
@@ -46,6 +46,9 @@ NON_INVASIVE_EXCLUDED_ACTIONS: frozenset[str] = frozenset(
         "manage_app",
         "open_link",
         "wait_for_text",
+        "input_text",
+        "focus_and_clear_text",
+        "erase_one_char",
     }
 )
 
@@ -127,8 +130,8 @@ class AdbActuator:
     # --- Contract --------------------------------------------------------------------
 
     def capabilities(self) -> frozenset[str]:
-        if is_vision_only_mode():
-            return DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
+        if is_non_invasive_mode():
+            return DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS - {"press_key"}
         return DEVICE_ACTIONS
 
     def extensions(self) -> list[ExtensionTool]:
@@ -209,6 +212,14 @@ class AdbActuator:
         target: tuple[int, int] | None = None,
         clear_exist: bool = True,
     ) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "input_text",
+                "Direct text injection is disabled in non-invasive mode. Tap the input field "
+                "to open the on-screen virtual keyboard and tap each key individually using "
+                "click or click_sequence.",
+                code=ActionCode.UNSUPPORTED,
+            )
         coords = None
         if target:
             nx, ny = target
@@ -269,6 +280,14 @@ class AdbActuator:
         )
 
     async def press_key(self, key: str) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "press_key",
+                "Direct key event injection (press_key) is disabled in non-invasive mode on "
+                "the ADB actuator. Use visual touch gestures (click or swipe on the on-screen "
+                "navigation bar or virtual keyboard) instead.",
+                code=ActionCode.UNSUPPORTED,
+            )
         key_str = str(key).lower()
         if not key_str:
             return ActionResult.failure(
@@ -301,7 +320,7 @@ class AdbActuator:
         return ActionResult.success("press_key", f"Pressed key '{key}'.")
 
     async def manage_app(self, action: str, app_name: str) -> ActionResult:
-        if is_vision_only_mode():
+        if is_non_invasive_mode():
             return ActionResult.failure(
                 "manage_app",
                 "manage_app is disabled in vision-only / non-invasive mode. Locate and launch "
@@ -367,6 +386,13 @@ class AdbActuator:
     async def wait_for_text(
         self, text: str, wait_state: str | None = None, timeout_ms: int | None = None
     ) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "wait_for_text",
+                "UI-tree text polling (wait_for_text) is disabled in non-invasive mode. "
+                "Visually inspect the screen and use wait_for_delay instead.",
+                code=ActionCode.UNSUPPORTED,
+            )
         timeout_s = (timeout_ms or 5000) / 1000.0
         start = time.time()
         found = False
@@ -396,18 +422,40 @@ class AdbActuator:
         )
 
     async def open_link(self, url: str) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "open_link",
+                "Direct deep-link opening (open_link) is disabled in non-invasive mode. "
+                "Open the browser visually and navigate using touch gestures instead.",
+                code=ActionCode.UNSUPPORTED,
+            )
         success = await self.controller.open_url(url)
         if success:
             return ActionResult.success("open_link", f"Opened link '{url}'.")
         return ActionResult.failure("open_link", f"Failed to open link '{url}'.")
 
     async def erase_one_char(self) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "erase_one_char",
+                "Direct keyevent deletion (erase_one_char) is disabled in non-invasive mode. "
+                "Tap the Backspace key on the on-screen virtual keyboard instead.",
+                code=ActionCode.UNSUPPORTED,
+            )
         success = await self.controller.erase_text(nb_chars=1)
         if success:
             return ActionResult.success("erase_one_char", "Erased one character.")
         return ActionResult.failure("erase_one_char", "Failed to erase one character.")
 
     async def focus_and_clear_text(self, nx: int, ny: int) -> ActionResult:
+        if is_non_invasive_mode():
+            return ActionResult.failure(
+                "focus_and_clear_text",
+                "Direct focus and text clearing (focus_and_clear_text) is disabled in "
+                "non-invasive mode. Tap the input field and use the on-screen virtual "
+                "keyboard Backspace key instead.",
+                code=ActionCode.UNSUPPORTED,
+            )
         x, y = self._to_px(nx, ny)
         err = await ensure_focus_at_coords(self.controller, x, y)
         if err:
@@ -432,6 +480,8 @@ class AdbActuator:
         return await self.controller.take_screenshot()
 
     async def get_ui_elements(self) -> Any:
+        if is_non_invasive_mode():
+            return []
         return await self.controller.get_ui_elements()
 
     async def get_screen_data(self, skip_settling: bool = False) -> Any:

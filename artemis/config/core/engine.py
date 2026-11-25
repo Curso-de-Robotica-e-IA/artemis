@@ -60,21 +60,24 @@ class CascadingConfigEngine:
         self._load_environment_files()
 
     def _load_environment_files(self) -> None:
-        """Load .env files from global config dir and workspace root."""
-        # 1. Global user .env
-        global_env = platform.paths.config_dir / ".env"
-        if global_env.exists():
-            load_dotenv(dotenv_path=global_env, override=False, encoding="utf-8")
+        """Load .env files in high-to-low priority order without clobbering process env.
 
-        # 2. Legacy ~/.artemis/.env fallback
-        legacy_env = platform.paths.data_dir / ".env"
-        if legacy_env.exists() and legacy_env != global_env:
-            load_dotenv(dotenv_path=legacy_env, override=False, encoding="utf-8")
-
-        # 3. Workspace .env
+        Precedence: process os.environ > workspace .env > global .env > legacy .env.
+        """
+        # 1. Workspace .env (fills keys not already set in process environment)
         ws_env = self.workspace_root / ".env"
         if ws_env.exists():
-            load_dotenv(dotenv_path=ws_env, override=True, encoding="utf-8")
+            load_dotenv(dotenv_path=ws_env, override=False, encoding="utf-8")
+
+        # 2. Global user .env
+        global_env = platform.paths.config_dir / ".env"
+        if global_env.exists() and global_env != ws_env:
+            load_dotenv(dotenv_path=global_env, override=False, encoding="utf-8")
+
+        # 3. Legacy ~/.artemis/.env fallback
+        legacy_env = platform.paths.data_dir / ".env"
+        if legacy_env.exists() and legacy_env not in (global_env, ws_env):
+            load_dotenv(dotenv_path=legacy_env, override=False, encoding="utf-8")
 
     def load_raw_config(
         self,

@@ -72,9 +72,11 @@ class HttpTouchActuator(AdbActuator):
     def capabilities(self) -> frozenset[str]:
         """Exposes only physical touch/input actions supported by the HTTP Touch API.
 
-        Direct ADB app launching (``manage_app``), deep links (``open_link``), and
-        UI-tree text polling (``wait_for_text``) are excluded so the agent operates
-        100% non-invasively like a human user.
+        Direct ADB app launching (``manage_app``), direct text injection (``input_text``),
+        deep links (``open_link``), UI-tree text polling (``wait_for_text``), and
+        keyevent/UI-tree text clearing (``focus_and_clear_text``, ``erase_one_char``)
+        are excluded so the agent operates non-invasively like a human user.
+        ``press_key`` remains supported through the HTTP Touch API ``/press-key`` route.
         """
         return DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
 
@@ -84,6 +86,26 @@ class HttpTouchActuator(AdbActuator):
             "manage_app",
             "manage_app is disabled on the HTTP Touch API backend. Locate and open the "
             "application visually via home screen / app drawer swipes or the launcher search bar.",
+            code=ActionCode.UNSUPPORTED,
+        )
+
+    async def open_link(self, url: str) -> ActionResult:
+        """Refuses direct ADB deep-link opening on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "open_link",
+            "Direct deep-link opening (open_link) is disabled on the HTTP Touch API backend. "
+            "Open the browser visually and navigate via touch gestures instead.",
+            code=ActionCode.UNSUPPORTED,
+        )
+
+    async def wait_for_text(
+        self, text: str, wait_state: str | None = None, timeout_ms: int | None = None
+    ) -> ActionResult:
+        """Refuses UI-tree text polling on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "wait_for_text",
+            "UI-tree text polling (wait_for_text) is disabled on the HTTP Touch API backend. "
+            "Visually inspect the screen and use wait_for_delay instead.",
             code=ActionCode.UNSUPPORTED,
         )
 
@@ -249,45 +271,38 @@ class HttpTouchActuator(AdbActuator):
         target: tuple[int, int] | None = None,
         clear_exist: bool = True,
     ) -> ActionResult:
-        if err := await self._ensure_device_configured():
-            return err
-        coords = None
-        if target:
-            nx, ny = target
-            coords = [int(nx), int(ny)]
-            if clear_exist:
-                focus_res = await self.focus_and_clear_text(nx, ny)
-            else:
-                focus_res = await self.click(nx, ny)
-            if not focus_res.ok:
-                return focus_res
-        res = await self._post(
-            "/input-text",
-            {"text": text},
-            action="input_text",
+        """Refuses direct text injection on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "input_text",
+            "Direct text injection is disabled in non-invasive mode. Tap the input field "
+            "to open the on-screen virtual keyboard and tap each key individually using "
+            "click or click_sequence.",
+            code=ActionCode.UNSUPPORTED,
         )
-        if res.ok and coords:
-            object.__setattr__(res, "normalized_coordinates", coords)
-        return res
 
     async def focus_and_clear_text(self, nx: int, ny: int) -> ActionResult:
-        if err := await self._ensure_device_configured():
-            return err
-        res = await self._post(
-            "/focus-and-clear",
-            {"nx": nx, "ny": ny},
-            action="focus_and_clear_text",
+        """Refuses direct text clearing on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "focus_and_clear_text",
+            "Direct focus and text clearing (focus_and_clear_text) is disabled in "
+            "non-invasive mode. Tap the input field and use the on-screen virtual "
+            "keyboard Backspace key instead.",
+            code=ActionCode.UNSUPPORTED,
         )
-        if res.ok:
-            object.__setattr__(res, "normalized_coordinates", [int(nx), int(ny)])
-        return res
 
     async def erase_one_char(self) -> ActionResult:
-        if err := await self._ensure_device_configured():
-            return err
-        return await self._post("/erase-char", {"times": 1}, action="erase_one_char")
+        """Refuses direct keyevent deletion on the non-invasive HTTP Touch API backend."""
+        return ActionResult.failure(
+            "erase_one_char",
+            "Direct keyevent deletion (erase_one_char) is disabled in non-invasive mode. "
+            "Tap the Backspace key on the on-screen virtual keyboard instead.",
+            code=ActionCode.UNSUPPORTED,
+        )
 
     async def press_key(self, key: str) -> ActionResult:
         if err := await self._ensure_device_configured():
             return err
         return await self._post("/press-key", {"key": key}, action="press_key")
+
+    async def get_ui_elements(self) -> Any:
+        return []

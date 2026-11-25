@@ -645,6 +645,12 @@ class RunAdbCommandTool(ArtemisTool):
         Interactive: bool = False,
         **kwargs: Any,
     ) -> str:
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            return ToolFailure(
+                "Direct ADB shell commands (run_adb_command) are disabled in non-invasive mode."
+            )
         # Extract command line supporting alternative key formats
         cmd_line = (
             CommandLine
@@ -918,6 +924,12 @@ class ManageTaskTool(ArtemisTool):
         action = Action or kwargs.get("action", "list")
         task_id = TaskId if TaskId is not None else kwargs.get("task_id")
         input_str = Input if Input is not None else kwargs.get("input")
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            return ToolFailure(
+                "ADB background task management (manage_task) is disabled in non-invasive mode."
+            )
         registry = get_adb_task_registry(ctx)
 
         if action == "list":
@@ -1058,6 +1070,12 @@ class RunShortAdbCommandTool(ArtemisTool):
         CommandLine: str | None = None,
         **kwargs: Any,
     ) -> str:
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            return ToolFailure(
+                "Direct ADB shell commands (run_adb_command) are disabled in non-invasive mode."
+            )
         cmd_line = (
             CommandLine
             if CommandLine is not None

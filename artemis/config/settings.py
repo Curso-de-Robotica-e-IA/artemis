@@ -48,11 +48,14 @@ from artemis.config.paths import (
 from third_party.mobile_use.utils.logger import get_logger
 
 # Installed wheels load .env from the user directory, outside site-packages.
+# Load highest-to-lowest priority with override=False so explicit process
+# environment variables (e.g., VISION_ONLY_MODE=true in the shell) always win
+# over .env defaults while workspace .env still overrides global .env.
 _canonical_env = get_env_file()
-load_dotenv(dotenv_path=_canonical_env, override=True, verbose=True)
+load_dotenv(dotenv_path=_canonical_env, override=False, verbose=True)
 _global_env = GLOBAL_APP_DIR / ".env"
 if _global_env.exists() and _global_env.resolve() != _canonical_env.resolve():
-    load_dotenv(dotenv_path=_global_env, override=True, verbose=True)
+    load_dotenv(dotenv_path=_global_env, override=False, verbose=True)
 
 logger = get_logger(__name__)
 
@@ -444,9 +447,7 @@ if settings.DATA_ENGINE_DB_PATH:
 
 
 def is_vision_only_mode() -> bool:
-    """Check if VISION_ONLY_MODE is enabled via settings or environment."""
-    if hasattr(settings, "VISION_ONLY_MODE") and settings.VISION_ONLY_MODE:
-        return True
+    """Check if VISION_ONLY_MODE is enabled (process env takes precedence over .env/settings)."""
     val = os.environ.get(ENV_VISION_ONLY_MODE)
     if val is not None:
         return val.strip().lower() in ("true", "1", "yes", "on")

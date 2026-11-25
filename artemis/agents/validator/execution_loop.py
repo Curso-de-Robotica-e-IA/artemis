@@ -94,8 +94,11 @@ async def _run_precondition_gate(
             session, action_item, pre_screenshot_b64, original_coords, state=state
         )
 
-    if not has_index_metadata:
-        # Pure coordinate/non-index interactions: pixel-based validation is the only gate.
+    from artemis.config.settings import is_non_invasive_mode
+
+    if is_non_invasive_mode() or not has_index_metadata:
+        # Non-invasive/vision-only mode or pure coordinate interactions:
+        # pixel-based validation is the only gate (never fetch live XML).
         return await _pixel_check()
 
     # Index-based validation is fastest and safest when metadata is present

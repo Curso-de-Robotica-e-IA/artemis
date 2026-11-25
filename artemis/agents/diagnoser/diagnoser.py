@@ -101,17 +101,24 @@ class Diagnoser:
         return system_prompt, checker_feedback_template
 
     def _build_traced_tools(self) -> list:
-        """Assembles the tool set (honoring the offline/video gates) and wraps it in tracing."""
+        """Assembles the tool set (honoring non-invasive/offline/video gates) and wraps it in tracing."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        non_invasive = is_non_invasive_mode()
         all_tools = [
-            get_analyze_logs_tool(self.ctx),
             get_read_note_tool(self.ctx),
             get_list_notes_tool(self.ctx),
-            get_run_short_adb_command_tool(self.ctx),
             get_wait_tool(self.ctx),
-            get_ui_hierarchy_tool(self.ctx),
             *get_history_tools(self.ctx),
             get_submit_answer_tool(self.ctx),
         ]
+        if not non_invasive:
+            all_tools = [
+                get_analyze_logs_tool(self.ctx),
+                get_run_short_adb_command_tool(self.ctx),
+                get_ui_hierarchy_tool(self.ctx),
+                *all_tools,
+            ]
         if not self.is_device_online:
             logger.info(
                 "Diagnoser running in OFFLINE environment: stripping adb short"
@@ -125,7 +132,11 @@ class Diagnoser:
                 and not t.name.endswith(":wait")
             ]
 
-        if self.ctx.execution_setup and self.ctx.execution_setup.video_recording_tools_enabled:
+        if (
+            not non_invasive
+            and self.ctx.execution_setup
+            and self.ctx.execution_setup.video_recording_tools_enabled
+        ):
             all_tools.append(get_video_analyzer_tool(self.ctx, role="diagnoser"))
 
         return [trace_langchain_tool(t, self.ctx) for t in all_tools]

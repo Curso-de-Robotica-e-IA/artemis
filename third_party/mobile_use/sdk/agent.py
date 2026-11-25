@@ -141,7 +141,16 @@ class AgentBase:
         retry_wait_seconds: int = 5,
     ):
 
-        if os.environ.get("ARTEMIS_CLOUD_MODE") != "1" and not which("adb"):
+        from artemis.config.settings import is_non_invasive_mode
+
+        non_invasive = is_non_invasive_mode()
+        adb_available = bool(which("adb"))
+
+        if (
+            not non_invasive
+            and os.environ.get("ARTEMIS_CLOUD_MODE") != "1"
+            and not adb_available
+        ):
             raise ExecutableNotFoundError("adb")
 
         if self._initialized:
@@ -149,16 +158,29 @@ class AgentBase:
             return True
 
         # Get first available device ID
+        has_local_adb_device = False
         if os.environ.get("ARTEMIS_CLOUD_MODE") == "1":
             device_id = os.environ.get("ADB_DEVICE_SERIAL", "cloud_device")
             platform = DevicePlatform.ANDROID
         elif not self._config.device_id or not self._config.device_platform:
-            device_id, platform, _ = get_first_device(logger=logger)
+            if adb_available:
+                device_id, platform, _ = get_first_device(logger=logger)
+                has_local_adb_device = bool(device_id)
+            else:
+                device_id, platform = None, None
+            if non_invasive and not device_id:
+                device_id = (
+                    self._config.device_id
+                    or os.environ.get("ARTEMIS_DEVICE_ID")
+                    or "non-invasive-device"
+                )
+                platform = self._config.device_platform or DevicePlatform.ANDROID
         else:
             device_id, platform = (
                 self._config.device_id,
                 self._config.device_platform,
             )
+            has_local_adb_device = adb_available
 
         if not device_id or not platform:
             error_msg = "No device found. Exiting."
@@ -170,10 +192,23 @@ class AgentBase:
             "device_check", "Checking the Android device", session_id=self._session_id
         )
         if os.environ.get("ARTEMIS_CLOUD_MODE") != "1":
-            self._init_clients(
-                device_id=device_id,
-                platform=platform,
-            )
+            if non_invasive:
+                # Non-invasive / vision-only mode: never attach Accessibility Helper
+                # or UIAutomator2. Keep ADB client only if a local ADB device is
+                # available for raw screenshot capture; otherwise run fully non-ADB.
+                self._ui_adb_client = None
+                if has_local_adb_device:
+                    self._adb_client = AdbClient(
+                        host=self._config.servers.adb_host,
+                        port=self._config.servers.adb_port,
+                    )
+                else:
+                    self._adb_client = None
+            else:
+                self._init_clients(
+                    device_id=device_id,
+                    platform=platform,
+                )
         else:
             # Cloud mode is pinned to UIAutomator2 through the gateway; the
             # hierarchy backend switch only applies to locally attached devices.
@@ -579,19 +614,35 @@ class AgentBase:
                 # finishing.
                 self._prepare_tracing(task=task, context=context)
                 self._prepare_output_files(task=task)
+                from artemis.config.settings import is_non_invasive_mode
+
+                non_invasive = is_non_invasive_mode()
                 if os.environ.get("ARTEMIS_CLOUD_MODE") != "1":
-                    if self._ui_adb_client is not None:
-                        await self._connect_screen_client(context, str(sess_id))
-                    await self._ensure_device_unlocked()
+                    if non_invasive:
+                        if hasattr(self, "_announce_hierarchy_backend"):
+                            self._announce_hierarchy_backend(
+                                context, str(sess_id), None, "visual_only", None
+                            )
+                    else:
+                        if self._ui_adb_client is not None:
+                            await self._connect_screen_client(context, str(sess_id))
+                        if self._adb_client is not None:
+                            await self._ensure_device_unlocked()
                 publish_startup_progress(
                     "environment", "Preparing the device environment", session_id=str(sess_id)
                 )
-                await self._prepare_app_installation(task=task)
-                await self._prepare_device_environment(context=context)
-                await self._prepare_app_lock(task=task, context=context)
+                if not non_invasive:
+                    await self._prepare_app_installation(task=task)
+                    await self._prepare_device_environment(context=context)
+                    await self._prepare_app_lock(task=task, context=context)
+                elif task.request.locked_app_package:
+                    logger.warning(
+                        f"[{task_name}] Skipping ADB app lock launch for "
+                        f"'{task.request.locked_app_package}' in non-invasive mode."
+                    )
                 async with context:
                     recording_started = False
-                    if self._config.video_recording_tools_enabled:
+                    if self._config.video_recording_tools_enabled and not non_invasive:
                         try:
                             controller = get_controller(context)
 
@@ -1089,11 +1140,16 @@ class AgentBase:
         device_id: str,
         platform: DevicePlatform,
     ):
+        from artemis.config.settings import is_non_invasive_mode
+
         self._adb_client = AdbClient(
             host=self._config.servers.adb_host,
             port=self._config.servers.adb_port,
         )
-        self._ui_adb_client = create_screen_client(device_id)
+        if is_non_invasive_mode():
+            self._ui_adb_client = None
+        else:
+            self._ui_adb_client = create_screen_client(device_id)
 
     async def _get_device_context(
         self,

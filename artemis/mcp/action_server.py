@@ -174,12 +174,21 @@ def build_action_server(actuator: Actuator, name: str = "artemis_actions") -> Fa
         @mcp.tool()
         async def get_ui_hierarchy(timeout_ms: int | None = None) -> CallToolResult:
             """Return the raw UI element hierarchy (adapter-internal)."""
+            from artemis.config.settings import is_non_invasive_mode
+
+            if is_non_invasive_mode():
+                payload: dict[str, Any] = {"ok": True, "elements": []}
+                return CallToolResult(
+                    content=[TextContent(type="text", text="ui_hierarchy")],
+                    structuredContent=payload,
+                    isError=False,
+                )
             try:
                 coro = actuator.get_ui_elements()
                 if timeout_ms:
                     coro = asyncio.wait_for(coro, timeout=timeout_ms / 1000.0)
                 elements = await coro
-                payload: dict[str, Any] = {"ok": True, "elements": elements}
+                payload = {"ok": True, "elements": elements}
             except TimeoutError:
                 payload = {
                     "ok": False,

@@ -49,7 +49,11 @@ class AgentConfigBuilder(AgentConfigBuilderBase):
         self._denylisted_tools = agent_cfg.denylisted_tools
         self._video_analyzer = agent_cfg.video_analyzer
         self._enable_video_ledger = agent_cfg.video_analyzer.enable_ledger
-        if agent_cfg.video_analyzer.enabled is not None:
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            self._video_recording_tools_enabled = False
+        elif agent_cfg.video_analyzer.enabled is not None:
             self._video_recording_tools_enabled = agent_cfg.video_analyzer.enabled
         else:
             self._video_recording_tools_enabled = detect_video_tools_enabled()
@@ -426,6 +430,9 @@ class AgentConfigBuilder(AgentConfigBuilderBase):
         return self
 
     def _extra_config_fields(self) -> dict[str, Any]:
+        from artemis.config.settings import is_non_invasive_mode
+
+        video_enabled = False if is_non_invasive_mode() else self._video_recording_tools_enabled
         return {
             "device_id": (
                 self._device_id
@@ -433,7 +440,7 @@ class AgentConfigBuilder(AgentConfigBuilderBase):
                 or os.environ.get("ADB_DEVICE_SERIAL")
                 or os.environ.get("ANDROID_SERIAL")
             ),
-            "video_recording_tools_enabled": self._video_recording_tools_enabled,
+            "video_recording_tools_enabled": video_enabled,
             "force_web_accessibility": self._force_web_accessibility,
             "disable_checker": self._disable_checker,
             "disable_midway_checks": self._disable_midway_checks,

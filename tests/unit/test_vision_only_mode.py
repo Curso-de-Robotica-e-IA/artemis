@@ -660,43 +660,71 @@ async def test_non_invasive_disables_manage_app_and_enforces_human_visual_hierar
         # 1. validate_actuator passes without ActuatorContractError
         validate_actuator(actuator)
         assert "manage_app" not in actuator.capabilities()
+        assert "input_text" not in actuator.capabilities()
         assert "open_link" not in actuator.capabilities()
         assert "wait_for_text" not in actuator.capabilities()
+        assert "focus_and_clear_text" not in actuator.capabilities()
+        assert "erase_one_char" not in actuator.capabilities()
+        if backend == "http":
+            assert "press_key" in actuator.capabilities()
+        else:
+            assert "press_key" not in actuator.capabilities()
 
-        # Calling manage_app directly returns UNSUPPORTED failure without invoking ADB
-        res = await actuator.manage_app("launch", "Settings")
-        assert not res.ok
-        assert res.code.value == "UNSUPPORTED"
+        # Calling excluded actions directly returns UNSUPPORTED without invoking ADB
+        for res in (
+            await actuator.manage_app("launch", "Settings"),
+            await actuator.input_text("Settings"),
+            await actuator.open_link("https://example.com"),
+            await actuator.wait_for_text("Settings"),
+            await actuator.focus_and_clear_text(400, 300),
+            await actuator.erase_one_char(),
+        ):
+            assert not res.ok
+            assert res.code.value == "UNSUPPORTED"
 
-        # 2. Operator tools & prompt exclude manage_app and run_adb_command, and teach human hierarchy
+        if backend != "http":
+            res_key = await actuator.press_key("BACK")
+            assert not res_key.ok
+            assert res_key.code.value == "UNSUPPORTED"
+
+        assert await actuator.get_ui_elements() == []
+
+        # 2. Operator tools & prompt exclude manage_app, input_text, and run_adb_command, and teach physical navigation/typing
         op_tools = resolve_operator_prompt_tools(ctx)
         assert "manage_app" not in op_tools
+        assert "input_text" not in op_tools
         assert "run_adb_command" not in op_tools
         assert "manage_task" not in op_tools
 
         op_node = OperatorNode(ctx)
         assert "manage_app" not in op_node._available_device_actions()
+        assert "input_text" not in op_node._available_device_actions()
 
         op_prompt = apply_operator_prompt_contract(
             load_operator_prompts()["main_template"], available_tools=op_tools
         )
         assert "manage_app" not in op_prompt
+        assert "input_text" not in op_prompt
         assert "run_adb_command" not in op_prompt
         assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in op_prompt
         assert "Search Bar / Magnifying Glass & Virtual Keyboard Typing" in op_prompt
+        assert "Physical Virtual Keyboard Typing" in op_prompt
 
-        # 3. FlashRunner tools & prompt exclude manage_app and teach human hierarchy
+        # 3. FlashRunner tools & prompt exclude manage_app and input_text, and teach physical navigation/typing
         with patch("artemis.controllers.unified_controller.get_driver"):
             runner = FlashRunner(ctx, goal="Open Calculator")
             flash_tools = runner._get_tools()
             flash_tool_names = [t.name for t in flash_tools]
             assert "manage_app" not in flash_tool_names
+            assert "input_text" not in flash_tool_names
             flash_prompt = runner._render_system_prompt(flash_tools)
             assert "manage_app" not in flash_prompt
+            assert "input_text" not in flash_prompt
             assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in flash_prompt
             assert "Search Bar / Magnifying Glass & Virtual Keyboard Typing" in flash_prompt
+            assert "Physical Virtual Keyboard Typing" in flash_prompt
 
-        # 4. Planner system prompt omits App Management / ADB shell and teaches human hierarchy
+        # 4. Planner system prompt omits App Management / ADB shell and teaches physical navigation & virtual keyboard typing
         planner_data = json.loads(
             (Path("artemis/agents/planner/planner.json")).read_text(encoding="utf-8")
         )
@@ -706,3 +734,275 @@ async def test_non_invasive_disables_manage_app_and_enforces_human_visual_hierar
         assert "App Management" not in cap_block
         assert "Executing arbitrary ADB shell commands" not in cap_block
         assert "Visual App Discovery & Launching (Human Navigation Hierarchy)" in cap_block
+        assert "Physical Virtual Keyboard Typing" in cap_block
+
+
+@pytest.mark.asyncio
+async def test_non_invasive_blocks_direct_adb_xml_subagents_and_tools(monkeypatch):
+    """Issue #153: Verify zero direct ADB / XML / Accessibility calls leak in non-invasive mode."""
+    from PIL import Image
+
+    from artemis.agents.checker.checker import _execute_probe, build_checker_tools, probes_enabled
+    from artemis.agents.diagnoser.diagnoser import Diagnoser
+    from artemis.agents.validator.categories import ValidationErrorCategory
+    from artemis.agents.validator.execution_loop import _run_precondition_gate
+    from artemis.config import VISION_ONLY_NOTICE
+    from artemis.config.constants import ENV_VISION_ONLY_MODE
+    from artemis.config.settings import settings
+    from artemis.context import ArtemisContext, DeviceContext, DevicePlatform
+    from artemis.core.tool_failure import is_tool_failure
+    from artemis.drivers.android.adb_driver import AndroidAdbDriver
+    from artemis.graph.state import State
+    from artemis.mcp.action_server import build_action_server
+    from artemis.mcp.action_session import ActionSession
+    from artemis.mcp.actuators.adb import AdbActuator
+    from artemis.sdk.agent import Agent
+    from artemis.tools.command_tool import (
+        ManageTaskTool,
+        RunAdbCommandTool,
+        RunShortAdbCommandTool,
+    )
+    from artemis.tools.mobile.launch_app import LaunchAppTool
+    from artemis.tools.mobile.read_hierarchy import GetUiHierarchyTool
+
+    monkeypatch.setenv(ENV_VISION_ONLY_MODE, "true")
+    monkeypatch.setattr(settings, "VISION_ONLY_MODE", True)
+    monkeypatch.setattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")
+
+    ctx = ArtemisContext(
+        device=DeviceContext(
+            host_platform="LINUX",
+            mobile_platform=DevicePlatform.ANDROID,
+            device_id="non-invasive-device",
+            device_width=1080,
+            device_height=2400,
+        )
+    )
+
+    # 1. AndroidAdbDriver.get_screen_data skips ui_adb_client and app_current, using screenshot() only
+    img = Image.new("RGB", (64, 128), color=(10, 20, 30))
+    mock_device = MagicMock()
+    mock_device.screenshot.return_value = img
+    mock_device.app_current.side_effect = AssertionError("app_current must not be called")
+    mock_adb_client = MagicMock()
+    mock_adb_client.device.return_value = mock_device
+    mock_ui_client = MagicMock()
+    mock_ui_client.get_screen_data.side_effect = AssertionError("ui_adb_client must not be called")
+    mock_ui_client.get_hierarchy.side_effect = AssertionError("get_hierarchy must not be called")
+
+    driver = AndroidAdbDriver(
+        device_id="dev-1",
+        adb_client=mock_adb_client,
+        ui_adb_client=mock_ui_client,
+    )
+    screen = await driver.get_screen_data(skip_settling=True)
+    assert screen.ui_elements == []
+    assert screen.ui_hierarchy_xml is None
+    assert screen.package is None
+    assert screen.activity is None
+    assert screen.width == 64
+    assert screen.height == 128
+    mock_device.screenshot.assert_called_once()
+    mock_device.app_current.assert_not_called()
+    mock_ui_client.get_screen_data.assert_not_called()
+    mock_ui_client.get_hierarchy.assert_not_called()
+
+    # 2. Checker disables probe_device and blocks _execute_probe
+    assert probes_enabled(ctx) is False
+    checker_tools = build_checker_tools(ctx, "final")
+    assert all(t.name != "probe_device" for t in checker_tools)
+    probe_res = await _execute_probe(ctx, ["dumpsys", "battery"])
+    assert is_tool_failure(probe_res)
+
+    # 3. Diagnoser strips run_adb_command, analyze_logs, and get_ui_hierarchy
+    diag_node = Diagnoser(ctx)
+    diag_node.is_device_online = True
+    diag_tool_names = {t.name for t in diag_node._build_traced_tools()}
+    assert "run_adb_command" not in diag_tool_names
+    assert "analyze_logs" not in diag_tool_names
+    assert "get_ui_hierarchy" not in diag_tool_names
+
+    # 4. Direct tools refuse execution in non-invasive mode
+    assert is_tool_failure(await RunAdbCommandTool().execute(ctx=ctx, CommandLine="id"))
+    assert is_tool_failure(await ManageTaskTool().execute(ctx=ctx, Action="list"))
+    assert is_tool_failure(await RunShortAdbCommandTool().execute(ctx=ctx, CommandLine="id"))
+    launch_out = await LaunchAppTool().execute(ctx=ctx, app_name="Settings")
+    assert "disabled in non-invasive mode" in str(launch_out)
+    hier_out = await GetUiHierarchyTool().execute(ctx=ctx)
+    assert hier_out == VISION_ONLY_NOTICE
+
+    # 5. MCP action_server get_ui_hierarchy returns [] without calling actuator
+    mock_controller = MagicMock()
+    mock_controller.get_ui_elements = AsyncMock(
+        side_effect=AssertionError("controller.get_ui_elements must not be called")
+    )
+    actuator = AdbActuator(ctx, controller=mock_controller)
+    server = build_action_server(actuator)
+    session = await ActionSession(server).start()
+    try:
+        assert await session.ui_hierarchy() == []
+    finally:
+        await session.aclose()
+
+    # 6. Validator precondition gate skips XML validation and goes straight to pixel check
+    fake_node = MagicMock()
+    fake_node._validate_action_precondition = AsyncMock(
+        side_effect=AssertionError("XML precondition check must be skipped")
+    )
+    fake_node._validate_action_precondition_pixel = AsyncMock(
+        return_value=(True, ValidationErrorCategory.NONE, "")
+    )
+    ok, cat, _ = await _run_precondition_gate(
+        fake_node,
+        MagicMock(),
+        {"action": "tap", "target_text": "Settings", "target_bounds": [0, 0, 100, 100]},
+        State.initial("Open Settings"),
+        "",
+        [50, 50],
+    )
+    assert ok is True
+    assert cat == ValidationErrorCategory.NONE
+    fake_node._validate_action_precondition.assert_not_called()
+    fake_node._validate_action_precondition_pixel.assert_awaited_once()
+
+    # 7. Agent hybrid & offline initialization skips Accessibility Helper, dumpsys, and does not crash without ADB
+    monkeypatch.delenv("ARTEMIS_DEVICE_ID", raising=False)
+    monkeypatch.delenv("ADB_DEVICE_SERIAL", raising=False)
+    monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+    agent_offline = Agent()
+    with (
+        patch("third_party.mobile_use.sdk.agent.which", return_value=None),
+        patch(
+            "third_party.mobile_use.sdk.agent.create_screen_client",
+            side_effect=AssertionError("create_screen_client must not be called"),
+        ),
+        patch.object(agent_offline, "_prewarm_llm_connections", new=AsyncMock()),
+    ):
+        assert await agent_offline._init_internal() is True
+        assert agent_offline._adb_client is None
+        assert agent_offline._ui_adb_client is None
+        assert agent_offline._device_context.device_id == "non-invasive-device"
+        assert agent_offline._device_context.device_width == 1080
+        # Unlock & environment prep must be no-ops without raising AgentError
+        await agent_offline._ensure_device_unlocked()
+        await agent_offline._prepare_device_environment(ctx)
+
+    agent_hybrid = Agent()
+    mock_adb_instance = MagicMock()
+    mock_adb_instance.device.return_value.window_size.return_value = (1080, 2400)
+    with (
+        patch("third_party.mobile_use.sdk.agent.which", return_value="/usr/bin/adb"),
+        patch(
+            "third_party.mobile_use.sdk.agent.get_first_device",
+            return_value=("emulator-5554", DevicePlatform.ANDROID, None),
+        ),
+        patch("third_party.mobile_use.sdk.agent.AdbClient", return_value=mock_adb_instance),
+        patch(
+            "third_party.mobile_use.sdk.agent.create_screen_client",
+            side_effect=AssertionError("create_screen_client must not be called"),
+        ),
+        patch.object(agent_hybrid, "_prewarm_llm_connections", new=AsyncMock()),
+    ):
+        assert await agent_hybrid._init_internal() is True
+        assert agent_hybrid._adb_client is mock_adb_instance
+        assert agent_hybrid._ui_adb_client is None
+        assert agent_hybrid._device_context.device_id == "emulator-5554"
+
+
+@pytest.mark.asyncio
+async def test_env_precedence_screen_client_factory_and_scrcpy_disabled(monkeypatch, tmp_path):
+    """Verify shell VISION_ONLY_MODE overrides .env, ScreenClientFactory returns visual_only,
+    and scrcpy/screen recording is automatically disabled in non-invasive mode."""
+    from artemis.clients.screen_client_factory import (
+        VisualOnlyScreenClient,
+        create_screen_client,
+        describe_backend,
+        hierarchy_backend_sentence,
+    )
+    from artemis.config.core.engine import CascadingConfigEngine
+    from artemis.config.settings import is_non_invasive_mode
+    from artemis.context import ArtemisContext, DeviceContext, DevicePlatform
+    from artemis.controllers.unified_controller import UnifiedMobileController
+    from artemis.drivers.android.adb_driver import AndroidAdbDriver
+    from artemis.sdk.builders.agent_config_builder import AgentConfigBuilder
+
+    # 1. Process env VISION_ONLY_MODE=true must NOT be clobbered by workspace .env VISION_ONLY_MODE=false
+    ws_env = tmp_path / ".env"
+    ws_env.write_text("VISION_ONLY_MODE=false\n", encoding="utf-8")
+    monkeypatch.setenv(ENV_VISION_ONLY_MODE, "true")
+    monkeypatch.setattr(settings, "VISION_ONLY_MODE", False)
+    monkeypatch.setattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")
+
+    CascadingConfigEngine(workspace_root=tmp_path)
+    assert os.environ.get(ENV_VISION_ONLY_MODE) == "true"
+    assert is_vision_only_mode() is True
+    assert is_non_invasive_mode() is True
+
+    # Reverse precedence: explicit env=false wins even if settings.VISION_ONLY_MODE is True
+    monkeypatch.setenv(ENV_VISION_ONLY_MODE, "false")
+    monkeypatch.setattr(settings, "VISION_ONLY_MODE", True)
+    assert is_vision_only_mode() is False
+    assert is_non_invasive_mode() is False
+
+    # Re-enable via env only (simulating shell `$env:VISION_ONLY_MODE="true"` with .env=false)
+    monkeypatch.setenv(ENV_VISION_ONLY_MODE, "true")
+    monkeypatch.setattr(settings, "VISION_ONLY_MODE", False)
+    assert is_non_invasive_mode() is True
+
+    # 2. ScreenClientFactory returns VisualOnlyScreenClient and never instantiates Helper/UIAutomator2
+    with (
+        patch(
+            "artemis.clients.screen_client_factory.AccessibilityClient",
+            side_effect=AssertionError("AccessibilityClient must not be instantiated"),
+        ),
+        patch(
+            "artemis.clients.screen_client_factory.UIAutomatorClient",
+            side_effect=AssertionError("UIAutomatorClient must not be instantiated"),
+        ),
+    ):
+        client = create_screen_client("0083078983")
+        assert isinstance(client, VisualOnlyScreenClient)
+        assert client.active_backend == "visual_only"
+        assert describe_backend(client) == "visual_only"
+        assert "visual-only / non-invasive mode" in (hierarchy_backend_sentence(client) or "")
+        client.connect()
+        assert client.get_hierarchy() == ""
+        data = client.get_screen_data()
+        assert data.elements == []
+        assert data.hierarchy_xml == ""
+        client.disconnect()
+
+    # 3. AgentConfigBuilder automatically disables video_recording_tools_enabled in non-invasive mode
+    cfg = AgentConfigBuilder().build(validate_profiles=False)
+    assert cfg.video_recording_tools_enabled is False
+
+    # 4. UnifiedMobileController & AndroidAdbDriver refuse to spawn scrcpy in non-invasive mode
+    ctx = ArtemisContext(
+        device=DeviceContext(
+            host_platform="WINDOWS",
+            mobile_platform=DevicePlatform.ANDROID,
+            device_id="0083078983",
+            device_width=1080,
+            device_height=2400,
+        )
+    )
+    driver = AndroidAdbDriver(device_id="0083078983", adb_client=MagicMock())
+    with patch(
+        "asyncio.create_subprocess_exec",
+        side_effect=AssertionError("scrcpy subprocess must not be spawned"),
+    ):
+        await driver.start_video_recording(output_dir=tmp_path)
+
+    with (
+        patch("artemis.controllers.unified_controller.get_driver", return_value=driver),
+        patch(
+            "artemis.controllers.unified_controller.get_android_display_state",
+            new=AsyncMock(side_effect=AssertionError("display state probe must not run")),
+        ),
+    ):
+        controller = UnifiedMobileController(ctx)
+        rec_res = await controller.start_video_recording(output_dir=tmp_path)
+        assert rec_res.success is False
+        assert "disabled in non-invasive mode" in rec_res.message
+
+

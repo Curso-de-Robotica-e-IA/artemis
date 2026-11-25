@@ -239,9 +239,9 @@ class FlashRunner:
             from artemis.mcp.action_manifest import filter_declarations
 
             tools = filter_declarations(tools, actuator, "flash")
-        elif is_vision_only_mode() or str(
-            getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")
-        ).strip().lower() == "http":
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
             from artemis.mcp.actuators.adb import NON_INVASIVE_EXCLUDED_ACTIONS
 
             tools = [t for t in tools if t.name not in NON_INVASIVE_EXCLUDED_ACTIONS]

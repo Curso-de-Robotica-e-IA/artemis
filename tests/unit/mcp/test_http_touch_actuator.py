@@ -72,11 +72,11 @@ def test_actuator_protocol_and_capabilities(test_context: ArtemisContext, touch_
     assert isinstance(actuator, HttpTouchActuator)
     assert actuator.capabilities() == DEVICE_ACTIONS - NON_INVASIVE_EXCLUDED_ACTIONS
     assert "manage_app" not in actuator.capabilities()
+    assert "input_text" not in actuator.capabilities()
     assert "open_link" not in actuator.capabilities()
     assert "wait_for_text" not in actuator.capabilities()
-    assert "input_text" in actuator.capabilities()
-    assert "focus_and_clear_text" in actuator.capabilities()
-    assert "erase_one_char" in actuator.capabilities()
+    assert "focus_and_clear_text" not in actuator.capabilities()
+    assert "erase_one_char" not in actuator.capabilities()
     assert "press_key" in actuator.capabilities()
     # Contract validation must pass with zero violations
     validate_actuator(actuator)
@@ -180,19 +180,37 @@ async def test_text_and_key_routes(
         ):
             actuator = HttpTouchActuator(test_context, client=http_client)
 
-            # 1. Input text (/input-text)
+            # 1. Input text, focus_and_clear_text, erase_one_char, open_link, wait_for_text are disabled
+            from artemis.mcp.action_types import ActionCode
+
             res_text = await actuator.input_text("Test Input")
-            assert res_text.ok
+            assert not res_text.ok
+            assert res_text.code == ActionCode.UNSUPPORTED
+            assert "Direct text injection is disabled in non-invasive mode" in res_text.message
 
-            # 2. Focus and clear text (/focus-and-clear)
+            # 2. Focus and clear text disabled in non-invasive mode
             res_fc = await actuator.focus_and_clear_text(400, 300)
-            assert res_fc.ok
+            assert not res_fc.ok
+            assert res_fc.code == ActionCode.UNSUPPORTED
 
-            # 3. Erase character (/erase-char)
+            # 3. Erase character disabled in non-invasive mode
             res_ec = await actuator.erase_one_char()
-            assert res_ec.ok
+            assert not res_ec.ok
+            assert res_ec.code == ActionCode.UNSUPPORTED
 
-            # 4. Press key (/press-key)
+            # 4. Open link and wait_for_text disabled in non-invasive mode
+            res_link = await actuator.open_link("https://example.com")
+            assert not res_link.ok
+            assert res_link.code == ActionCode.UNSUPPORTED
+
+            res_wait = await actuator.wait_for_text("Settings")
+            assert not res_wait.ok
+            assert res_wait.code == ActionCode.UNSUPPORTED
+
+            # 5. UI elements query returns empty list without touching device
+            assert await actuator.get_ui_elements() == []
+
+            # 6. Press key (/press-key) remains supported on HTTP Touch API
             res_pk = await actuator.press_key("BACK")
             assert res_pk.ok
 

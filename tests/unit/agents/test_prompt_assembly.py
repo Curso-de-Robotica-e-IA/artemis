@@ -170,13 +170,16 @@ def _render_flash(available_tools: frozenset[str]) -> str:
     return Template(template_text).render(goal="test goal", available_tools=available_tools)
 
 
-FLASH_FULL = frozenset({"manage_app", "wait_for_delay", "click_sequence", "click", "swipe"})
+FLASH_FULL = frozenset(
+    {"manage_app", "input_text", "wait_for_delay", "click_sequence", "click", "swipe"}
+)
 
 
 def test_flash_full_set_keeps_both_segments():
     out = _render_flash(FLASH_FULL)
     assert "**App Launching**" in out
     assert "**Timed Waiting & Transitions**" in out
+    assert "**Physical Virtual Keyboard Typing**" not in out
     assert "{%" not in out
 
 
@@ -191,6 +194,28 @@ def test_flash_without_manage_app_drops_app_launching():
     assert "**Step 3 (Search Bar / Magnifying Glass & Virtual Keyboard Typing)**" in out
     # The neighbouring numbered rule survives.
     assert "**Do not determine element coordinates based on guesswork.**" in out
+
+
+def test_flash_without_input_text_teaches_physical_virtual_keyboard():
+    out = _render_flash(FLASH_FULL - {"input_text"})
+    assert not _tool_refs(out, "input_text")
+    assert "**Physical Virtual Keyboard Typing**" in out
+    assert "**Step 1 (Open Virtual Keyboard)**" in out
+    assert "**Step 2 (Key-by-Key Physical Typing)**" in out
+    assert "`click_sequence`" in out
+
+
+def test_operator_without_input_text_teaches_physical_virtual_keyboard():
+    template = load_operator_prompts()["main_template"]
+    out = apply_operator_prompt_contract(
+        template,
+        available_tools=OPERATOR_PROMPT_TOOLSET - {"input_text", "manage_app"},
+    )
+    assert not _tool_refs(out, "input_text")
+    assert not _tool_refs(out, "manage_app")
+    assert "**Physical Virtual Keyboard Typing**" in out
+    assert "**Open Virtual Keyboard**" in out
+    assert "**Key-by-Key Physical Typing**" in out
 
 
 def test_flash_without_wait_for_delay_drops_timed_waiting():

@@ -103,6 +103,8 @@ class HierarchyBackend(str, Enum):
     AUTO = "auto"
     HELPER = "helper"
     UIAUTOMATOR = "uiautomator"
+    NONE = "none"
+    VISUAL_ONLY = "visual_only"
 
 
 def resolve_backend(value: str | HierarchyBackend | None = None) -> HierarchyBackend:
@@ -313,14 +315,73 @@ class FallbackScreenClient:
         return self._call("press_key", key)
 
 
-ScreenClient = AccessibilityClient | UIAutomatorClient | FallbackScreenClient
+class VisualOnlyScreenClient:
+    """No-op screen client used in non-invasive / vision-only mode.
+
+    Never attaches the Artemis Accessibility Helper APK or UIAutomator2 and
+    never extracts XML UI hierarchies from the device.
+    """
+
+    def __init__(self, device_id: str) -> None:
+        self._device_id = device_id
+        self._active_backend: str = "visual_only"
+        self.backend_history: list[dict[str, Any]] = []
+
+    @property
+    def device_id(self) -> str:
+        return self._device_id
+
+    @property
+    def active_backend(self) -> str:
+        return self._active_backend
+
+    def add_backend_listener(self, listener: BackendChangeListener) -> None:
+        _ = listener
+
+    def remove_backend_listener(self, listener: BackendChangeListener) -> None:
+        _ = listener
+
+    def connect(self, on_event: ProvisionEvent | None = None) -> None:
+        _ = on_event
+
+    def disconnect(self) -> None:
+        return None
+
+    def get_screen_data(self) -> UIAutomatorScreenData:
+        return UIAutomatorScreenData(
+            base64="",
+            hierarchy_xml="",
+            elements=[],
+            width=0,
+            height=0,
+            package=None,
+            activity=None,
+        )
+
+    def get_hierarchy(self) -> str:
+        return ""
+
+    def get_screenshot(self) -> Image.Image | None:
+        return None
+
+    def get_screenshot_base64(self) -> str | None:
+        return None
+
+
+ScreenClient = (
+    AccessibilityClient | UIAutomatorClient | FallbackScreenClient | VisualOnlyScreenClient
+)
 
 
 def create_screen_client(
     device_id: str, backend: str | HierarchyBackend | None = None
 ) -> ScreenClient:
     """Build the screen client for ``device_id`` according to the configured backend."""
+    from artemis.config.settings import is_non_invasive_mode
+
     resolved = resolve_backend(backend)
+    if is_non_invasive_mode() or resolved in (HierarchyBackend.NONE, HierarchyBackend.VISUAL_ONLY):
+        return VisualOnlyScreenClient(device_id)
     if resolved is HierarchyBackend.UIAUTOMATOR:
         return UIAutomatorClient(device_id=device_id)
     if resolved is HierarchyBackend.HELPER:
@@ -333,6 +394,8 @@ def describe_backend(client: Any) -> str | None:
     active = getattr(client, "active_backend", None)
     if active:
         return str(active)
+    if isinstance(client, VisualOnlyScreenClient):
+        return "visual_only"
     if isinstance(client, UIAutomatorClient):
         return "uiautomator"
     if isinstance(client, AccessibilityClient):
@@ -361,7 +424,11 @@ def hierarchy_backend_summary(client: Any) -> dict[str, Any] | None:
     }
 
 
-_BACKEND_LABEL = {"helper": "the Artemis accessibility helper", "uiautomator": "UIAutomator2"}
+_BACKEND_LABEL = {
+    "helper": "the Artemis accessibility helper",
+    "uiautomator": "UIAutomator2",
+    "visual_only": "none (visual-only / non-invasive mode)",
+}
 
 
 def hierarchy_backend_sentence(
@@ -393,6 +460,7 @@ __all__ = [
     "HelperUnavailable",
     "HierarchyBackend",
     "ScreenClient",
+    "VisualOnlyScreenClient",
     "create_screen_client",
     "describe_backend",
     "device_state",

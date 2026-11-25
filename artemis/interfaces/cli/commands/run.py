@@ -135,6 +135,11 @@ async def execute_task(
             pro_mode=explorer_pro_mode,
         )
 
+    from shutil import which
+
+    from artemis.config.settings import is_non_invasive_mode
+
+    non_invasive = is_non_invasive_mode()
     target_serial = (
         device_serial
         or settings.ADB_DEVICE_SERIAL
@@ -142,7 +147,7 @@ async def execute_task(
         or os.environ.get("ANDROID_SERIAL")
         or os.environ.get("ARTEMIS_DEVICE_ID")
     )
-    if not target_serial:
+    if not target_serial and (not non_invasive or which("adb")):
         try:
             from artemis.runtime import device_pool
 
@@ -303,10 +308,21 @@ def run_command(
 ) -> None:
     """Run an autonomous UI automation task on the connected Android device."""
     _ = standalone
-    ensure_video_recording_available(with_video_recording_tools)
+    from artemis.config.settings import is_non_invasive_mode
+
+    non_invasive = is_non_invasive_mode()
+    if not non_invasive:
+        ensure_video_recording_available(with_video_recording_tools)
 
     console = Console()
-    display_local_device_status(console, host=settings.ADB_HOST, port=settings.ADB_PORT)
+    if non_invasive:
+        console.print(
+            "\n[bold]👁️ Device Status[/bold]\n"
+            "✅ [bold green]Non-invasive visual mode active[/bold green] "
+            "(direct ADB shortcuts, XML hierarchy, and Accessibility Helper disabled)"
+        )
+    else:
+        display_local_device_status(console, host=settings.ADB_HOST, port=settings.ADB_PORT)
 
     cancelled = False
     original_sigterm = None

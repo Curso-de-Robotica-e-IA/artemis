@@ -72,10 +72,19 @@ class LaunchAppTool(ArtemisTool):
         error_msg = None
 
         try:
-            if not app:
+            from artemis.config.settings import is_non_invasive_mode
+
+            if is_non_invasive_mode():
+                success = False
+                error_msg = "Direct app launching (launch_app) is disabled in non-invasive mode."
+                outcome = (
+                    f"{error_msg} Locate and open the app visually via the home screen, "
+                    "app drawer swipes, or launcher search bar."
+                )
+            elif not app:
                 raise ValueError("app_name parameter is required.")
 
-            if ctx is not None:
+            elif ctx is not None:
                 package_name = await find_package(ctx=ctx, app_name=app)
                 if not package_name:
                     success = False

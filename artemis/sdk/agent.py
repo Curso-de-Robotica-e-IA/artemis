@@ -213,6 +213,12 @@ class Agent(AgentBase):
 
     async def _ensure_device_unlocked(self) -> None:
         """Reject secure keyguard instead of allowing an agent to guess credentials."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            logger.debug("Skipping ADB keyguard unlock probe in non-invasive mode.")
+            return
+
         if self._adb_client is None:
             raise AgentError("ADB client is not initialized.")
 
@@ -237,6 +243,14 @@ class Agent(AgentBase):
 
     async def _prepare_device_environment(self, context: ArtemisContext):
         """Prepare device environment flags (like forcing Web Accessibility) before the task runs."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            logger.info(
+                "Skipping ADB device environment prep (Web Accessibility flags) in non-invasive mode."
+            )
+            return
+
         if not self._config.force_web_accessibility:
             logger.info(
                 "Forcing web accessibility is disabled in AgentConfig. Skipping"
@@ -308,13 +322,19 @@ class Agent(AgentBase):
 
         task_name = self._prepare_trace_paths(task)
 
+        from artemis.config.settings import is_non_invasive_mode
+
+        video_enabled = (
+            False if is_non_invasive_mode() else self._config.video_recording_tools_enabled
+        )
+
         context.execution_setup = ExecutionSetup(
             traces_path=self._tmp_traces_dir,
             trace_name=task_name,
             enable_remote_tracing=task.request.enable_remote_tracing
             if task.request.record_trace
             else False,
-            video_recording_tools_enabled=self._config.video_recording_tools_enabled,
+            video_recording_tools_enabled=video_enabled,
             disable_checker=self._config.disable_checker,
             disable_midway_checks=self._config.disable_midway_checks,
             disable_final_check=self._config.disable_final_check,
@@ -373,6 +393,11 @@ class Agent(AgentBase):
 
     async def _connect_screen_client(self, context: ArtemisContext, session_id: str) -> None:
         """Connect the screen client with visible progress for slow first-time steps."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            self._announce_hierarchy_backend(context, session_id, None, "visual_only", None)
+            return
         client = self._ui_adb_client
         previous_listener = getattr(self, "_hierarchy_backend_listener", None)
         if previous_listener is not None:
@@ -442,7 +467,11 @@ class Agent(AgentBase):
         device_info, and status.json for ``mobile_manage_task``. Runs from
         worker threads too, so every sink is best effort.
         """
-        label = {"helper": "Artemis accessibility helper", "uiautomator": "UIAutomator2"}
+        label = {
+            "helper": "Artemis accessibility helper",
+            "uiautomator": "UIAutomator2",
+            "visual_only": "none (visual-only / non-invasive mode)",
+        }
         version = helper_version(self._ui_adb_client)
         if previous is None:
             message = f"UI hierarchy source: {label.get(backend, backend)}"

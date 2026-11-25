@@ -131,8 +131,12 @@ class AndroidAdbDriver(BaseDeviceDriver):
         current_package: str | None = None
         current_activity: str | None = None
 
-        # Check if ui_adb_client has direct screen data support
-        if self._ui_adb_client and hasattr(self._ui_adb_client, "get_screen_data"):
+        from artemis.config.settings import is_non_invasive_mode
+
+        non_invasive = is_non_invasive_mode()
+
+        # Check if ui_adb_client has direct screen data support (skipped in non-invasive/vision-only mode)
+        if not non_invasive and self._ui_adb_client and hasattr(self._ui_adb_client, "get_screen_data"):
             try:
                 raw_ui_data = self._ui_adb_client.get_screen_data()
                 if (
@@ -165,7 +169,7 @@ class AndroidAdbDriver(BaseDeviceDriver):
             except Exception as e:
                 logger.debug(f"Direct ui_adb_client.get_screen_data error: {e}")
 
-        if not screenshot_base64 or not isinstance(screenshot_base64, str):
+        if (not screenshot_base64 or not isinstance(screenshot_base64, str)) and self._adb_client is not None:
             try:
                 pil_img = await asyncio.to_thread(self.device.screenshot)
                 if hasattr(pil_img, "save"):
@@ -182,8 +186,8 @@ class AndroidAdbDriver(BaseDeviceDriver):
             screenshot_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             screenshot_bytes = base64.b64decode(screenshot_base64)
 
-        # 2. Capture UI Hierarchy via UIAutomator
-        if self._ui_adb_client and not ui_elements:
+        # 2. Capture UI Hierarchy via UIAutomator (skipped in non-invasive/vision-only mode)
+        if not non_invasive and self._ui_adb_client and not ui_elements:
             try:
                 if hasattr(self._ui_adb_client, "get_hierarchy"):
                     res = self._ui_adb_client.get_hierarchy()
@@ -224,7 +228,15 @@ class AndroidAdbDriver(BaseDeviceDriver):
             else base64.b64decode(clean_b64)
         )
 
-        if not current_activity or current_activity.startswith("android.widget.") or current_activity.startswith("android.view."):
+        if (
+            not non_invasive
+            and self._adb_client is not None
+            and (
+                not current_activity
+                or current_activity.startswith("android.widget.")
+                or current_activity.startswith("android.view.")
+            )
+        ):
             try:
                 if hasattr(self.device, "app_current"):
                     app_info = await asyncio.to_thread(self.device.app_current)
@@ -475,6 +487,11 @@ class AndroidAdbDriver(BaseDeviceDriver):
 
     async def start_video_recording(self, output_dir: Path | None = None) -> None:
         """Starts screen recording via scrcpy in background."""
+        from artemis.config.settings import is_non_invasive_mode
+
+        if is_non_invasive_mode():
+            logger.info("Skipping scrcpy video recording in non-invasive mode.")
+            return
         out_dir = output_dir or get_temp_dir("recordings")
         out_dir.mkdir(parents=True, exist_ok=True)
         self._recording_mkv_path = out_dir / "recording.mkv"
