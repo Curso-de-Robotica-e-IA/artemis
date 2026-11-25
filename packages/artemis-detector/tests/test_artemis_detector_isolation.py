@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import base64
+import importlib.metadata
 import io
 import sys
 from pathlib import Path
@@ -217,3 +218,16 @@ def test_icon_detector_detect_end_to_end_with_stub_llm(tmp_path: Path) -> None:
     assert empty_result.items == []
     assert empty_result.annotated_image_path is None
     assert not (tmp_path / "should_not_exist.png").exists()
+
+
+def test_package_distribution_metadata() -> None:
+    """Installed distribution metadata matches version and minimal PyPI dependencies."""
+    assert importlib.metadata.version("artemis-detector") == artemis_detector.__version__
+    dist = importlib.metadata.distribution("artemis-detector")
+    assert dist.metadata["Name"] == "artemis-detector"
+
+    requires = dist.requires or []
+    base_requires = [req for req in requires if "; extra ==" not in req]
+    assert any(req.startswith("langchain-core") for req in base_requires)
+    assert any(req.startswith("pillow") for req in base_requires)
+    assert all("git+" not in req for req in requires)
