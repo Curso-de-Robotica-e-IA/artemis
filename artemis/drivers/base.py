@@ -62,6 +62,8 @@ class ScreenData(BaseModel):
     height: int = Field(default=2400, description="Device screen height in pixels")
     timestamp: float = Field(default_factory=time.time, description="Capture timestamp")
     platform: str = Field(default="android", description="Platform identifier")
+    package: str | None = Field(default=None, description="Current foreground Android package")
+    activity: str | None = Field(default=None, description="Current foreground Android activity")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -132,7 +134,7 @@ class BaseDeviceDriver(ABC):
         start_y: int,
         end_x: int,
         end_y: int,
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         """Performs a drag/swipe gesture from start to end pixel coordinates."""
         ...
@@ -141,7 +143,7 @@ class BaseDeviceDriver(ABC):
     async def swipe_direction(
         self,
         direction: SwipeDirection | Literal["up", "down", "left", "right"],
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> bool:
         """Performs standard cardinal scrolling gesture across device viewport."""
         ...

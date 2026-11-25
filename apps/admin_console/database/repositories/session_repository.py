@@ -314,6 +314,7 @@ class SessionRepository:
         from artemis.services.token_meter import (
             OPERATOR_CONTEXT_WINDOW_TOKENS,
             OPERATOR_NODE_NAMES,
+            resolve_operator_context_window,
         )
 
         def _int(value: Any) -> int:
@@ -325,14 +326,25 @@ class SessionRepository:
         llm_calls = prompt = completion = total = cached = 0
         operator_context: int | None = None
         operator_context_at: float | None = None
+        detected_source: str | None = None
+
         with db_session(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT payload, timestamp FROM traces WHERE session_id = ?"
+                "SELECT payload, timestamp, name FROM traces WHERE session_id = ?"
                 " AND type = 'llm_call' AND name = 'llm_usage' ORDER BY timestamp ASC",
                 (session_id,),
             )
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            if not rows:
+                cursor.execute(
+                    "SELECT payload, timestamp, name FROM traces WHERE session_id = ?"
+                    " AND type = 'llm_call' ORDER BY timestamp ASC",
+                    (session_id,),
+                )
+                rows = cursor.fetchall()
+
+            for row in rows:
                 raw = row["payload"]
                 try:
                     payload = json.loads(raw) if isinstance(raw, str) else raw
@@ -340,19 +352,33 @@ class SessionRepository:
                     continue
                 if not isinstance(payload, dict):
                     continue
-                p = _int(payload.get("prompt_tokens"))
-                c = _int(payload.get("completion_tokens"))
-                t = _int(payload.get("total_tokens")) or (p + c)
+                tu = (
+                    payload.get("token_usage")
+                    if isinstance(payload.get("token_usage"), dict)
+                    else payload
+                )
+                p = _int(tu.get("prompt_tokens"))
+                c = _int(tu.get("completion_tokens"))
+                t = _int(tu.get("total_tokens")) or (p + c)
                 if t <= 0:
                     continue
                 llm_calls += 1
                 prompt += p
                 completion += c
                 total += t
-                cached += _int(payload.get("cached_tokens"))
-                node = str(payload.get("node") or "").strip().lower()
-                if node in OPERATOR_NODE_NAMES:
+                cached += _int(tu.get("cached_tokens"))
+
+                src = payload.get("source") or tu.get("source")
+                if src:
+                    detected_source = str(src)
+
+                row_name = str(row["name"] if "name" in row.keys() else "").strip().lower()
+                node = str(payload.get("node") or "").strip().lower() or row_name
+                if node in OPERATOR_NODE_NAMES or "operator" in node or "flashrunner" in node:
                     operator_context = _int(payload.get("context_base_tokens")) or p
+                    operator_context_at = row["timestamp"]
+                elif operator_context is None and p > 0:
+                    operator_context = p
                     operator_context_at = row["timestamp"]
 
             cursor.execute("SELECT device_info FROM sessions WHERE session_id = ?", (session_id,))
@@ -360,6 +386,7 @@ class SessionRepository:
 
         profile: str | None = None
         run_tuning: dict[str, Any] | None = None
+        d_info: dict[str, Any] | None = None
         if session_row and session_row["device_info"]:
             try:
                 d_info = json.loads(session_row["device_info"])
@@ -371,6 +398,19 @@ class SessionRepository:
                 if isinstance(tuning, dict) and tuning:
                     run_tuning = dict(tuning)
 
+        detected_provider: str | None = None
+        detected_model: str | None = None
+        if detected_source and ":" in detected_source:
+            parts = detected_source.split(":", 1)
+            detected_provider = parts[0]
+            detected_model = parts[1]
+
+        window_tokens = resolve_operator_context_window(
+            model=detected_model,
+            provider=detected_provider,
+            device_info=d_info,
+        )
+
         return {
             "session_id": session_id,
             "llm_calls": llm_calls,
@@ -379,7 +419,7 @@ class SessionRepository:
             "total_tokens": total,
             "cached_tokens": cached,
             "operator_context_tokens": operator_context,
-            "operator_context_window_tokens": OPERATOR_CONTEXT_WINDOW_TOKENS,
+            "operator_context_window_tokens": window_tokens,
             "operator_context_updated_at": operator_context_at,
             "profile": profile,
             "run_tuning": run_tuning,

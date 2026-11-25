@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from artemis.config.constants import (
@@ -35,6 +35,7 @@ from artemis.config.constants import (
     ENV_OPEN_ROUTER_API_KEY,
     ENV_OPENAI_API_KEY,
     ENV_VISION_API_KEY,
+    ENV_VISION_ONLY_MODE,
     ENV_XAI_API_KEY,
 )
 from artemis.config.paths import (
@@ -48,10 +49,10 @@ from third_party.mobile_use.utils.logger import get_logger
 
 # Installed wheels load .env from the user directory, outside site-packages.
 _canonical_env = get_env_file()
-load_dotenv(dotenv_path=_canonical_env, verbose=True)
+load_dotenv(dotenv_path=_canonical_env, override=True, verbose=True)
 _global_env = GLOBAL_APP_DIR / ".env"
 if _global_env.exists() and _global_env.resolve() != _canonical_env.resolve():
-    load_dotenv(dotenv_path=_global_env, verbose=True)
+    load_dotenv(dotenv_path=_global_env, override=True, verbose=True)
 
 logger = get_logger(__name__)
 
@@ -84,6 +85,7 @@ def is_placeholder_key(val: str | SecretStr | None) -> bool:
         (raw_str.startswith("your_") and raw_str.endswith("_here"))
         or (raw_str.startswith("<") and raw_str.endswith(">"))
         or (raw_str.startswith("[") and raw_str.endswith("]"))
+        or "dummy" in raw_str
     ):
         return True
     return False
@@ -107,12 +109,45 @@ class Settings(BaseSettings):
     API_KEY: SecretStr | None = None
 
     # Custom Provider Endpoints
-    OPENAI_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE_URL",
+            "OPENAI_API_BASE",
+        ),
+    )
 
     # Android ADB Connectivity
     ADB_HOST: str | None = Field(default=DEFAULT_ADB_HOST)
     ADB_PORT: int | None = Field(default=DEFAULT_ADB_PORT)
-    ADB_DEVICE_SERIAL: str | None = None
+    ADB_DEVICE_SERIAL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ADB_DEVICE_SERIAL",
+            "ANDROID_SERIAL",
+            "ARTEMIS_DEVICE_ID",
+        ),
+    )
+    ARTEMIS_ACTUATOR_BACKEND: str = Field(
+        default="adb",
+        description="Device actuation backend: 'adb' for direct ADB, or 'http' for HTTP Touch API.",
+    )
+    ARTEMIS_TOUCH_API_URL: str = Field(
+        default="http://127.0.0.1:8001",
+        description="Base URL for the HTTP Touch API server.",
+    )
+    ARTEMIS_TOUCH_API_TIMEOUT_S: float = Field(
+        default=30.0,
+        description="Timeout in seconds for HTTP Touch API requests.",
+    )
+    ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S: float = Field(
+        default=300.0,
+        description=(
+            "Timeout in seconds for the initial POST /device handshake on the HTTP Touch API "
+            "(real robot connection and internal setup typically takes 3+ minutes)."
+        ),
+    )
     # UI hierarchy backend: "auto" = Accessibility Helper with UIAutomator2
     # fallback, "helper" = helper only, "uiautomator" = UIAutomator2 only.
     ARTEMIS_HIERARCHY_BACKEND: str = Field(default="auto")
@@ -124,6 +159,68 @@ class Settings(BaseSettings):
     PROJECT_NAME: str | None = None
     ARTEMIS_DEFAULT_PROFILE: str = Field(default=DEFAULT_PROFILE)
     ARTEMIS_DEFAULT_MODEL: str = Field(default=DEFAULT_MODEL)
+    ARTEMIS_TASK_TIMEOUT: float | None = Field(
+        default=600.0,
+        validation_alias=AliasChoices(
+            "ARTEMIS_TASK_TIMEOUT",
+            "ARTEMIS_TIMEOUT",
+            "TASK_TIMEOUT",
+        ),
+        description="Timeout in seconds for agent tasks. None or <= 0 for unlimited.",
+    )
+
+    @field_validator("ARTEMIS_TASK_TIMEOUT", mode="before")
+    @classmethod
+    def _parse_task_timeout(cls, v: object) -> float | None:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return None if v <= 0 else float(v)
+        s = str(v).strip().lower()
+        if s in ("0", "-1", "none", "null", "unlimited", "infinite", "disable", "disabled", "false"):
+            return None
+        try:
+            val = float(s)
+            return None if val <= 0 else val
+        except ValueError:
+            return 600.0
+
+    ARTEMIS_IMAGE_MAX_DIM: int = Field(
+        default=1280,
+        validation_alias=AliasChoices(
+            "ARTEMIS_IMAGE_MAX_DIM",
+            "IMAGE_MAX_DIM",
+            "ARTEMIS_SCREENSHOT_MAX_DIM",
+        ),
+        description="Maximum dimension in pixels for screenshots sent to LLM. 0 to disable.",
+    )
+
+    ARTEMIS_UI_OCCLUSION_WARNINGS: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "ARTEMIS_UI_OCCLUSION_WARNINGS",
+            "UI_OCCLUSION_WARNINGS",
+        ),
+        description="Whether to append mutual occlusion warnings to UI elements in minimal list.",
+    )
+
+    ARTEMIS_SETTLE_MS: int = Field(
+        default=150,
+        validation_alias=AliasChoices(
+            "ARTEMIS_SETTLE_MS",
+            "SETTLE_MS",
+        ),
+        description="Settling delay in milliseconds before capturing screen in observe().",
+    )
+
+    ARTEMIS_STEP_SUMMARIZER: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ARTEMIS_STEP_SUMMARIZER",
+            "STEP_SUMMARIZER",
+        ),
+        description="Whether to run background step visual summarization in Flash runner.",
+    )
 
     # Explorer Tool Settings (the tier itself is configured in artemis.jsonc or
     # via ARTEMIS_EXPLORER_VERSION; see artemis.config.agent.ExplorerConfig)
@@ -149,6 +246,15 @@ class Settings(BaseSettings):
     TRACES_PATH: Path = Field(default_factory=get_default_traces_path)
     DATA_ENGINE_DB_PATH: Path = Field(default_factory=get_data_engine_db_path)
     TEMP_PATH: Path = Field(default_factory=get_temp_dir)
+
+    # Experimentation & Ablation Studies
+    VISION_ONLY_MODE: bool = Field(
+        default=False,
+        description=(
+            "If True, prompt omits XML/UI elements list for vision-only ablation"
+            " studies while preserving DB telemetry and image data."
+        ),
+    )
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -177,6 +283,28 @@ class Settings(BaseSettings):
                 self.GOOGLE_API_KEY = self.GEMINI_API_KEY
             elif self.GCP_API_KEY:
                 self.GOOGLE_API_KEY = self.GCP_API_KEY
+        if self.GOOGLE_API_KEY and not self.GEMINI_API_KEY:
+            self.GEMINI_API_KEY = self.GOOGLE_API_KEY
+
+        if not self.OPENAI_BASE_URL:
+            env_url = (
+                os.environ.get("OPENAI_BASE_URL")
+                or os.environ.get("OPENAI_API_BASE_URL")
+                or os.environ.get("OPENAI_API_BASE")
+            )
+            if env_url:
+                self.OPENAI_BASE_URL = env_url
+        if self.OPENAI_BASE_URL and "192.168.155.46:11434" in str(self.OPENAI_BASE_URL):
+            import socket
+            try:
+                with socket.create_connection(("192.168.155.46", 11434), timeout=0.4):
+                    pass
+            except Exception:
+                try:
+                    with socket.create_connection(("127.0.0.1", 11434), timeout=0.4):
+                        self.OPENAI_BASE_URL = str(self.OPENAI_BASE_URL).replace("192.168.155.46:11434", "127.0.0.1:11434")
+                except Exception:
+                    pass
 
         # Fallback for OCR & Vision API keys
         if not self.OCR_API_KEY and self.VISION_API_KEY:
@@ -313,3 +441,13 @@ settings = Settings()
 # Synchronize DATA_ENGINE_DB_PATH in environment for external sub-processes/tools
 if settings.DATA_ENGINE_DB_PATH:
     os.environ[ENV_DATA_ENGINE_DB_PATH] = str(settings.DATA_ENGINE_DB_PATH)
+
+
+def is_vision_only_mode() -> bool:
+    """Check if VISION_ONLY_MODE is enabled via settings or environment."""
+    if hasattr(settings, "VISION_ONLY_MODE") and settings.VISION_ONLY_MODE:
+        return True
+    val = os.environ.get(ENV_VISION_ONLY_MODE)
+    if val is not None:
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(getattr(settings, "VISION_ONLY_MODE", False))

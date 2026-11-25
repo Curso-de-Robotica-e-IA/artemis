@@ -69,7 +69,10 @@ from artemis.config import (
     MemoryRuntimeConfig,
     MemoryTranscriptConfig,
     StepSummarizerConfig,
+    VISION_ONLY_NOTICE,
+    is_vision_only_mode,
     load_agent_config,
+    settings,
 )
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
@@ -89,6 +92,7 @@ from artemis.services.llm import (
 )
 from artemis.tools.history import history_tool_declarations
 from artemis.tools.tool_wrapper import tool_result_messages
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.coordinates import (
     COORDINATE_SPACE_KEY,
     COORDINATE_SPACE_NORMALIZED,
@@ -160,15 +164,19 @@ class FlashRunner:
         # ``agent_name="flash"`` makes ask_explorer follow ``explorer.flash_mode``
         # (the Flash profile knob) instead of the Pro profile's tier.
         self.executor = McpActionExecutor(ctx, self.controller, agent_name="flash")
+        summarizer_enabled = self.step_summarizer_cfg.enabled and getattr(
+            settings, "ARTEMIS_STEP_SUMMARIZER", True
+        )
         self.summarizer = (
             VisualStepSummarizer(
                 ctx,
                 model_name=self.step_summarizer_cfg.model,
+                provider=self.step_summarizer_cfg.provider,
                 retry_limit=self.memory_runtime_cfg.retry_limit,
                 max_concurrency=self.memory_runtime_cfg.max_concurrency,
                 flush_timeout_s=self.memory_runtime_cfg.flush_timeout_s,
             )
-            if self.step_summarizer_cfg.enabled
+            if summarizer_enabled
             else None
         )
         # Publish the service on the composition root (ctx.step_memory) so
@@ -190,10 +198,16 @@ class FlashRunner:
 
     def _video_tools_enabled(self) -> bool:
         """Same gate the Pro graph applies before binding ``video_analyzer``."""
+        from artemis.config.agent import is_tool_denylisted
+
+        if is_tool_denylisted(self.ctx, "video_analyzer", "flash"):
+            return False
         setup = getattr(self.ctx, "execution_setup", None)
         return getattr(setup, "video_recording_tools_enabled", False) is True
 
     def _get_tools(self) -> list:
+        from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+
         # Flash has no tool that writes notes and its prompt never teaches
         # them, so the Validator set's note readers are left out here.
         tools = [
@@ -202,16 +216,20 @@ class FlashRunner:
             if t is not READ_NOTE_TOOL and t is not LIST_NOTES_TOOL
         ]
         tools.insert(1, CLICK_SEQUENCE_TOOL)
-        tools.append(ASK_EXPLORER_TOOL)
+        if is_explorer_enabled(self.ctx, "flash"):
+            tools.append(ASK_EXPLORER_TOOL)
         # Helper tools shared with the Pro operator: the history tools are
         # declared from the very same args schemas the LangChain tools bind
         # (same availability gates: a DataEngine session, recall config).
         tools.extend(history_tool_declarations(self.ctx))
-        if self._video_tools_enabled():
+        if self._video_tools_enabled() and not is_tool_denylisted(
+            self.ctx, "video_analyzer", "flash"
+        ):
             from artemis.tools.video_tool import VIDEO_ANALYZER_TOOL
 
             tools.append(VIDEO_ANALYZER_TOOL)
         tools.append(REPORT_TASK_STATUS_TOOL)
+        tools = [t for t in tools if not is_tool_denylisted(self.ctx, t.name, "flash")]
         # With an actuator installed, drop declarations for device actions the
         # backend does not implement (and append its extension tools); without
         # one, the full historical declaration set is kept.
@@ -344,6 +362,7 @@ class FlashRunner:
         img_bytes,
         xml_list,
         *,
+        state: State | None = None,
         injected: UserGuidance | None = None,
         notices: list[str] | None = None,
         is_final: bool = False,
@@ -367,13 +386,37 @@ class FlashRunner:
             {"type": "text", "text": f"# CURRENT OBSERVATION [{ledger.elapsed_label()}]"}
         ]
         if img_bytes:
-            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+            img_b64 = encode_image_for_llm(img_bytes)
             blocks.append({"type": "text", "text": "--- Current Screenshot ---"})
             blocks.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
             )
-        if xml_list:
-            blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{xml_list}"})
+        vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if vision_only:
+            blocks.append({"type": "text", "text": VISION_ONLY_NOTICE})
+        else:
+            ui_text = xml_list
+            if not ui_text and state is not None:
+                raw_data = getattr(state, "operator_raw_data", None) or {}
+                fused = getattr(state, "latest_ui_hierarchy", None) or (
+                    raw_data.get("xml_hierarchy") if isinstance(raw_data, dict) else None
+                )
+                if fused:
+                    from artemis.utils.visualization import format_minimal_list_with_elements
+                    w = 1080
+                    h = 2400
+                    if isinstance(raw_data, dict) and isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                        w = raw_data["width"]
+                        h = raw_data["height"]
+                    try:
+                        ui_text, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    except Exception:
+                        ui_text = None
+            if not ui_text and (state is not None or xml_list is not None):
+                ui_text = "(No UI elements detected)"
+            if ui_text:
+                blocks.append({"type": "text", "text": f"{PRO_UI_LIST_MARKER}\n{ui_text}"})
+
         ephemeral: list[int] = []
         # (text, ephemeral) in tail order.
         per_turn: list[tuple[str, bool]] = [(text, True) for text in (notices or [])]
@@ -506,10 +549,21 @@ class FlashRunner:
         """Records the llm_call trace for this turn in the DataEngine."""
         if self.ctx.data_engine:
             current_step_id = getattr(self.ctx.data_engine, "current_step_id", None)
+            payload = {
+                "token_usage": step_token_usage,
+                "response": raw_text,
+                "node": "flashrunner",
+                "prompt_tokens": step_token_usage.get("prompt_tokens", 0),
+                "completion_tokens": step_token_usage.get("completion_tokens", 0),
+                "total_tokens": step_token_usage.get("total_tokens", 0),
+                "context_base_tokens": step_token_usage.get("prompt_tokens", 0),
+            }
+            if self._llm and hasattr(self._llm, "_endpoint_key"):
+                payload["source"] = self._llm._endpoint_key()
             self.ctx.data_engine.record_trace(
                 type="llm_call",
                 name="FlashRunner",
-                payload={"token_usage": step_token_usage, "response": raw_text},
+                payload=payload,
                 step_id=current_step_id,
                 status="success",
             )
@@ -551,6 +605,7 @@ class FlashRunner:
         xml_list,
         messages: list[BaseMessage],
         native_text: str | None = None,
+        state: State | None = None,
     ) -> dict:
         """Records the final step, acknowledges the tool call, and flushes."""
         final_report = args
@@ -558,14 +613,30 @@ class FlashRunner:
             try:
                 if self.ctx.data_engine.current_step_id is None:
                     self.ctx.data_engine.allocate_step_id()
+                act = getattr(state, "current_activity", None) if state else None
+                pkg = getattr(state, "current_package", None) if state else None
+                action_dict = {"action": "report_task_status", "args": args}
+                extra_meta = {"token_usage": step_token_usage}
+                if act:
+                    action_dict["current_activity"] = act
+                    action_dict["activity"] = act
+                    extra_meta["current_activity"] = act
+                    extra_meta["activity"] = act
+                if pkg:
+                    action_dict["current_package"] = pkg
+                    action_dict["package"] = pkg
+                    extra_meta["current_package"] = pkg
+                    extra_meta["package"] = pkg
+                    extra_meta["foreground_app"] = pkg
                 self.ctx.data_engine.record_step(
                     pre_screenshot_bytes=pre_screenshot_bytes,
                     ui_tree=xml_list,
-                    action_taken={"action": "report_task_status", "args": args},
+                    action_taken=action_dict,
                     operator_raw_thinking=raw_text,
                     operator_native_thinking=native_text or None,
                     last_execution_result={"result": "Task completed with final report."},
-                    extra_metadata={"token_usage": step_token_usage},
+                    extra_metadata=extra_meta,
+                    current_activity=act,
                 )
             except Exception as step_err:
                 logger.warning(f"Error recording final step in FlashRunner: {step_err}")
@@ -615,6 +686,10 @@ class FlashRunner:
                 state.indexed_elements = obs.elements
             if obs.screenshot_path:
                 state.latest_screenshot = obs.screenshot_path
+            if getattr(obs, "activity", None):
+                state.current_activity = obs.activity
+            if getattr(obs, "package", None):
+                state.current_package = obs.package
         return post_img_bytes
 
     def _extract_normalized_coordinates(self, name: str, args: dict, resolved=None):
@@ -660,7 +735,9 @@ class FlashRunner:
                     norm_coords = [int(float(nums[0])), int(float(nums[1]))]
         return norm_coords, norm_start, norm_end
 
-    def _build_action_record(self, name: str, args: dict, exec_result) -> dict:
+    def _build_action_record(
+        self, name: str, args: dict, exec_result, state: State | None = None
+    ) -> dict:
         """The action as the step record and the visual lens see it.
 
         Flash records the model's own 0–1000 coordinates verbatim (an index
@@ -692,6 +769,18 @@ class FlashRunner:
             action_dict["normalized_start_coordinates"] = norm_start
             action_dict["normalized_end_coordinates"] = norm_end
         action_dict.update(metadata.get("target_semantics") or {})
+        act = metadata.get("activity") or getattr(exec_result, "activity", None)
+        if not act and state is not None:
+            act = getattr(state, "current_activity", None)
+        pkg = metadata.get("package") or getattr(exec_result, "package", None)
+        if not pkg and state is not None:
+            pkg = getattr(state, "current_package", None)
+        if act:
+            action_dict["current_activity"] = act
+            action_dict["activity"] = act
+        if pkg:
+            action_dict["current_package"] = pkg
+            action_dict["package"] = pkg
         return action_dict
 
     def _record_action_step(
@@ -726,6 +815,13 @@ class FlashRunner:
                 last_execution_result["error"] = exec_result.text_summary
 
             extra_metadata: dict = {"token_usage": step_token_usage}
+            if action_dict and action_dict.get("current_activity"):
+                extra_metadata["current_activity"] = action_dict["current_activity"]
+                extra_metadata["activity"] = action_dict["current_activity"]
+            if action_dict and action_dict.get("current_package"):
+                extra_metadata["current_package"] = action_dict["current_package"]
+                extra_metadata["package"] = action_dict["current_package"]
+                extra_metadata["foreground_app"] = action_dict["current_package"]
             if injected:
                 # Stamped verbatim on the step it reached: the chunk ledger
                 # keeps it as a never-evicted line at every compression level.
@@ -798,7 +894,9 @@ class FlashRunner:
 
             # One record shape for the DataEngine step and the visual lens.
             action_dict = (
-                self._build_action_record(name, args, exec_result) if name in action_names else None
+                self._build_action_record(name, args, exec_result, state=state)
+                if name in action_names
+                else None
             )
 
             # Record telemetry / step in DataEngine
@@ -949,6 +1047,7 @@ class FlashRunner:
                     xml_list,
                     messages,
                     native_text=native_text,
+                    state=state,
                 )
                 return final_report, pre_screenshot_bytes, xml_list, action_sequence
 
@@ -1081,6 +1180,7 @@ class FlashRunner:
                 turns,
                 current_pre_screenshot_bytes,
                 current_xml_list,
+                state=state,
                 injected=injected_guidance,
                 notices=pending_notices,
                 is_final=is_final,

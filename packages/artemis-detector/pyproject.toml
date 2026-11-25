@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artemis-detector"
+version = "0.1.0"
+description = "Lightweight visual icon and UI-element detector isolated from ARTEMIS"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "Artemis contributors" },
+]
+# Only direct PyPI runtime imports of artemis_detector are declared here.
+# The core `artemis` runtime (providing the 6 allowed symbols across
+# artemis.context, artemis.services.llm, artemis.llm.structured, and
+# artemis.utils.image_scaling) is intentionally omitted from PyPI `dependencies`
+# and `optional-dependencies` because `artemis` is not published on PyPI and
+# embedding a direct git URL or workspace back-reference in package metadata
+# breaks standalone pip/Poetry/uv resolution. Supply `artemis` in the host
+# environment (the monorepo workspace or an explicit git/path/wheel dependency
+# in external consumers such as `camera-mapping`).
+dependencies = [
+    "langchain-core>=1.0.0",
+    "pillow>=10.0.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+artemis_detector = ["py.typed"]
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

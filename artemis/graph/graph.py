@@ -157,6 +157,8 @@ async def execution_check_node(state: State, ctx: ArtemisContext):
             # it reached: the chunk ledger (band ③) preserves it as a
             # never-evicted line at every compression level (§3.3).
             injected = getattr(state, "injected_instruction", None)
+            current_act = raw_data.get("activity") or getattr(state, "current_activity", None)
+            current_pkg = raw_data.get("package") or getattr(state, "current_package", None)
             step_id = ctx.data_engine.record_step(
                 pre_screenshot_bytes=screenshot_bytes,
                 ui_tree=xml_hierarchy,
@@ -169,6 +171,11 @@ async def execution_check_node(state: State, ctx: ArtemisContext):
                     "sub_subgoal_hash": sub_subgoal_hash,
                     "width": raw_data.get("width"),
                     "height": raw_data.get("height"),
+                    "current_activity": current_act,
+                    "activity": current_act,
+                    "current_package": current_pkg,
+                    "package": current_pkg,
+                    "foreground_app": current_pkg,
                     **({"injected_instruction": injected} if injected else {}),
                     **extra_metadata,
                 },
@@ -975,15 +982,18 @@ async def get_graph(ctx: ArtemisContext) -> CompiledStateGraph:
             operator_native_tools.append(t)
 
     # Get specialized tools for Operator (history tools: shared definitions)
+    from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
     from artemis.tools.history import HISTORY_TOOL_WRAPPERS
 
     operator_specialized_wrappers = [
-        ask_diagnoser_wrapper,
         run_adb_command_wrapper,
         manage_task_wrapper,
-        ask_explorer_wrapper,
         *HISTORY_TOOL_WRAPPERS,
     ]
+    if not is_tool_denylisted(ctx, "ask_diagnoser", "operator"):
+        operator_specialized_wrappers.insert(0, ask_diagnoser_wrapper)
+    if is_explorer_enabled(ctx, "operator"):
+        operator_specialized_wrappers.append(ask_explorer_wrapper)
     # ask_committee does not follow the Operator's pre-decision / turn-ending contract.
 
     operator_specialized_tools = get_tools_from_wrappers(ctx, operator_specialized_wrappers)
@@ -1010,8 +1020,14 @@ async def get_graph(ctx: ArtemisContext) -> CompiledStateGraph:
 
     operator_tools = operator_native_tools + operator_specialized_tools
 
-    if ctx.execution_setup and ctx.execution_setup.video_recording_tools_enabled:
+    if (
+        ctx.execution_setup
+        and ctx.execution_setup.video_recording_tools_enabled
+        and not is_tool_denylisted(ctx, "video_analyzer", "operator")
+    ):
         operator_tools.append(get_video_analyzer_tool(ctx, role="operator"))
+
+    operator_tools = [t for t in operator_tools if not is_tool_denylisted(ctx, t.name, "operator")]
 
     graph_builder.add_node("operator", OperatorNode(ctx, tools=operator_tools))
     graph_builder.add_node("validator", ValidatorNode(ctx))

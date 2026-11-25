@@ -150,6 +150,16 @@ def _is_semantic_empty(node: dict[str, Any]) -> bool:
     if content_desc and str(content_desc).strip():
         return False
 
+    # Check hint
+    hint = node.get("hint")
+    if hint and str(hint).strip():
+        return False
+
+    # Check error
+    error = node.get("error")
+    if error and str(error).strip():
+        return False
+
     # Check clickable
     clickable = node.get("clickable")
     if clickable is True or str(clickable).lower() == "true":
@@ -557,6 +567,8 @@ def _clamp_by_fixed_bars(
         return False
 
     new_bounds = {"left": left, "top": top, "right": right, "bottom": bottom}
+    if isinstance(node.get("parsed_bounds"), dict):
+        node["parsed_bounds"] = new_bounds.copy()
     orig = node.get("bounds")
     if isinstance(orig, str):
         node["bounds"] = f"[{left},{top}][{right},{bottom}]"

@@ -87,11 +87,13 @@ from artemis.config.constants import (
     ENV_OPENAI_API_KEY,
     ENV_OPENAI_BASE_URL,
     ENV_RESULTS_OUTPUT_PATH,
+    ENV_VISION_ONLY_MODE,
     ENV_XAI_API_KEY,
     IPC_PORT_FILENAME,
     LLM_CONFIG_FILENAME,
     LLM_CONFIG_OVERRIDE_FILENAME,
     LS_ADDRESS_FILENAME,
+    VISION_ONLY_NOTICE,
     AgentNode,
     ExplorerVersion,
     LLMProvider,
@@ -154,6 +156,7 @@ from artemis.config.runtime import (
 )
 from artemis.config.settings import (
     Settings,
+    is_vision_only_mode,
     settings,
 )
 from third_party.mobile_use.config.output import (
@@ -166,6 +169,9 @@ __all__ = [
     # Settings & Singleton
     "Settings",
     "settings",
+    "is_vision_only_mode",
+    "ENV_VISION_ONLY_MODE",
+    "VISION_ONLY_NOTICE",
     # Paths & Dirs
     "ROOT_DIR",
     "WORKSPACE_ROOT",

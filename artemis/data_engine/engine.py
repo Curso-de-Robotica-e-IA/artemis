@@ -407,6 +407,7 @@ class DataEngine:
         self.storage = StorageManager(self.db_path, self.global_base_dir)
 
         self.current_session_id: UUID | None = None
+        self._session_dir_override: Path | None = None
         self.session_start_time: float | None = None
         self.current_step_id: UUID | None = None
         self.last_recorded_step_id: UUID | None = None
@@ -513,6 +514,9 @@ class DataEngine:
 
     @property
     def base_dir(self) -> Path:
+        override = getattr(self, "_session_dir_override", None)
+        if override is not None:
+            return Path(override)
         if self.current_session_id:
             return self.global_base_dir / str(self.current_session_id)
         return self.global_base_dir
@@ -609,7 +613,7 @@ class DataEngine:
             device_info=device_info or {},
             pid=os.getpid(),
         )
-        self.storage.create_session(session)
+        self.storage.create_session(session, session_dir=self.base_dir)
         try:
             from artemis.runtime import DeviceExecutionLock
 
@@ -645,6 +649,10 @@ class DataEngine:
         """End the current session, updating its status and end time."""
         if not self.current_session_id:
             return
+
+        for thread in list(getattr(self, "_pending_threads", [])):
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout=5.0)
 
         # Session-level terminal statuses are canonically "completed" /
         # "failed" / "cancelled"; "success" is a legacy alias some callers
@@ -820,6 +828,13 @@ class DataEngine:
         hasher.update(image_bytes)
         image_name = hasher.hexdigest()
 
+        images_dir = self.base_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        file_path = images_dir / f"{image_name}.jpg"
+        if not file_path.exists():
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+
         image_record = self.storage.get_image(image_name)
         if image_record:
             # If the image exists but is missing OCR or UI tree, and we now have them, update the record.
@@ -828,13 +843,6 @@ class DataEngine:
             ):
                 self.storage.update_image_data(image_name, ocr_result, ui_tree)
             return image_name
-
-        images_dir = self.global_base_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        file_path = images_dir / f"{image_name}.jpg"
-
-        with open(file_path, "wb") as f:
-            f.write(image_bytes)
 
         new_record = ImageRecord(
             image_name=image_name,
@@ -848,7 +856,23 @@ class DataEngine:
 
     def get_image_path(self, image_name: str) -> Path:
         """Get the absolute file path of an image by its name/hash."""
-        return self.global_base_dir / "images" / f"{image_name}.jpg"
+        session_image_path = self.base_dir / "images" / f"{image_name}.jpg"
+        if session_image_path.exists():
+            return session_image_path
+        global_image_path = self.global_base_dir / "images" / f"{image_name}.jpg"
+        if global_image_path.exists():
+            return global_image_path
+        if self.current_session_id:
+            sess_prefix = str(self.current_session_id)[:8]
+            try:
+                for p in self.global_base_dir.iterdir():
+                    if p.is_dir() and sess_prefix in p.name:
+                        cand = p / "images" / f"{image_name}.jpg"
+                        if cand.is_file():
+                            return cand
+            except OSError:
+                pass
+        return session_image_path
 
     def record_step(
         self,
@@ -863,6 +887,7 @@ class DataEngine:
         operator_native_thinking: str | None = None,
         last_execution_result: Any | None = None,
         extra_metadata: dict[str, Any] | None = None,
+        current_activity: str | None = None,
     ) -> UUID:
         """Record a step, saving screenshots and metadata."""
         if not self.current_session_id:
@@ -903,10 +928,72 @@ class DataEngine:
         # parameter wins; otherwise it is derived best-effort from the UI
         # tree's package attributes — a pure string scan, no device call.
         extra_metadata = dict(extra_metadata or {})
+        activity = (
+            current_activity
+            or extra_metadata.get("current_activity")
+            or extra_metadata.get("activity")
+        )
+        if not activity and action_taken and isinstance(action_taken, dict):
+            activity = action_taken.get("current_activity") or action_taken.get("activity")
+        if activity and (activity.startswith("android.widget.") or activity.startswith("android.view.")):
+            activity = None
+        if not activity and hasattr(self, "ctx") and self.ctx:
+            try:
+                ui_client = getattr(self.ctx, "ui_adb_client", None)
+                if ui_client and hasattr(ui_client, "helper"):
+                    helper = ui_client.helper
+                    if hasattr(helper, "_snapshot"):
+                        snap = helper._snapshot()
+                        snap_act = snap.get("activity")
+                        if snap_act and not (snap_act.startswith("android.widget.") or snap_act.startswith("android.view.")):
+                            activity = snap_act
+                        if not foreground_app and snap.get("package"):
+                            foreground_app = snap.get("package")
+            except Exception as e:
+                logger.debug("Failed to get activity from UI helper: %s", e)
+            if not activity:
+                try:
+                    adb_client = self.ctx.get_adb_client()
+                    if adb_client and getattr(self.ctx, "device", None):
+                        dev = adb_client.device(serial=self.ctx.device.device_id)
+                        if hasattr(dev, "app_current"):
+                            app_info = dev.app_current()
+                            if hasattr(app_info, "activity"):
+                                pkg = getattr(app_info, "package", foreground_app)
+                                act = app_info.activity
+                                if act and act.startswith(".") and pkg:
+                                    activity = f"{pkg}{act}"
+                                else:
+                                    activity = act
+                                if not foreground_app and pkg:
+                                    foreground_app = pkg
+                            elif isinstance(app_info, dict):
+                                pkg = app_info.get("package", foreground_app)
+                                act = app_info.get("activity")
+                                if act and act.startswith(".") and pkg:
+                                    activity = f"{pkg}{act}"
+                                else:
+                                    activity = act
+                                if not foreground_app and pkg:
+                                    foreground_app = pkg
+                except Exception as e:
+                    logger.debug("Failed to get activity from ADB client: %s", e)
+
+        if activity:
+            extra_metadata.setdefault("current_activity", activity)
+            extra_metadata.setdefault("activity", activity)
+        if action_taken and isinstance(action_taken, dict) and activity:
+            action_taken.setdefault("current_activity", activity)
+            action_taken.setdefault("activity", activity)
         try:
             app = foreground_app or _derive_foreground_app(ui_tree)
             if app:
                 extra_metadata.setdefault("foreground_app", app)
+                extra_metadata.setdefault("current_package", app)
+                extra_metadata.setdefault("package", app)
+                if action_taken and isinstance(action_taken, dict):
+                    action_taken.setdefault("current_package", app)
+                    action_taken.setdefault("package", app)
         except (AttributeError, TypeError, ValueError):
             pass
 
@@ -1246,7 +1333,6 @@ class DataEngine:
             if self.base_dir:
                 step_dir = self.base_dir / "steps" / str(step_id)
                 self.current_step_dir = step_dir
-                step_dir.mkdir(parents=True, exist_ok=True)
             else:
                 step_dir = None
 
@@ -1504,7 +1590,6 @@ class DataEngine:
         self.current_step_id = uuid4()
         if self.base_dir:
             self.current_step_dir = self.base_dir / "steps" / str(self.current_step_id)
-            self.current_step_dir.mkdir(parents=True, exist_ok=True)
         return self.current_step_id
 
     def get_agent_friendly_steps(self) -> list[dict[str, Any]]:

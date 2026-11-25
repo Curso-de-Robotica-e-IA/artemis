@@ -155,13 +155,26 @@ def draw_dots(
     img.save(output_path)
 
 
-def parse_bounds(bounds_str: str | None) -> tuple[int, int, int, int] | None:
-    """Parses standard Android '[left,top][right,bottom]' bounds string."""
-    if not bounds_str:
+from typing import Any
+import re
+
+def parse_bounds(bounds_data: Any) -> tuple[int, int, int, int] | None:
+    """Parses standard Android '[left,top][right,bottom]' bounds string or dict."""
+    if not bounds_data:
         return None
-    match = re.match(r"\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]", bounds_str)
-    if match:
-        return tuple(map(int, match.groups()))
+    if isinstance(bounds_data, dict):
+        if "left" in bounds_data and "top" in bounds_data and "right" in bounds_data and "bottom" in bounds_data:
+            return (
+                int(bounds_data["left"]),
+                int(bounds_data["top"]),
+                int(bounds_data["right"]),
+                int(bounds_data["bottom"]),
+            )
+        return None
+    if isinstance(bounds_data, str):
+        match = re.match(r"\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]", bounds_data)
+        if match:
+            return tuple(map(int, match.groups()))
     return None
 
 
@@ -256,7 +269,10 @@ def _inject_mutual_occlusion_warnings(
 
 
 def format_minimal_list_with_points(
-    fused_xml: list[dict[str, Any]], width: int = 1080, height: int = 2400
+    fused_xml: list[dict[str, Any]],
+    width: int = 1080,
+    height: int = 2400,
+    inject_occlusion_warnings: bool = True,
 ) -> tuple[str, list[list[int]], list[str]]:
     """Formats fused XML hierarchy into a minimal list with sequence numbers,
 
@@ -286,9 +302,9 @@ def format_minimal_list_with_points(
         return False
 
     for node in fused_xml:
-        text = node.get("text") or node.get("content-desc") or ""
-        bounds_str = node.get("bounds")
-        bounds = parse_bounds(bounds_str)
+        text = node.get("text") or node.get("content-desc") or node.get("accessibilityText") or ""
+        bounds_data = node.get("bounds") or node.get("parsed_bounds")
+        bounds = parse_bounds(bounds_data)
 
         ocr_elements = node.get("ocr_elements")
         registered = False
@@ -298,6 +314,15 @@ def format_minimal_list_with_points(
                 ocr_bounds = parse_bounds(ocr.get("bounds"))
                 if ocr_bounds:
                     left, top, right, bottom = ocr_bounds
+                    if (
+                        left >= right
+                        or top >= bottom
+                        or right <= 0
+                        or bottom <= 0
+                        or left >= width
+                        or top >= height
+                    ):
+                        continue
                     cx, cy = get_center_coordinates(left, top, right, bottom)
                     if is_duplicate(ocr["text"], cx, cy):
                         continue
@@ -314,6 +339,15 @@ def format_minimal_list_with_points(
 
         if not registered and text.strip() and bounds:
             left, top, right, bottom = bounds
+            if (
+                left >= right
+                or top >= bottom
+                or right <= 0
+                or bottom <= 0
+                or left >= width
+                or top >= height
+            ):
+                continue
             cx, cy = get_center_coordinates(left, top, right, bottom)
             if is_duplicate(text, cx, cy):
                 continue
@@ -327,12 +361,16 @@ def format_minimal_list_with_points(
             added_items.append((text.strip(), cx, cy))
             idx += 1
 
-    lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
+    if inject_occlusion_warnings:
+        lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
     return "\n".join(lines), points, labels
 
 
 def format_minimal_list_with_elements(
-    fused_xml: list[dict[str, Any]], width: int = 1080, height: int = 2400
+    fused_xml: list[dict[str, Any]],
+    width: int = 1080,
+    height: int = 2400,
+    inject_occlusion_warnings: bool = True,
 ) -> tuple[str, list[dict[str, Any]], list[str]]:
     """Formats fused XML hierarchy into a minimal list with sequence numbers,
 
@@ -362,9 +400,10 @@ def format_minimal_list_with_elements(
         return False
 
     for node in fused_xml:
-        text = node.get("text") or node.get("content-desc") or ""
-        bounds_str = node.get("bounds")
-        bounds = parse_bounds(bounds_str)
+
+        text = node.get("text") or node.get("content-desc") or node.get("accessibilityText") or ""
+        bounds_data = node.get("bounds") or node.get("parsed_bounds")
+        bounds = parse_bounds(bounds_data)
 
         ocr_elements = node.get("ocr_elements")
         registered = False
@@ -374,6 +413,15 @@ def format_minimal_list_with_elements(
                 ocr_bounds = parse_bounds(ocr.get("bounds"))
                 if ocr_bounds:
                     left, top, right, bottom = ocr_bounds
+                    if (
+                        left >= right
+                        or top >= bottom
+                        or right <= 0
+                        or bottom <= 0
+                        or left >= width
+                        or top >= height
+                    ):
+                        continue
                     cx, cy = get_center_coordinates(left, top, right, bottom)
                     if is_duplicate(ocr["text"], cx, cy):
                         continue
@@ -406,6 +454,15 @@ def format_minimal_list_with_elements(
         shown = text.strip() or hint
         if not registered and shown and bounds:
             left, top, right, bottom = bounds
+            if (
+                left >= right
+                or top >= bottom
+                or right <= 0
+                or bottom <= 0
+                or left >= width
+                or top >= height
+            ):
+                continue
             cx, cy = get_center_coordinates(left, top, right, bottom)
             if is_duplicate(shown, cx, cy):
                 continue
@@ -436,7 +493,8 @@ def format_minimal_list_with_elements(
             added_items.append((shown, cx, cy))
             idx += 1
 
-    lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
+    if inject_occlusion_warnings:
+        lines = _inject_mutual_occlusion_warnings(lines, items_bounds)
     return "\n".join(lines), elements, labels
 
 

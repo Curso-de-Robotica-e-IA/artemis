@@ -71,18 +71,60 @@ class OfflineHistoryReader:
         self.global_base_dir = Path(traces_dir)
         self.session_id = str(session_id)
         self.storage = StorageManager(db_path, traces_dir, read_only=True)
-        self.base_dir = self.global_base_dir / self.session_id
         self.session_start_time: float | None = None
+        session = None
         try:
             session = self.storage.get_session(self.session_id)
             self.session_start_time = session.start_time if session else None
         except (sqlite3.Error, ValueError) as e:
             logger.debug(f"Session clock unavailable for {self.session_id}: {e}")
+        self.base_dir = self._resolve_base_dir(session)
+
+    def _resolve_base_dir(self, session: Any) -> Path:
+        reserved = {"replay", "images", "data", "temp_traces", "outputs"}
+        default_dir = self.global_base_dir / self.session_id
+        if default_dir.exists() and any(
+            (default_dir / sub).exists() for sub in ("images", "steps.json", "notes", "replay")
+        ):
+            return default_dir
+        if session is not None and getattr(session, "video_filepath", None):
+            video_parent = Path(session.video_filepath).parent
+            if video_parent.exists():
+                return video_parent
+        if self.global_base_dir.exists():
+            s_prefix = self.session_id[:8] if len(self.session_id) >= 8 else self.session_id
+            for candidate in self.global_base_dir.iterdir():
+                if (
+                    candidate.is_dir()
+                    and candidate.name not in reserved
+                    and not candidate.name.startswith(".")
+                    and candidate != default_dir
+                    and (self.session_id in candidate.name or s_prefix in candidate.name)
+                ):
+                    return candidate
+        return default_dir
 
     # --- Images ----------------------------------------------------------------------
 
     def get_image_path(self, image_name: str) -> Path:
-        return self.global_base_dir / "images" / f"{image_name}.jpg"
+        session_image_path = self.base_dir / "images" / f"{image_name}.jpg"
+        if session_image_path.exists():
+            return session_image_path
+        global_image_path = self.global_base_dir / "images" / f"{image_name}.jpg"
+        if global_image_path.exists():
+            return global_image_path
+        sess_name = getattr(self.base_dir, "name", "")
+        if sess_name:
+            sess_prefix = sess_name[:8]
+            try:
+                for p in self.global_base_dir.iterdir():
+                    if p.is_dir() and sess_prefix in p.name:
+                        cand = p / "images" / f"{image_name}.jpg"
+                        if cand.is_file():
+                            return cand
+            except OSError:
+                pass
+        return session_image_path
 
     def get_step_image_path(self, step_number: int, which: str = "pre") -> Path | None:
         step = self.get_step_record(step_number)

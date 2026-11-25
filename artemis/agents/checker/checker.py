@@ -44,6 +44,7 @@ from langchain_core.tools import BaseTool, tool
 
 from pydantic import BaseModel, Field, ValidationError
 
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.core.tool_failure import ToolFailure, is_tool_failure
 from artemis.constants import CHECKER_MAX_ITERATIONS
 from artemis.context import ArtemisContext
@@ -749,6 +750,8 @@ async def _capture_final_screen(ctx: ArtemisContext) -> tuple[str | None, str]:
         controller = UnifiedMobileController(ctx)
         device_data = await controller.get_screen_data()
         screenshot_b64 = device_data.base64
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            return screenshot_b64, VISION_ONLY_NOTICE
         xml_hierarchy = device_data.elements
         width = device_data.width
         height = device_data.height
@@ -824,6 +827,10 @@ async def run_final_check(
 
     screenshot_b64, minimal_list = await _capture_final_screen(ctx)
     steps = _load_steps(ctx)
+    is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+    screen_elements_section = (
+        VISION_ONLY_NOTICE if is_vision_only else f"# Final Screen Elements\n{minimal_list}"
+    )
 
     human_text = (
         f"# User's Original Goal\n{goal}\n\n"
@@ -833,7 +840,7 @@ async def run_final_check(
         f"# Verdict Ledger (checkpoint results, authoritative for on_complete"
         f" items)\n{_format_ledger(ledger)}\n\n"
         f"# Execution History (summaries)\n{_format_history(ctx, steps=steps)}\n\n"
-        f"# Final Screen Elements\n{minimal_list}"
+        f"{screen_elements_section}"
     )
 
     content: list = [{"type": "text", "text": human_text}]

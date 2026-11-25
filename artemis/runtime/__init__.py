@@ -14,11 +14,6 @@
 
 """Artemis cross-platform runtime and process supervisor subsystem."""
 
-from artemis.runtime.device_lock import (
-    ConcurrencyMode,
-    DeviceBusyError,
-    DeviceExecutionLock,
-)
 from artemis.runtime.adb_endpoint import (
     ADB_ENDPOINT_ID_ENV,
     AdbEndpoint,
@@ -27,8 +22,19 @@ from artemis.runtime.adb_endpoint import (
     InvalidAdbEndpoint,
     current_adb_endpoint,
 )
-from artemis.runtime.device_pool import DevicePool, DeviceStatus, device_pool
-from artemis.runtime.process_probe import pid_is_alive
+from artemis.runtime.awake_service import (
+    ensure_device_awake,
+    sanitize_device_state,
+    screen_awake_service,
+    shutdown_awake_service,
+    start_awake_service,
+)
+from artemis.runtime.cancel_requests import (
+    clear_cancel_request,
+    is_cancel_requested,
+    request_cancel,
+    watch_for_cancel_request,
+)
 from artemis.runtime.daemon_client import (
     ensure_daemon_running,
     get_daemon_session,
@@ -40,13 +46,13 @@ from artemis.runtime.daemon_client import (
     submit_task_to_daemon,
     wait_for_daemon_task,
 )
-from artemis.runtime.awake_service import (
-    ensure_device_awake,
-    sanitize_device_state,
-    screen_awake_service,
-    shutdown_awake_service,
-    start_awake_service,
+from artemis.runtime.device_lock import (
+    ConcurrencyMode,
+    DeviceBusyError,
+    DeviceExecutionLock,
 )
+from artemis.runtime.device_pool import DevicePool, DeviceStatus, device_pool
+from artemis.runtime.process_probe import pid_is_alive
 from artemis.runtime.server_lifecycle import (
     clear_server_info,
     find_server_pids,
@@ -57,12 +63,7 @@ from artemis.runtime.server_lifecycle import (
     write_server_info,
 )
 from artemis.runtime.supervisor import ProcessSupervisor, process_supervisor
-from artemis.runtime.cancel_requests import (
-    clear_cancel_request,
-    is_cancel_requested,
-    request_cancel,
-    watch_for_cancel_request,
-)
+from artemis.runtime import trace_store
 
 __all__ = [
     "ADB_ENDPOINT_ID_ENV",
@@ -75,6 +76,7 @@ __all__ = [
     "DevicePool",
     "DeviceStatus",
     "InvalidAdbEndpoint",
+    "ProcessSupervisor",
     "clear_cancel_request",
     "clear_server_info",
     "current_adb_endpoint",
@@ -86,11 +88,10 @@ __all__ = [
     "get_daemon_status",
     "get_server_status",
     "is_artemis_daemon",
-    "is_daemon_running",
     "is_cancel_requested",
+    "is_daemon_running",
     "is_port_in_use",
     "pid_is_alive",
-    "ProcessSupervisor",
     "process_supervisor",
     "read_server_info",
     "request_cancel",
@@ -102,6 +103,7 @@ __all__ = [
     "stop_task_on_daemon",
     "submit_batch_to_daemon",
     "submit_task_to_daemon",
+    "trace_store",
     "wait_for_daemon_task",
     "watch_for_cancel_request",
     "write_server_info",

@@ -115,9 +115,14 @@ def build_action_server(actuator: Actuator, name: str = "artemis_actions") -> Fa
                             mimeType="image/jpeg",
                         )
                     )
+                payload = obs.model_dump(mode="json")
+                if getattr(obs, "activity", None):
+                    payload["activity"] = obs.activity
+                if getattr(obs, "package", None):
+                    payload["package"] = obs.package
                 return CallToolResult(
                     content=content,
-                    structuredContent=obs.model_dump(mode="json"),
+                    structuredContent=payload,
                     isError=False,
                 )
             except Exception as e:

@@ -272,7 +272,7 @@ class StorageManager:
             conn.commit()
         logger.info(f"Database initialized at {self.db_path}")
 
-    def create_session(self, session: SessionMetadata):
+    def create_session(self, session: SessionMetadata, session_dir: Path | None = None):
         """Insert a new session record."""
         with self._get_connection() as conn:
             conn.execute(
@@ -294,9 +294,9 @@ class StorageManager:
             conn.commit()
 
         # Create session directory
-        session_dir = self.base_trace_dir / str(session.session_id)
-        session_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Session directory created at {session_dir}")
+        target_session_dir = session_dir or (self.base_trace_dir / str(session.session_id))
+        target_session_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Session directory created at {target_session_dir}")
 
     def update_session(self, session: SessionMetadata):
         """Update an existing session record."""
@@ -1119,7 +1119,11 @@ class StorageManager:
                                     img_path.unlink()
                                 except Exception as e:
                                     logger.error(f"Failed to delete image {img_path}: {e}")
-                    elif path.name.startswith("web_") or self._is_uuid(path.name):
+                    elif (
+                        path.name.startswith("web_")
+                        or path.name == "replay"
+                        or self._is_uuid(path.name)
+                    ):
                         try:
                             shutil.rmtree(path)
                         except Exception as e:
@@ -1200,14 +1204,33 @@ class StorageManager:
 
         logger.info(f"Database records for session {session_id} cleared.")
 
-        # 3. Delete session directory (notes, etc.)
-        session_dir = self.base_trace_dir / session_id_str
-        if session_dir.exists() and session_dir.is_dir():
+        # 3. Delete session directories (direct UUID, finalized UUID_*, or web_*_<short_uuid>*)
+        reserved_dirs = {"replay", "images", "data", "temp_traces", "outputs"}
+        short_uuid = session_id_str[:8] if len(session_id_str) >= 8 else ""
+        if self.base_trace_dir.exists():
             try:
-                shutil.rmtree(session_dir)
-                logger.info(f"Deleted session directory: {session_dir}")
-            except Exception as e:
-                logger.error(f"Failed to delete session directory {session_dir}: {e}")
+                candidates = list(self.base_trace_dir.iterdir())
+            except OSError as e:
+                logger.error(f"Failed to scan trace directory {self.base_trace_dir}: {e}")
+                candidates = []
+
+            for path in candidates:
+                if not path.is_dir() or path.name in reserved_dirs or path.name.startswith("."):
+                    continue
+                is_uuid_dir = path.name == session_id_str or path.name.startswith(
+                    f"{session_id_str}_"
+                )
+                is_web_dir = (
+                    bool(short_uuid)
+                    and path.name.startswith("web_")
+                    and (path.name.endswith(f"_{short_uuid}") or f"_{short_uuid}_" in path.name)
+                )
+                if is_uuid_dir or is_web_dir:
+                    try:
+                        shutil.rmtree(path)
+                        logger.info(f"Deleted session directory: {path}")
+                    except OSError as e:
+                        logger.error(f"Failed to delete session directory {path}: {e}")
 
         # 4. Delete video files and their containing folders (which might have been renamed)
         for video_path in video_paths:

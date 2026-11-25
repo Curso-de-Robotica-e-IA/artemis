@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 import functools
 import logging
+import os
 from pathlib import Path
 import re
 import sys
@@ -631,12 +632,17 @@ class RobustChatModelWrapper:
             args, kwargs = _inject_parent_trace_id(trace_id, *args, **kwargs)
         return args, kwargs, trace_id
 
-    def _meter_usage(self, response) -> None:
+    def _meter_usage(self, response, *, messages: list[Any] | None = None) -> None:
         """Record measured token usage for this call (M0 metering, best-effort)."""
         engine = self.ctx.data_engine if self.ctx else None
         if engine is None:
             engine = _get_current_data_engine()
-        record_llm_usage(engine, response, source=self._endpoint_key())
+        record_llm_usage(
+            engine,
+            response,
+            source=self._endpoint_key(),
+            fallback_messages=messages,
+        )
 
     async def ainvoke(self, *args, **kwargs):
         args, kwargs, _ = self._traced_call(args, kwargs)
@@ -645,7 +651,8 @@ class RobustChatModelWrapper:
             provider=self._provider_value(),
             endpoint_key=self._endpoint_key(),
         )
-        self._meter_usage(response)
+        messages = args[0] if args and isinstance(args[0], list) else kwargs.get("messages")
+        self._meter_usage(response, messages=messages)
         return response
 
     async def complete(self, *args, **kwargs):
@@ -665,7 +672,8 @@ class RobustChatModelWrapper:
             provider=self._provider_value(),
             endpoint_key=self._endpoint_key(),
         )
-        self._meter_usage(response)
+        messages = args[0] if args and isinstance(args[0], list) else kwargs.get("messages")
+        self._meter_usage(response, messages=messages)
         return response
 
     def _emit_stream_delta(self, stream_exec_id, chunk) -> None:
@@ -893,6 +901,55 @@ def get_google_llm(
     return ModelFactory.create_model(ep)
 
 
+def _resolve_provider_credentials(
+    provider_val: str, cfg: Any = None
+) -> tuple[str | None, str | None]:
+    """Resolve explicit or environment-configured ``(api_base, api_key)`` for a provider."""
+
+    def _get_val(obj: Any, attr: str, expected_type: type) -> Any:
+        val = getattr(obj, attr, None)
+        return val if isinstance(val, expected_type) else None
+
+    api_base_val = _get_val(cfg, "api_base", str) or _get_val(cfg, "base_url", str)
+    if not api_base_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_base_val = (
+            str(settings.OPENAI_BASE_URL)
+            if settings.OPENAI_BASE_URL
+            else os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE")
+        )
+
+    api_key_val = _get_val(cfg, "api_key", str)
+    if not api_key_val and provider_val in ("openai", "ollama", "vllm", "custom"):
+        api_key_val = (
+            settings.OPENAI_API_KEY.get_secret_value()
+            if settings.OPENAI_API_KEY
+            else os.environ.get("OPENAI_API_KEY")
+        )
+    return api_base_val, api_key_val
+
+
+def build_chat_model(
+    provider: str,
+    model_name: str,
+    *,
+    temperature: float = 0.0,
+    timeout: float = 60.0,
+) -> BaseChatModel:
+    """Instantiate a chat model via ``ModelFactory`` for any supported provider."""
+    api_base_val, api_key_val = _resolve_provider_credentials(provider)
+    endpoint = ModelEndpoint(
+        provider=ModelProvider.from_string(provider),
+        model_name=model_name,
+        api_base=api_base_val,
+        api_key=api_key_val,
+        temperature=temperature,
+        timeout_seconds=timeout,
+    )
+    return ModelFactory.get_model(endpoint)
+
+
 def _resolve_endpoint(
     ctx: ArtemisContext,
     name: str,
@@ -923,12 +980,19 @@ def _resolve_endpoint(
         val = getattr(obj, attr, None)
         return val if isinstance(val, expected_type) else None
 
-    provider_val = getattr(cfg, "provider", "google")
-    model_val = getattr(cfg, "model", "gemini-2.5-flash")
+    raw_provider = getattr(cfg, "provider", "google")
+    provider_val = str(raw_provider) if isinstance(raw_provider, str) else "google"
+
+    raw_model = getattr(cfg, "model", "gemini-2.5-flash")
+    model_val = str(raw_model) if isinstance(raw_model, str) else "gemini-2.5-flash"
+
+    api_base_val, api_key_val = _resolve_provider_credentials(provider_val, cfg)
 
     return ModelEndpoint(
         provider=ModelProvider.from_string(provider_val),
         model_name=str(model_val),
+        api_base=api_base_val,
+        api_key=api_key_val,
         temperature=_get_val(cfg, "temperature", (int, float)) or 0.0,
         timeout_seconds=_get_val(cfg, "timeout", (int, float)) or 60.0,
         thinking_budget=_get_val(cfg, "thinking_budget", int),
@@ -945,11 +1009,25 @@ def _get_llm(
     is_utils: bool = False,
     use_fallback: bool = False,
     temperature: float | None = None,
+    model_name: str | None = None,
+    provider: str | None = None,
 ) -> BaseChatModel:
     """Resolves and instantiates the appropriate LLM wrapper for the given agent role."""
     endpoint = _resolve_endpoint(ctx, name, is_utils=is_utils, use_fallback=use_fallback)
+    updates: dict[str, Any] = {}
     if temperature is not None:
-        endpoint = endpoint.model_copy(update={"temperature": temperature})
+        updates["temperature"] = temperature
+    if model_name is not None:
+        updates["model_name"] = model_name
+    if provider is not None:
+        target_provider = ModelProvider.from_string(provider)
+        if target_provider != endpoint.provider:
+            api_base_val, api_key_val = _resolve_provider_credentials(provider)
+            updates["provider"] = target_provider
+            updates["api_base"] = api_base_val
+            updates["api_key"] = api_key_val
+    if updates:
+        endpoint = endpoint.model_copy(update=updates)
     raw_model = ModelFactory.get_model(endpoint)
 
     handler = DataEngineCallbackHandler(ctx)

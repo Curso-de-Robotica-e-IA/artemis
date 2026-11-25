@@ -33,6 +33,7 @@ from langchain_core.messages import (
 from artemis.agents.explorer.geometry import is_valid_norm_point
 from artemis.agents.explorer.tiers import SUBMIT_TOOL
 from artemis.agents.explorer.tool_declarations import UNIVERSAL_EXPLORER_TOOLS
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.graph.state import State
 from artemis.services.llm import get_llm
 from third_party.mobile_use.utils.logger import get_logger
@@ -160,14 +161,19 @@ class UniversalRunnerMixin:
         with open(screenshot_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
+        is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        elements_section = (
+            f"{VISION_ONLY_NOTICE}\n"
+            if is_vision_only
+            else f"Initial marked UI elements list:\n{minimal_list}\n"
+        )
         user_content: list[dict[str, Any]] = [
             {
                 "type": "text",
                 "text": (
                     f"Operator Request:\n- Query: {query}\n"
                     f"- Context Feedback: {context_feedback}\n\n"
-                    "Initial marked UI elements list:\n"
-                    f"{minimal_list}\n"
+                    f"{elements_section}"
                 ),
             },
             {

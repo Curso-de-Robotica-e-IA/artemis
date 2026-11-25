@@ -205,6 +205,9 @@ class Agent(AgentBase):
 
         if self._ui_adb_client is not None:
             await asyncio.to_thread(self._ui_adb_client.disconnect)
+        from artemis.mcp.actuators.http_touch import HttpTouchActuator
+
+        HttpTouchActuator.reset_synced_devices()
         self._initialized = False
         logger.info("✅ Artemis agent stopped.")
 
@@ -282,6 +285,27 @@ class Agent(AgentBase):
 
     def _prepare_tracing(self, task: Task, context: ArtemisContext):
         """Prepare tracing and data engine setup."""
+        target_sid = (
+            self._session_id
+            or os.getenv("ARTEMIS_SESSION_ID")
+            or os.getenv("ARTEMIS_CLOUD_SESSION_ID")
+            or getattr(getattr(task, "request", None), "task_name", None)
+            or getattr(task, "id", None)
+        )
+        sess_uuid = None
+        if target_sid:
+            try:
+                sess_uuid = uuid.UUID(str(target_sid))
+            except ValueError:
+                sess_uuid = str(target_sid)
+
+        if (
+            getattr(task, "request", None) is not None
+            and not getattr(task.request, "task_name", None)
+            and sess_uuid is not None
+        ):
+            task.request.task_name = str(sess_uuid)
+
         task_name = self._prepare_trace_paths(task)
 
         context.execution_setup = ExecutionSetup(
@@ -312,6 +336,7 @@ class Agent(AgentBase):
         )
 
         context.data_engine = DataEngine(ctx=context)
+        context.data_engine._session_dir_override = (self._tmp_traces_dir / task_name).resolve()
         device_data = context.device.model_dump() if context.device else {}
         if task.request.profile:
             device_data["profile"] = task.request.profile
@@ -319,19 +344,12 @@ class Agent(AgentBase):
         if run_tuning:
             device_data["run_tuning"] = run_tuning
 
-        target_sid = (
-            self._session_id
-            or os.getenv("ARTEMIS_SESSION_ID")
-            or os.getenv("ARTEMIS_CLOUD_SESSION_ID")
-            or getattr(task, "id", None)
-            or getattr(getattr(task, "request", None), "task_name", None)
-        )
-        sess_uuid = None
-        if target_sid:
-            try:
-                sess_uuid = uuid.UUID(str(target_sid))
-            except Exception:
-                sess_uuid = str(target_sid)
+        try:
+            from artemis.services.token_meter import resolve_operator_context_window
+
+            device_data["context_window"] = resolve_operator_context_window()
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            logger.debug(f"Context window resolution skipped: {exc}")
 
         context.data_engine.start_session(
             goal=task.request.goal,
@@ -483,3 +501,122 @@ class Agent(AgentBase):
             )
         except (OSError, ValueError, RuntimeError) as exc:
             logger.debug(f"Could not record hierarchy backend in status.json: {exc}")
+
+    def get_steps(self, session_id: str | None = None) -> list[dict]:
+        """Retrieve all recorded steps for a task session with commands and coordinates.
+
+        Args:
+            session_id: Target task session ID; defaults to the most recent task.
+
+        Returns:
+            A list of step dicts containing step_number, action, command, coordinates,
+            pixel_coordinates, args, status, result, summary, and target metadata.
+        """
+        from artemis.config.paths import get_data_engine_db_path, get_default_traces_path
+        from artemis.data_engine.storage import StorageManager
+
+        target_sid = session_id or getattr(self, "_last_session_id", None)
+        if not target_sid and getattr(self, "_tasks", None):
+            target_sid = self._tasks[-1].id
+        if not target_sid:
+            return []
+
+        db_path = get_data_engine_db_path()
+        if not db_path.exists():
+            return []
+
+        storage = StorageManager(db_path, get_default_traces_path(), read_only=True)
+        try:
+            step_records = storage.get_steps(str(target_sid))
+        except Exception as exc:
+            logger.debug(f"Could not retrieve steps for session {target_sid}: {exc}")
+            return []
+
+        width, height = 1080, 2400
+        ctx = getattr(self, "_last_context", None)
+        if ctx and getattr(ctx, "device", None):
+            width = ctx.device.device_width or width
+            height = ctx.device.device_height or height
+        elif getattr(self, "_device_context", None):
+            width = self._device_context.device_width or width
+            height = self._device_context.device_height or height
+
+        def _convert_norm_to_pixels(coords):
+            if not coords or not isinstance(coords, (list, tuple)):
+                return None
+            try:
+                if coords and isinstance(coords[0], (list, tuple)):
+                    converted = []
+                    for item in coords:
+                        res = _convert_norm_to_pixels(item)
+                        if res is not None:
+                            converted.append(res)
+                    return converted if converted else None
+                if len(coords) == 2 and isinstance(coords[0], (int, float)) and isinstance(coords[1], (int, float)):
+                    return [
+                        int(round(coords[0] * width / 1000.0)),
+                        int(round(coords[1] * height / 1000.0)),
+                    ]
+                if len(coords) == 4 and all(isinstance(c, (int, float)) for c in coords):
+                    return [
+                        int(round(coords[0] * width / 1000.0)),
+                        int(round(coords[1] * height / 1000.0)),
+                        int(round(coords[2] * width / 1000.0)),
+                        int(round(coords[3] * height / 1000.0)),
+                    ]
+            except (TypeError, ValueError, IndexError, AttributeError):
+                return None
+
+        result = []
+        for s in step_records:
+            action_data = s.action_taken or {}
+            action_name = action_data.get("action", "")
+            norm_coords = action_data.get("normalized_coordinates") or action_data.get("coordinates")
+            args = action_data.get("args") or {}
+            pixel_coords = _convert_norm_to_pixels(norm_coords)
+
+            extra_meta = s.extra_metadata or {}
+            current_act = (
+                action_data.get("current_activity")
+                or action_data.get("activity")
+                or extra_meta.get("current_activity")
+                or extra_meta.get("activity")
+            )
+            current_pkg = (
+                action_data.get("current_package")
+                or action_data.get("package")
+                or extra_meta.get("current_package")
+                or extra_meta.get("package")
+                or extra_meta.get("foreground_app")
+            )
+
+            step_dict = {
+                "step_number": s.step_number,
+                "action": action_name,
+                "command": action_name,
+                "coordinates": norm_coords,
+                "pixel_coordinates": pixel_coords,
+                "args": args,
+                "status": (s.last_execution_result or {}).get("status", "completed"),
+                "result": (s.last_execution_result or {}).get("result"),
+                "summary": s.summary,
+                "thinking": s.operator_raw_thinking,
+                "timestamp": s.timestamp,
+                "current_activity": current_act,
+                "activity": current_act,
+                "current_package": current_pkg,
+                "package": current_pkg,
+            }
+            for meta_key in (
+                "target_text",
+                "target_bounds",
+                "target_resource_id",
+                "target_class",
+                "target_description",
+            ):
+                if meta_key in action_data:
+                    step_dict[meta_key] = action_data[meta_key]
+
+            result.append(step_dict)
+
+        return result

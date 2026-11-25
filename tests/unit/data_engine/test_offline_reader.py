@@ -137,3 +137,20 @@ def test_offline_reader_is_read_only(recorded):
     # No directories or tables are created for a missing database.
     with pytest.raises(FileNotFoundError):
         OfflineHistoryReader(recorded.global_base_dir / "nope.db", recorded.global_base_dir, "x")
+
+
+def test_offline_reader_resolves_suffixed_base_dir_when_stub_exists(recorded):
+    sess_id = str(recorded.current_session_id)
+    real_target = recorded.global_base_dir / f"web_999_{sess_id[:8]}_PASS_2026-11-12"
+
+    # Move recorded directory contents to real_target
+    if recorded.base_dir.exists():
+        recorded.base_dir.rename(real_target)
+
+    # Now create an empty stub session dir (only stdout.log)
+    stub_dir = recorded.global_base_dir / sess_id
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "stdout.log").write_text("log", encoding="utf-8")
+
+    reader = OfflineHistoryReader(recorded.db_path, recorded.global_base_dir, recorded.current_session_id)
+    assert reader.base_dir == real_target

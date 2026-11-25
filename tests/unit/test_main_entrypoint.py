@@ -28,17 +28,11 @@ from artemis.interfaces.cli.main import app
 @pytest.mark.parametrize(
     "token",
     [
-        "status",
-        "ui",
-        "stop",
-        "restart",
         "helper",
         "run",
         "init",
         "doctor",
         "batch",
-        "mcp",
-        "server",
         "trace",
         "--version",
         "-v",
@@ -74,16 +68,16 @@ def test_every_registered_command_is_known():
     assert registered <= legacy_main._root_tokens()
 
 
-def test_cli_status_dispatches_status_not_run(monkeypatch):
+def test_cli_doctor_dispatches_doctor_not_run(monkeypatch):
     calls = []
 
     def fake_app():
         calls.append(list(legacy_main.sys.argv))
 
     monkeypatch.setattr(legacy_main, "app", fake_app)
-    monkeypatch.setattr(legacy_main.sys, "argv", ["artemis", "status"])
+    monkeypatch.setattr(legacy_main.sys, "argv", ["artemis", "doctor"])
     legacy_main.cli()
-    assert calls == [["artemis", "status"]]
+    assert calls == [["artemis", "doctor"]]
 
     monkeypatch.setattr(legacy_main.sys, "argv", ["artemis", "open settings"])
     legacy_main.cli()

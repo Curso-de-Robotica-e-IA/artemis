@@ -155,7 +155,11 @@ def _discover_connected_device_ids() -> list[str]:
     if not _awake_enabled() or os.environ.get("ARTEMIS_CLOUD_MODE") == "1":
         return []
 
-    target = os.environ.get("ARTEMIS_DEVICE_ID") or os.environ.get("ADB_DEVICE_SERIAL")
+    target = (
+        os.environ.get("ARTEMIS_DEVICE_ID")
+        or os.environ.get("ADB_DEVICE_SERIAL")
+        or os.environ.get("ANDROID_SERIAL")
+    )
     host = os.environ.get("ADB_HOST") or settings.ADB_HOST or "127.0.0.1"
     port_text = os.environ.get("ADB_PORT")
     try:

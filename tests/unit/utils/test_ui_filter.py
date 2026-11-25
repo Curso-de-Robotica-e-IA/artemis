@@ -347,3 +347,46 @@ def test_mutual_occlusion_warning_injection():
     )
     assert "WARNING: may overlap with [2], possible occlusion" in minimal_list
     assert "WARNING: may overlap with [1], possible occlusion" in minimal_list
+
+
+def test_mutual_occlusion_warning_injection_disabled():
+    from artemis.utils.visualization import format_minimal_list_with_elements
+
+    fused_xml = [
+        {"text": "Search Video Result", "bounds": "[50,1800][1000,2000]"},
+        {"text": "Create Floating Button", "bounds": "[750,1850][1000,2000]"},
+    ]
+
+    minimal_list, elements, labels = format_minimal_list_with_elements(
+        fused_xml, width=1080, height=2400, inject_occlusion_warnings=False
+    )
+    assert "WARNING: may overlap with" not in minimal_list
+    assert len(elements) == 2
+
+
+def test_format_minimal_list_skips_offscreen_and_collapsed():
+    from artemis.utils.visualization import format_minimal_list_with_elements
+
+    fused_xml = [
+        {"text": "Visible Header", "bounds": "[0,50][1080,150]"},
+        {"text": "Offscreen Left", "bounds": "[-500,100][-50,200]"},
+        {"text": "Offscreen Bottom", "bounds": "[0,2500][1080,2600]"},
+        {"text": "Collapsed Point", "bounds": "[1080,2400][1080,2400]"},
+        {"hint": "Search Box", "bounds": "[10,200][500,300]"},
+    ]
+
+    minimal_list, elements, labels = format_minimal_list_with_elements(
+        fused_xml, width=1080, height=2400
+    )
+    lines = minimal_list.splitlines()
+    assert len(lines) == 2
+    assert "[1] Text: 'Visible Header' | Bounds: [0,20][1000,62]" in lines[0]
+    assert "[2] Hint: 'Search Box' | Bounds: [9,83][462,125]" in lines[1]
+    assert len(elements) == 2
+    assert elements[0]["text"] == "Visible Header"
+    assert elements[1]["text"] == "Search Box"
+
+
+def test_is_semantic_empty_preserves_hint_and_error():
+    assert not _is_semantic_empty({"hint": "Search something"})
+    assert not _is_semantic_empty({"error": "Field is required"})

@@ -425,6 +425,13 @@ if ((-not (Test-Path $ShowcaseIndex)) -and (-not (Test-Path $ShowcaseIndexAlt1))
         Push-Location "$RootDir\apps\showcase_ui"
         try {
             $npmExec = if (Test-CommandExists "npm.cmd") { "npm.cmd" } else { "npm" }
+            $ajvDist = "$RootDir\apps\showcase_ui\node_modules\ajv\dist\ajv.js"
+            $ajvPkg = "$RootDir\apps\showcase_ui\node_modules\ajv"
+            $ngCli = "$RootDir\apps\showcase_ui\node_modules\@angular\cli"
+            if ((Test-Path "$RootDir\apps\showcase_ui\node_modules") -and (((Test-Path $ajvPkg) -and (-not (Test-Path $ajvDist))) -or (-not (Test-Path $ngCli)))) {
+                Write-Host "   [WARN] Incomplete or corrupted node_modules detected. Cleaning for fresh install..." -ForegroundColor Yellow
+                Remove-Item -Path "$RootDir\apps\showcase_ui\node_modules" -Recurse -Force -ErrorAction SilentlyContinue
+            }
             Write-Host "   [INFO] Installing frontend npm dependencies..." -ForegroundColor Cyan
             & $npmExec install --no-audit --no-fund --loglevel=error
             if ($LASTEXITCODE -ne 0) {
@@ -435,8 +442,15 @@ if ((-not (Test-Path $ShowcaseIndex)) -and (-not (Test-Path $ShowcaseIndexAlt1))
             if (Test-Path $cliNodeVersion) {
                 (Get-Content $cliNodeVersion) -replace '22\.22\.3', '22.22.0' | Set-Content $cliNodeVersion
             }
+            $buildTarget = "$RootDir\apps\showcase_ui\node_modules\@angular\build\src\tools\esbuild\target.js"
+            if (Test-Path $buildTarget) {
+                (Get-Content $buildTarget) -replace '22\.22\.3', '22.22.0' | Set-Content $buildTarget
+            }
             Write-Host "   [INFO] Building Angular frontend application..." -ForegroundColor Cyan
             & $npmExec run build
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   [WARN] ng build exited with non-zero exit code $LASTEXITCODE." -ForegroundColor DarkYellow
+            }
             if (Test-Path $ShowcaseIndex) {
                 Write-Host "   [OK] Showcase UI compiled successfully." -ForegroundColor Green
             } elseif (Test-Path $ShowcaseIndexAlt1) {

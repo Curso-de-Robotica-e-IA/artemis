@@ -27,23 +27,27 @@ from apps.admin_console.replay_manager import ReplayManager
 from artemis.graph.state import State
 
 SESSION_ID = "11111111-2222-3333-4444-555555555555"
-REAL_DATA_DIR = Path(rm_module.TRACES_PATH) / "replay" / "data"
+REAL_TRACES_DIR = Path(rm_module.TRACES_PATH)
 
 
 def _make_manager(tmp_path: Path, monkeypatch) -> ReplayManager:
-    manager = ReplayManager(workspace_root=tmp_path, original_db_path=tmp_path / "missing.db")
-    manager.test_data_dir = tmp_path / "data"
+    manager = ReplayManager(
+        workspace_root=tmp_path,
+        original_db_path=tmp_path / "missing.db",
+        traces_path=tmp_path,
+    )
     # Chunking reads the master DB; the fixture dir is already "chunked".
     monkeypatch.setattr(manager, "_ensure_session_chunked", lambda session_id: None)
     return manager
 
 
 def _write_step_dir(tmp_path: Path) -> Path:
-    session_dir = tmp_path / "data" / f"{SESSION_ID}_chunked"
-    step_dir = session_dir / "step_01"
+    exec_dir = tmp_path / f"web_1_{SESSION_ID[:8]}_PASS_20261113_080000"
+    replay_dir = exec_dir / "replay"
+    step_dir = replay_dir / "step_01"
     step_dir.mkdir(parents=True)
-    (session_dir / ".chunked").touch()
-    (session_dir / "session.json").write_text(
+    (replay_dir / ".chunked").touch()
+    (replay_dir / "session.json").write_text(
         json.dumps({"initial_goal": "Open Settings and enable dark mode"}), encoding="utf-8"
     )
     (step_dir / "step.json").write_text(
@@ -92,19 +96,20 @@ def test_instantiate_state_builds_valid_state_from_step_dir(tmp_path, monkeypatc
 
 
 def _real_step_dirs() -> list[Path]:
-    if not REAL_DATA_DIR.is_dir():
+    if not REAL_TRACES_DIR.is_dir():
         return []
-    return sorted(REAL_DATA_DIR.glob("*_chunked/step_01"))[:5]
+    return sorted(REAL_TRACES_DIR.glob("*/replay/step_01"))[:5]
 
 
-@pytest.mark.parametrize("step_dir", _real_step_dirs(), ids=lambda p: p.parent.name[:8])
+@pytest.mark.parametrize("step_dir", _real_step_dirs(), ids=lambda p: p.parent.parent.name[:16])
 def test_instantiate_state_on_recorded_step_dirs(step_dir, monkeypatch):
     """Exercise real chunked traces when present locally (traces/ is gitignored)."""
-    manager = ReplayManager()
-    manager.test_data_dir = step_dir.parent.parent
+    step_meta = json.loads((step_dir / "step.json").read_text(encoding="utf-8"))
+    session_id = step_meta["session_id"]
+    traces_root = step_dir.parent.parent.parent
+    manager = ReplayManager(traces_path=traces_root)
     monkeypatch.setattr(manager, "_ensure_session_chunked", lambda session_id: None)
     monkeypatch.setattr(manager, "load_session_goal", lambda *a, **k: "recorded goal")
-    session_id = step_dir.parent.name.removesuffix("_chunked")
 
     state = manager.instantiate_state(session_id, 1)
 

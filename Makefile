@@ -12,32 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: help test test-integration test-device test-all install install-deps setup start ui restart stop status build-ui doctor clean precommit-install precommit lint format typecheck quality-ratchet
+.PHONY: help test test-integration test-device test-all install install-deps setup doctor clean precommit-install precommit lint format typecheck quality-ratchet
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-start: ## One-click start Artemis Showcase UI and auto-open browser
-	@bash start.sh
-
-ui: ## Launch the unified Showcase UI & Admin Console in browser
-	@uv run artemis ui --open
-
-restart: ## Restart running Artemis Web UI & server
-	@uv run artemis restart
-
-stop: ## Stop running Artemis Web UI & server
-	@uv run artemis stop
-
-status: ## Display Artemis Web UI & server status
-	@uv run artemis status
-
-build-ui: ## Build the Showcase UI Angular frontend
-	@echo "🎨 Building Showcase UI..."
-	@cd apps/showcase_ui && npm install && npm run build
 
 doctor: ## Run system, device, and toolchain diagnostics
 	@uv run artemis doctor
@@ -56,7 +37,7 @@ test-device: ## Run Android and end-to-end tests explicitly
 
 test-all: ## Run every test tree; external prerequisites must be available
 	@echo "🧪 Running the complete test tree..."
-	@uv run pytest tests packages/artemis-client/tests -m "integration or not integration"
+	@uv run pytest tests -m "integration or not integration"
 
 install: ## Install python dependencies via uv
 	@echo "📦 Installing python dependencies..."
@@ -66,10 +47,9 @@ install-deps: ## One-click install all system dependencies (ADB, FFmpeg, scrcpy,
 	@echo "⚡ Running one-click dependency installer..."
 	@bash scripts/install_deps.sh
 
-setup: ## Setup project (install dependencies + pre-commit hooks + build UI)
+setup: ## Setup project (install dependencies + pre-commit hooks)
 	@echo "🚀 Setting up project..."
 	@$(MAKE) install
-	@$(MAKE) build-ui
 	@$(MAKE) precommit-install
 	@echo ""
 	@echo "✅ Setup complete! You're ready to start developing."
@@ -106,7 +86,7 @@ precommit: ## Run pre-commit hooks manually on all files
 
 clean: ## Clean up generated files, caches, and traces
 	@echo "🧹 Cleaning up caches and temporary files..."
-	@rm -rf .pytest_cache .ruff_cache .artemis_paused traces scratch .venv apps/showcase_ui/.angular build dist
+	@rm -rf .pytest_cache .ruff_cache .artemis_paused traces scratch .venv build dist
 	@find . -type d -name "outputs" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name ".artemis_paused" -delete 2>/dev/null || true
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

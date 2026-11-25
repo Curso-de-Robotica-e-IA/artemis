@@ -89,13 +89,67 @@ def _showcase_build_required(showcase_dir: Path) -> bool:
     return any(path.exists() and path.stat().st_mtime > build_time for path in input_paths)
 
 
+def _is_node_modules_corrupted(showcase_dir: Path) -> bool:
+    """Return whether ``node_modules`` exists but is missing critical files (e.g. from partial git checkout)."""
+    node_modules = showcase_dir / "node_modules"
+    if not node_modules.is_dir():
+        return False
+    ajv_dir = node_modules / "ajv"
+    ajv_dist = ajv_dir / "dist" / "ajv.js"
+    ng_cli = node_modules / "@angular" / "cli"
+    if ajv_dir.is_dir() and not ajv_dist.is_file():
+        return True
+    if (node_modules / "@angular").is_dir() and not ng_cli.is_dir():
+        return True
+    return False
+
+
+def _clean_corrupted_node_modules(showcase_dir: Path) -> None:
+    """Safely wipe an incomplete node_modules directory so npm can do a clean installation."""
+    node_modules = showcase_dir / "node_modules"
+    if node_modules.exists():
+        shutil.rmtree(node_modules, ignore_errors=True)
+
+
+def _patch_angular_cli_node_version(showcase_dir: Path) -> None:
+    """Relax the patch-level Node check in Angular CLI for Node 22.22.x environments."""
+    targets = [
+        showcase_dir
+        / "node_modules"
+        / "@angular"
+        / "cli"
+        / "src"
+        / "utilities"
+        / "node-version.js",
+        showcase_dir
+        / "node_modules"
+        / "@angular"
+        / "build"
+        / "src"
+        / "tools"
+        / "esbuild"
+        / "target.js",
+    ]
+    for target in targets:
+        if target.is_file():
+            try:
+                content = target.read_text(encoding="utf-8")
+                if "22.22.3" in content:
+                    target.write_text(content.replace("22.22.3", "22.22.0"), encoding="utf-8")
+            except OSError:
+                pass
+
+
 def _npm_install_required(showcase_dir: Path) -> bool:
     """Return whether ``node_modules`` is missing or older than the package manifests.
 
     npm rewrites ``node_modules/.package-lock.json`` on every successful
     install, so its mtime is the "dependencies last synced" stamp.
     """
-    stamp = showcase_dir / "node_modules" / ".package-lock.json"
+    node_modules = showcase_dir / "node_modules"
+    if not node_modules.exists() or _is_node_modules_corrupted(showcase_dir):
+        return True
+    stamp = node_modules / ".package-lock.json"
     if not stamp.exists():
         return True
     synced_at = stamp.stat().st_mtime
@@ -208,15 +262,42 @@ def ensure_showcase_built(console: Console) -> None:
         "   [yellow]🎨 Showcase UI sources changed. Compiling Angular Showcase UI...[/yellow]"
     )
     started = time.monotonic()
+    install_attempted = False
     try:
         if _npm_install_required(showcase_dir):
+            if _is_node_modules_corrupted(showcase_dir):
+                console.print(
+                    "   [yellow]⚠ Incomplete node_modules detected. Cleaning for fresh install...[/yellow]"
+                )
+                _clean_corrupted_node_modules(showcase_dir)
             _run_build_step(
                 console,
                 "① npm install (dependencies changed)",
                 [npm_executable, "install", "--no-audit", "--no-fund", "--loglevel=warn"],
                 showcase_dir,
             )
-        _run_build_step(console, "② ng build", [npm_executable, "run", "build"], showcase_dir)
+            install_attempted = True
+        _patch_angular_cli_node_version(showcase_dir)
+        try:
+            _run_build_step(console, "② ng build", [npm_executable, "run", "build"], showcase_dir)
+        except subprocess.CalledProcessError:
+            if not install_attempted:
+                console.print(
+                    "   [yellow]⚠ Initial build failed. Cleaning node_modules and attempting clean install...[/yellow]"
+                )
+                _clean_corrupted_node_modules(showcase_dir)
+                _run_build_step(
+                    console,
+                    "① npm install (clean retry)",
+                    [npm_executable, "install", "--no-audit", "--no-fund", "--loglevel=warn"],
+                    showcase_dir,
+                )
+                _patch_angular_cli_node_version(showcase_dir)
+                _run_build_step(
+                    console, "② ng build", [npm_executable, "run", "build"], showcase_dir
+                )
+            else:
+                raise
         console.print(
             f"   [green]✓ Showcase UI built in {_format_elapsed(time.monotonic() - started)}."
             "[/green]\n"

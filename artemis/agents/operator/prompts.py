@@ -22,6 +22,7 @@ from typing import NamedTuple
 from jinja2 import Environment, StrictUndefined, Template
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.tools.history import HISTORY_TOOL_NAMES
 from PIL import Image
 
@@ -32,6 +33,7 @@ from artemis.tools.command_tool import (
     _is_output_long,
 )
 from artemis.utils.plan_grammar import parse_plan, render_plan_grammar_spec
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.task_tree import SELF_DESCRIBED_MARKER, action_intent_phrase
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -207,6 +209,17 @@ def resolve_operator_prompt_tools(ctx: ArtemisContext) -> frozenset[str]:
     if not (setup and getattr(setup, "video_recording_tools_enabled", False)):
         available.discard("video_analyzer")
 
+    from artemis.config.agent import is_explorer_enabled, is_tool_denylisted
+
+    if is_tool_denylisted(ctx, "video_analyzer", "operator"):
+        available.discard("video_analyzer")
+
+    if not is_explorer_enabled(ctx, "operator"):
+        available.discard("ask_explorer")
+
+    if is_tool_denylisted(ctx, "ask_diagnoser", "operator"):
+        available.discard("ask_diagnoser")
+
     # The history tools need a DataEngine to read, and search_history is also
     # config-gated; the prompt must not advertise a tool that is not bound.
     if getattr(ctx, "data_engine", None) is None:
@@ -380,14 +393,41 @@ class ObservationPromptComponent(PromptComponent):
         latest_screenshot_b64 = kwargs.get("latest_screenshot_b64")
         minimal_list = kwargs.get("minimal_list")
 
-        builder.add_human_content("--- Current Screenshot ---")
-        builder.add_human_content(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{latest_screenshot_b64}"},
-            }
-        )
-        builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")
+        clean_b64 = str(latest_screenshot_b64).strip() if latest_screenshot_b64 else None
+        if clean_b64:
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",", 1)[1].strip()
+            builder.add_human_content("--- Current Screenshot ---")
+            builder.add_human_content(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encode_image_for_llm(clean_b64)}"},
+                }
+            )
+        vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
+        if vision_only:
+            builder.add_human_content(VISION_ONLY_NOTICE)
+        else:
+            ui_content = minimal_list
+            if not ui_content and state is not None:
+                raw_data = getattr(state, "operator_raw_data", None) or {}
+                fused = getattr(state, "latest_ui_hierarchy", None) or (
+                    raw_data.get("xml_hierarchy") if isinstance(raw_data, dict) else None
+                )
+                if fused:
+                    from artemis.utils.visualization import format_minimal_list_with_elements
+                    w = 1080
+                    h = 2400
+                    if isinstance(raw_data, dict) and isinstance(raw_data.get("width"), int) and isinstance(raw_data.get("height"), int):
+                        w = raw_data["width"]
+                        h = raw_data["height"]
+                    try:
+                        ui_content, _, _ = format_minimal_list_with_elements(fused, w, h)
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        ui_content = None
+            if not ui_content:
+                ui_content = "(No UI elements detected)"
+            builder.add_human_content(f"--- Visible UI Elements ---\n{ui_content}")
 
 
 class PlanRecitationPromptComponent(PromptComponent):
@@ -540,21 +580,28 @@ def render_execution_incident(incident: dict, steps: list) -> str:
         )
 
     # --- Category-specific evidence -------------------------------------------------
+    is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
     if category == "target_shifted":
         location = evidence.get("new_location")
-        bounds = evidence.get("new_bounds")
+        bounds = None if is_vision_only else evidence.get("new_bounds")
         where = f" at normalized {location}" if location else ""
         bounds_str = f" (bounds {bounds})" if bounds else ""
+        notice = f" {VISION_ONLY_NOTICE}" if is_vision_only else ""
         lines.append(
             f"Evidence: the same element still exists but has moved{where}{bounds_str};"
-            " the shift exceeded the safety net's auto-correction tolerance."
+            f" the shift exceeded the safety net's auto-correction tolerance.{notice}"
         )
     elif category == "target_occupied":
-        occupant = evidence.get("occupant") or "a different element"
+        occupant = (
+            "another element"
+            if is_vision_only
+            else (evidence.get("occupant") or "a different element")
+        )
+        notice = f" {VISION_ONLY_NOTICE}" if is_vision_only else ""
         lines.append(
             f"Evidence: the target position is now covered by {occupant}. Something"
             " appeared on top of your target (dialog, sheet, banner, keyboard, or a"
-            " re-laid-out screen)."
+            f" re-laid-out screen).{notice}"
         )
     elif category in ("target_disappeared", "pixel_target_disappeared"):
         prior_str = (
@@ -904,7 +951,18 @@ class ScreenshotSimilarityPromptComponent(PromptComponent):
         history_steps = [s for s in steps if s.get("post_image_name") or s.get("pre_image_name")]
         recent_steps = history_steps[-self.NUM_STEPS_BACK :]
         matched_step_nums = []
-        images_dir = Path(ctx.data_engine.global_base_dir) / "images"
+        raw_base_dir = getattr(ctx.data_engine, "base_dir", None)
+        if not isinstance(raw_base_dir, (str, Path)):
+            raw_base_dir = getattr(ctx.data_engine, "global_base_dir", None)
+        if not isinstance(raw_base_dir, (str, Path)):
+            return
+        images_dir = Path(raw_base_dir) / "images"
+        global_base_dir = getattr(ctx.data_engine, "global_base_dir", None)
+        fallback_images_dir = (
+            Path(global_base_dir) / "images"
+            if isinstance(global_base_dir, (str, Path))
+            else None
+        )
         # 3. Compare current image with each past step's post-action screenshot
         for step_rec in recent_steps:
             step_num = step_rec.get("step_number")
@@ -916,6 +974,8 @@ class ScreenshotSimilarityPromptComponent(PromptComponent):
             if not image_name:
                 continue
             image_path = images_dir / f"{image_name}.jpg"
+            if not image_path.exists() and fallback_images_dir is not None:
+                image_path = fallback_images_dir / f"{image_name}.jpg"
             if not image_path.exists():
                 continue
             try:

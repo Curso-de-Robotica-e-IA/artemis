@@ -18,6 +18,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -28,17 +29,24 @@ try:
     from admin_console.core.state import state
     from admin_console.database.repositories.session_repository import session_repo
     from admin_console.services import worker_process_io
-    from admin_console.services.media_service import media_service
+    from admin_console.services.media_service import (
+        RESERVED_TRACE_SUBDIRS,
+        MediaService,
+        media_service,
+    )
 except ImportError:
     from apps.admin_console.core.state import state
     from apps.admin_console.database.repositories.session_repository import session_repo
     from apps.admin_console.services import worker_process_io
-    from apps.admin_console.services.media_service import media_service
+    from apps.admin_console.services.media_service import (
+        RESERVED_TRACE_SUBDIRS,
+        MediaService,
+        media_service,
+    )
 
 from artemis.config import (
     PAUSE_FILE,
-    TEST_DATA_DIR,
-    TEST_OUTPUTS_DIR,
+    TRACES_PATH,
     WORKSPACE_ROOT,
 )
 from artemis.runtime import (
@@ -898,8 +906,96 @@ class TaskQueueService:
                     )
         finally:
             await cls._finish_output_forwarder(output_task)
+            if sess_id:
+                cls._consolidate_trace_artifacts(str(sess_id), run_key)
+                await asyncio.to_thread(cls._materialize_session_replay_chunks, str(sess_id))
             # 5. Clean up the finished task and release this run's scheduling slot
             cls._release_run_slot(sess_id, run_key, proc)
+
+    @classmethod
+    def _materialize_session_replay_chunks(cls, sess_id: str) -> None:
+        """Export step replay chunks into the session's finalized execution directory."""
+        try:
+            try:
+                from admin_console.replay_manager import ReplayManager
+            except ImportError:
+                from apps.admin_console.replay_manager import ReplayManager
+
+            ReplayManager(WORKSPACE_ROOT)._ensure_session_chunked(str(sess_id))
+        except (ImportError, OSError, sqlite3.Error, ValueError) as exc:
+            logger.debug(f"[QueueWorker] Step replay materialization skipped for {sess_id}: {exc}")
+
+    @classmethod
+    def _consolidate_trace_artifacts(cls, sess_id: str, run_key: str) -> None:
+        """Consolidate stdout.log and trace files into a single directory, removing redundancies."""
+        try:
+            traces_root = Path(trace_store.TRACES_DIR)
+            if not traces_root.is_dir():
+                return
+
+            sess_dir = traces_root / sess_id
+            s_prefix = sess_id[:8] if len(sess_id) >= 8 else sess_id
+            run_prefix = run_key[:8] if len(run_key) >= 8 else run_key
+
+            # Look for finalized/web worker directory matching run_prefix or sess_id
+            target_dir: Path | None = None
+            best_rank = (-1, "")
+            for item in traces_root.iterdir():
+                if (
+                    not item.is_dir()
+                    or item == sess_dir
+                    or item.name.startswith(".")
+                    or item.name in RESERVED_TRACE_SUBDIRS
+                ):
+                    continue
+                if run_prefix in item.name or sess_id in item.name or s_prefix in item.name:
+                    has_terminal = any(
+                        marker in item.name for marker in MediaService.TRACE_STATUS_SUFFIXES
+                    )
+                    is_web = item.name.startswith("web_")
+                    rank = (int(has_terminal) * 2 + int(is_web), item.name)
+                    if rank > best_rank:
+                        best_rank = rank
+                        target_dir = item
+
+            if target_dir is not None and sess_dir.is_dir():
+                for log_name in ("stdout.log", "stderr.log", "status.json"):
+                    src = sess_dir / log_name
+                    dst = target_dir / log_name
+                    if src.is_file() and not dst.is_file():
+                        try:
+                            shutil.move(str(src), str(dst))
+                        except OSError:
+                            pass
+                src_replay = sess_dir / "replay"
+                dst_replay = target_dir / "replay"
+                if src_replay.is_dir():
+                    try:
+                        if not dst_replay.exists():
+                            shutil.move(str(src_replay), str(dst_replay))
+                        else:
+                            shutil.rmtree(src_replay)
+                    except OSError:
+                        pass
+                try:
+                    remaining = list(sess_dir.iterdir())
+                    if not remaining:
+                        sess_dir.rmdir()
+                except OSError:
+                    pass
+            elif sess_dir.is_dir():
+                try:
+                    items = list(sess_dir.iterdir())
+                    if not items:
+                        sess_dir.rmdir()
+                    elif len(items) == 1 and items[0].name in ("stdout.log", "stderr.log"):
+                        if items[0].stat().st_size == 0:
+                            items[0].unlink()
+                            sess_dir.rmdir()
+                except OSError:
+                    pass
+        except OSError as exc:
+            logger.debug(f"[QueueWorker] Trace consolidation skipped for {sess_id}: {exc}")
 
     @classmethod
     def _find_duplicate_submission(
@@ -1671,33 +1767,44 @@ class TaskQueueService:
 
     @staticmethod
     def archive_older_replays_on_launch():
-        """Archives all existing step replay output folders on server launch."""
-        if TEST_OUTPUTS_DIR.exists():
-            archive_dir = TEST_DATA_DIR / "older"
-            for item in TEST_OUTPUTS_DIR.iterdir():
-                if item.is_dir():
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    target_name = f"{item.name}_{timestamp}"
+        """Archive leftover sandbox replay outputs inside each session's replay/older directory."""
+        if not TRACES_PATH.is_dir():
+            return
+        for session_dir in TRACES_PATH.iterdir():
+            if (
+                not session_dir.is_dir()
+                or session_dir.name.startswith(".")
+                or session_dir.name in RESERVED_TRACE_SUBDIRS
+            ):
+                continue
+            outputs_dir = session_dir / "replay" / "outputs"
+            if not outputs_dir.is_dir():
+                continue
+            archive_dir = session_dir / "replay" / "older"
+            for item in outputs_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                target_name = f"{item.name}_{timestamp}"
+                target_path = archive_dir / target_name
+
+                counter = 1
+                while target_path.exists():
+                    target_name = f"{item.name}_{timestamp}_{counter}"
                     target_path = archive_dir / target_name
+                    counter += 1
 
-                    counter = 1
-                    while target_path.exists():
-                        target_name = f"{item.name}_{timestamp}_{counter}"
-                        target_path = archive_dir / target_name
-                        counter += 1
-
+                print(
+                    f"Archiving older replay record on server launch: {item.name} -> {target_path}"
+                )
+                try:
+                    shutil.move(str(item), str(target_path))
+                except OSError as e:
                     print(
-                        f"Archiving older replay record on server launch: "
-                        f"{item.name} -> {target_path}"
+                        f"Warning: Failed to archive {item.name} during server launch: {e}",
+                        file=sys.stderr,
                     )
-                    try:
-                        shutil.move(str(item), str(target_path))
-                    except Exception as e:
-                        print(
-                            f"Warning: Failed to archive {item.name} during server launch: {e}",
-                            file=sys.stderr,
-                        )
 
     @staticmethod
     def verify_chunks_exist_on_launch(replay_manager):
@@ -1714,6 +1821,18 @@ class TaskQueueService:
                 f"Warning: Failed to verify chunks during server launch: {e}",
                 file=sys.stderr,
             )
+
+    @staticmethod
+    def cleanup_empty_traces_on_launch() -> int:
+        """Removes orphaned empty trace folders on server launch."""
+        try:
+            removed = trace_store.cleanup_empty_trace_dirs()
+            if removed:
+                print(f"[QueueWorker] Cleaned up {len(removed)} empty trace directories on launch.")
+            return len(removed)
+        except OSError as e:
+            logger.debug(f"[QueueWorker] Trace cleanup on launch skipped: {e}")
+            return 0
 
 
 task_queue_service = TaskQueueService()

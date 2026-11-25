@@ -16,6 +16,10 @@
 
 from typing import Annotated
 
+from rich.console import Console
+from rich.panel import Panel
+import typer
+
 from artemis._version import __version__
 from artemis.interfaces.cli.commands.batch import batch_command
 from artemis.interfaces.cli.commands.doctor import doctor_command
@@ -32,9 +36,6 @@ from artemis.interfaces.cli.commands.server_lifecycle import (
 from artemis.interfaces.cli.commands.trace import trace_app
 from artemis.interfaces.cli.commands.ui import ui_command
 from third_party.mobile_use.utils.logger import get_logger
-from rich.console import Console
-from rich.panel import Panel
-import typer
 
 logger = get_logger(__name__)
 

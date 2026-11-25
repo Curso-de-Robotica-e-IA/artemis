@@ -100,6 +100,13 @@ class State(BaseModel):
         take_last,
     ] = None
 
+    current_activity: Annotated[
+        str | None, "Current Android activity on the device display", take_last
+    ] = None
+    current_package: Annotated[
+        str | None, "Current Android package on the device display", take_last
+    ] = None
+
     # ── Turn products (previous turn's decisions & results) ──────────────
     current_step_id: Annotated[str | None, "Current step ID from data engine", take_last] = None
     structured_decisions: Annotated[

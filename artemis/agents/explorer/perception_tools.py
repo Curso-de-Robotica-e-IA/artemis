@@ -127,9 +127,18 @@ class PerceptionToolsMixin:
             resource_id=str(entry["resource_id"]) if entry.get("resource_id") else None,
         )
 
+    def _traces_base_dir(self) -> Path:
+        """Resolve the active session's trace directory, falling back to global traces."""
+        ctx = getattr(self, "ctx", None)
+        data_engine = getattr(ctx, "data_engine", None) if ctx is not None else None
+        base_dir = getattr(data_engine, "base_dir", None) if data_engine is not None else None
+        if isinstance(base_dir, (str, Path)):
+            return Path(base_dir)
+        return Path(settings.TRACES_PATH)
+
     def _next_output_path(self, subdir: str) -> Path:
         """Next free ``images/<subdir>/<image>_<n>.jpg`` under the traces directory."""
-        out_dir = Path(settings.TRACES_PATH) / "images" / subdir
+        out_dir = self._traces_base_dir() / "images" / subdir
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = self.image_name or "temp_image"
         max_seq = 0
@@ -279,7 +288,7 @@ class PerceptionToolsMixin:
                         "image_path": str(target_path),
                     }
 
-                base_dir = settings.TRACES_PATH
+                base_dir = self._traces_base_dir()
                 images_dir = base_dir / "images"
                 object_detect_dir = images_dir / "object_detect"
                 object_detect_dir.mkdir(parents=True, exist_ok=True)
@@ -611,7 +620,7 @@ class PerceptionToolsMixin:
                 if new_w > 0 and new_h > 0:
                     cropped = cv2.resize(cropped, (new_w, new_h))
 
-            base_dir = settings.TRACES_PATH
+            base_dir = self._traces_base_dir()
             images_dir = base_dir / "images"
             inspect_region_dir = images_dir / "inspect_region"
             inspect_region_dir.mkdir(parents=True, exist_ok=True)

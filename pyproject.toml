@@ -93,16 +93,18 @@ artemis-admin = "apps.admin_console.server:main"
 
 
 [build-system]
-# requires = ["uv_build>=0.7.20,<0.8.0"]
-# build-backend = "uv_build"
 requires = ["setuptools>=61.0", "Cython"]
 build-backend = "setuptools.build_meta"
 
 [tool.uv.workspace]
-members = ["packages/artemis-client"]
+members = [
+    "packages/artemis-client",
+    "packages/artemis-detector",
+]
 
 [tool.uv.sources]
 artemis-client = { workspace = true }
+artemis-detector = { workspace = true }
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -256,4 +258,3 @@ dev = [
     "pyright>=1.1.389",
     "pre-commit>=3.5.0",
 ]
-

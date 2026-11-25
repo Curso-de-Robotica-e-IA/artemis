@@ -165,7 +165,7 @@ async def test_perform_action_validation():
     assert err is None
     assert actions[0]["action"] == "swipe"
     assert len(actions[0]["coordinates"]) == 4
-    assert actions[0]["duration"] == 800
+    assert actions[0]["duration"] == 450
 
     # Test click with float target index (coercion)
     actions, err = node._translate_and_validate_tool(

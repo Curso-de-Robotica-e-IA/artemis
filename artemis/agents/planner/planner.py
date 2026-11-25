@@ -276,10 +276,13 @@ class PlannerNode:
 
         human_message_content = [{"type": "text", "text": human_message}]
         if screenshot_b64:
+            clean_b64 = str(screenshot_b64).strip()
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",", 1)[1].strip()
             human_message_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                    "image_url": {"url": f"data:image/jpeg;base64,{clean_b64}"},
                 }
             )
         messages = [

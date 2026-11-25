@@ -7,12 +7,12 @@
   // 1. Global Default Model (Applied to all sub-agents unless overridden below)
   // ------------------------------------------------------------------------------
   "default": {
-    "provider": "google",
-    "model": "gemini-3.8-flash",
+    "provider": "ollama",
+    "model": "ornith-1.5:35b",
     "thinking_level": "medium",
     "fallback": {
-      "provider": "google",
-      "model": "gemini-3.7-flash",
+      "provider": "openai",
+      "model": "ornith-1.5:35b",
       "thinking_level": "medium"
     }
   },
@@ -43,91 +43,87 @@
     },
     "local-ollama": {
       "provider": "openai",
-      "model": "llama3.2-vision",
-      "fallback": { "provider": "openai", "model": "llama3.2-vision" }
+      "model": "ornith-1.5:35b",
+      "fallback": {
+        "provider": "openai",
+        "model": "ornith-1.5:35b"
+      }
     }
   },
 
   // ------------------------------------------------------------------------------
   // 3. Agent & Sub-Agent Node Customizations (Optional - Inherits from 'default')
   // ------------------------------------------------------------------------------
-  "nodes": {
-    // 🧠 Planner: High-level goal decomposition and strategic step planning
-    "planner": {
-      "thinking_level": "high"
-    },
-
-    // 🎯 Operator: Screen perception, element interaction, and direct execution
-    "operator": {
-      "thinking_level": "medium",
-      "include_thoughts": true
-    },
-
-    // 🎬 Video Analyzer: Multimodal screen recording verification and temporal analysis
-    // NOTE: Dual-path engine automatically routes:
-    //  - Native Gemini Files API for Gemini models with Google API keys (long video file stream);
-    //    Gemini 3.6+ Flash sub-agents use agentic video understanding by default (see video_analyzer.processing below)
-    //  - Universal Multi-Model Engine for Claude 3.5/3.7, GPT-4o, OpenRouter, Vertex AI (dynamic keyframe extraction + multimodal tool calling)
-    "video_analyzer": {},
-
-    // 👁️ Object Detector & Explorer (Flash Mode): Visual coordinates grounding and bounding boxes
-    // CRITICAL REQUIREMENT: Standard LLMs (including standard Gemini Flash, GPT-4o, Claude 3.7) lack sub-pixel spatial coordinate fine-tuning.
-    // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
-    // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
-    "object_detector": {
-      "model": "gemini-robotics-er-2-preview",
-      "fallback": {
-        "provider": "google",
-        "model": "gemini-robotics-er-2-preview"
-      }
-    },
-
-    // 🔍 Explorer: Deep element grounding and multi-candidate visual search
-    // NOTE:
-    //  - "flash" version delegates directly to object_detector (requires Gemini ER model above).
-    //  - "pro" / "ultra" versions run multi-turn ReAct loops (supports both Native Gemini and Universal Multi-Model LangChain engines).
-    "explorer": {
-      "thinking_level": "medium"
-    },
-
-    // 📋 Summarizer: Aggregates step history and generates structured outcome
-    "summarizer": {},
-
-    // 🔽 Hopper: Fast lightweight package name locator
-    "hopper": {
-      "model": "gemini-3.5-flash-lite",
-      "fallback": {
-        "provider": "google",
-        "model": "gemini-3.1-flash-lite"
-      }
-    },
-
-    // 📝 Outputter: Synthesizes execution trace into final output report
-    "outputter": {},
-
-    // 🪵 Log Analyzer: Error log diagnosis with search grounding
-    "log_analyzer": {
-      "enable_grounding": true
-    },
-
-    // 🩺 Diagnoser Expert: Failure root cause diagnosis with search grounding
-    "diagnoser_expert": {
-      "enable_grounding": true
-    },
-    // 🏛️ Committee Council Members
-    "planner_avatar": {},
-    "history_analyzer_expert": {},
-    // 🔎 Checker: Plan-declared checkpoint verification and exit final review.
-    // Thoughts are streamed so the verifier's reasoning shows live in the timeline.
-    "checker": {
-      "thinking_level": "medium",
-      "include_thoughts": true
-    }
-    // 🎯 Planner Validation: Advisory review of milestone changes.
-    // Defaults to the same lightweight model as the pixel safety net
-    // (gemini-3.5-flash-lite, temperature 0); add "planner_validation": {...} here to override.
-  },
-
+  // "nodes": {
+  //   "provider": "openai",
+  //   // 🧠 Planner: High-level goal decomposition and strategic step planning
+  //   "planner": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "high"
+  //   },
+  //   // 🎯 Operator: Screen perception, element interaction, and direct execution
+  //   "operator": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium",
+  //     "include_thoughts": true
+  //   },
+  //   // 🎬 Video Analyzer: Multimodal screen recording verification and temporal analysis
+  //   "video_analyzer": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 👁️ Object Detector & Explorer (Flash Mode): Visual coordinates grounding and bounding boxes
+  //   "object_detector": {
+  //     "model": "ornith-1.5:35b",
+  //     "fallback": {
+  //       "provider": "openai",
+  //       "model": "ornith-1.5:35b"
+  //     }
+  //   },
+  //   // 🔍 Explorer: Deep element grounding and multi-candidate visual search
+  //   "explorer": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium"
+  //   },
+  //   // 📋 Summarizer: Aggregates step history and generates structured outcome
+  //   "summarizer": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🔽 Hopper: Fast lightweight package name locator
+  //   "hopper": {
+  //     "model": "ornith-1.5:35b",
+  //     "fallback": {
+  //       "provider": "openai",
+  //       "model": "ornith-1.5:35b"
+  //     }
+  //   },
+  //   // 📝 Outputter: Synthesizes execution trace into final output report
+  //   "outputter": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🪵 Log Analyzer: Error log diagnosis with search grounding
+  //   "log_analyzer": {
+  //     "model": "ornith-1.5:35b",
+  //     "enable_grounding": true
+  //   },
+  //   // 🩺 Diagnoser Expert: Failure root cause diagnosis with search grounding
+  //   "diagnoser_expert": {
+  //     "model": "ornith-1.5:35b",
+  //     "enable_grounding": true
+  //   },
+  //   // 🏛️ Committee Council Members
+  //   "planner_avatar": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   "history_analyzer_expert": {
+  //     "model": "ornith-1.5:35b"
+  //   },
+  //   // 🔎 Checker: Plan-declared checkpoint verification and exit final review.
+  //   "checker": {
+  //     "model": "ornith-1.5:35b",
+  //     "thinking_level": "medium",
+  //     "include_thoughts": true
+  //   }
+  // },
   // ------------------------------------------------------------------------------
   // 4. Runtime Mode & Agent Capabilities Configuration (Dual-Engine: Flash vs. Pro)
   // ------------------------------------------------------------------------------
@@ -145,7 +141,6 @@
       // replacing images only after strictly objective, high-density summaries are ready.
       "step_summarizer": {
         "enabled": true, // Whether background step summarization is active
-        "model": "gemini-3.5-flash-lite", // Lightweight model for fast background inference
         "prune_history_xml": true // Prune outdated heavy XML trees from historical steps
       }
     },
@@ -158,7 +153,8 @@
     "pro": {
       // 🧭 Explorer: Perception sub-agent under Pro profile ('flash', 'pro', or 'ultra')
       "explorer": {
-        "mode": "flash" // Explorer tier for Pro nodes (Operator/Validator): 'flash' | 'pro' | 'ultra'
+        "enabled": false,
+        "mode": "flash"
       },
       // 🎯 Planner Validation: Async verification when task plan milestones change
       "planner_validation": {
@@ -171,17 +167,17 @@
       },
       // 🔎 Checker: Plan-declared checkpoint verification (optimistic async) + exit final review
       "checker": {
-        "enabled": true, // Master switch (compat alias): false disables both gates below
-        "midway_checks": false, // Plan-declared midway checkpoints (off in the factory layering)
-        "final_check": true, // Exit final review against the user's original goal (on by default)
-        "max_iterations": 20,
-        "final_check_max_attempts": 3,
-        "checkpoint_max_repairs": 2,
-        "max_concurrent_checkpoints": 3,
-        "checkpoint_timeout": 180.0,
-        "settlement_timeout": 120.0,
-        "assert_failure_policy": "continue", // 'continue' or 'halt' on assert failures
-        "device_probes": true // Checker's enumerated read-only device probes
+        "enabled": false,
+        "midway_checks": false,
+        "final_check": true,
+        "max_iterations": 5,
+        "final_check_max_attempts": 1,
+        "checkpoint_max_repairs": 1,
+        "max_concurrent_checkpoints": 1,
+        "checkpoint_timeout": 60.0,
+        "settlement_timeout": 60.0,
+        "assert_failure_policy": "continue",
+        "device_probes": false
       },
       // 🎬 Video Analyzer & Screen Recording: Continuous screen recording via scrcpy and temporal analysis
       "video_analyzer": {
@@ -192,6 +188,8 @@
     // ==========================================================================
     // 🌐 4.3 Shared Capabilities & Global Overrides
     // ==========================================================================
+    // 🖼️ Screenshot Resolution: Maximum pixel dimension (longest side) sent to vision models (0 = original/unscaled)
+    "image_max_dim": 1024,
     // Shared step memory and history compression
     // Transcript ledger + layered compression for the Pro operator.
     "memory": {
@@ -246,7 +244,6 @@
         // call each); milestone closes are exempt, the hard line waives it.
         "min_steps": 3,
         "target_source_tokens": 2000,
-        "model": "gemini-3.8-flash",
         "max_chunks": 8
         // "max_eras": 8 // independent era cap; omitted = follows max_chunks
       },
@@ -285,15 +282,17 @@
     // `flash.explorer_mode` and `pro.explorer.mode` above are the per-profile knobs;
     // `caching` (Gemini explicit context caching) defaults per tier: off for pro, on for ultra.
     "explorer": {
-      "default_version": "flash" // Fallback tier when no profile knob applies
-      // "caching": true, // Uncomment to force context caching for pro/ultra
+      "enabled": false,
+      "default_version": "flash"
     },
     // Advanced: per-agent tier override, e.g. {"validator": "ultra"}. Takes
     // precedence over the profile knobs; leave empty to let them decide.
     "explorer_versions": {},
 // 🚫 Per-agent Tool Denylists
     "denylisted_tools": {
-      "explorer": [] // Perception tools to withhold from the Explorer, e.g. "ask_image_processor"
+      "operator": ["ask_explorer", "video_analyzer", "ask_diagnoser"],
+      "flash": ["ask_explorer", "video_analyzer"],
+      "explorer": []
     }
   }
 }

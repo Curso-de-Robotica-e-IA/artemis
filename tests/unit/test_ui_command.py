@@ -16,7 +16,10 @@ from rich.console import Console
 
 from artemis.interfaces.cli.commands import ui
 from artemis.interfaces.cli.commands.ui import (
+    _clean_corrupted_node_modules,
+    _is_node_modules_corrupted,
     _npm_install_required,
+    _patch_angular_cli_node_version,
     _resolve_npm_executable,
     _run_build_step,
     _showcase_build_required,
@@ -181,3 +184,42 @@ def test_run_build_step_strips_ansi_and_succeeds(tmp_path):
     output = console.file.getvalue()
     assert "done" in output
     assert "\x1b[32m" not in output
+
+
+def test_is_node_modules_corrupted_when_ajv_dist_missing(tmp_path):
+    showcase_dir = tmp_path / "showcase_ui"
+    ajv_dir = showcase_dir / "node_modules" / "ajv"
+    ajv_dir.mkdir(parents=True)
+    (ajv_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    assert _is_node_modules_corrupted(showcase_dir) is True
+    assert _npm_install_required(showcase_dir) is True
+
+    # When ajv.js is present, it is no longer corrupted
+    ajv_dist = ajv_dir / "dist" / "ajv.js"
+    ajv_dist.parent.mkdir(parents=True)
+    ajv_dist.write_text("// dummy", encoding="utf-8")
+    assert _is_node_modules_corrupted(showcase_dir) is False
+
+
+def test_clean_corrupted_node_modules_removes_directory(tmp_path):
+    showcase_dir = tmp_path / "showcase_ui"
+    node_modules = showcase_dir / "node_modules"
+    node_modules.mkdir(parents=True)
+    (node_modules / "dummy.txt").write_text("x", encoding="utf-8")
+
+    assert node_modules.exists()
+    _clean_corrupted_node_modules(showcase_dir)
+    assert not node_modules.exists()
+
+
+def test_patch_angular_cli_node_version(tmp_path):
+    showcase_dir = tmp_path / "showcase_ui"
+    cli_node = (
+        showcase_dir / "node_modules" / "@angular" / "cli" / "src" / "utilities" / "node-version.js"
+    )
+    cli_node.parent.mkdir(parents=True)
+    cli_node.write_text("const SUPPORTED_NODE_VERSIONS = '^22.22.3 || ^24.15.0';", encoding="utf-8")
+
+    _patch_angular_cli_node_version(showcase_dir)
+    assert "^22.22.0" in cli_node.read_text(encoding="utf-8")

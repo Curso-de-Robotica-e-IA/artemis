@@ -25,10 +25,12 @@ import base64
 import time
 
 from artemis.config import get_temp_dir
+from artemis.config.settings import settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.mcp.action_types import ActionCode, ObserveResult
 from artemis.utils.ocr_xml_fusion import fuse_ocr_with_xml
+from artemis.utils.ui_filter import filter_ui_hierarchy
 from artemis.utils.visualization import format_minimal_list_with_elements
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -40,7 +42,7 @@ __all__ = ["observe"]
 async def observe(
     ctx: ArtemisContext,
     controller: UnifiedMobileController,
-    settle_ms: int = 400,
+    settle_ms: int | None = None,
     ocr_results: list | None = None,
 ) -> tuple[ObserveResult, bytes | None]:
     """Captures and indexes the current screen.
@@ -54,13 +56,19 @@ async def observe(
     failed capture yields ``ok=False``; a failed hierarchy parse still returns the
     screenshot with ``hierarchy_ok=False``.
     """
+    if settle_ms is None:
+        settle_ms = settings.ARTEMIS_SETTLE_MS
+
     try:
         if settle_ms > 0:
             logger.info(f"Delaying {settle_ms / 1000:.1f}s before capturing screen state...")
             await asyncio.sleep(settle_ms / 1000.0)
         else:
             logger.info("Retrieving screen data directly (skip settling)...")
-        device_data = await controller.get_screen_data()
+        try:
+            device_data = await controller.get_screen_data(skip_settling=True)
+        except TypeError:
+            device_data = await controller.get_screen_data()
         screenshot_bytes = base64.b64decode(device_data.base64)
     except Exception as e:
         logger.error(f"Failed to capture screen state: {e}")
@@ -87,8 +95,20 @@ async def observe(
             ctx.device.device_width = width
             ctx.device.device_height = height
 
+        if xml_hierarchy:
+            xml_hierarchy = filter_ui_hierarchy(
+                xml_hierarchy,
+                screen_width=width,
+                screen_height=height,
+            )
+
         fused_xml = fuse_ocr_with_xml(xml_hierarchy, ocr_results)
-        minimal_list_str, elements, _ = format_minimal_list_with_elements(fused_xml, width, height)
+        minimal_list_str, elements, _ = format_minimal_list_with_elements(
+            fused_xml,
+            width,
+            height,
+            inject_occlusion_warnings=settings.ARTEMIS_UI_OCCLUSION_WARNINGS,
+        )
     except Exception as e:
         logger.error(f"Failed to fetch or fuse UI hierarchy: {e}")
         minimal_list_str = "Not available due to hierarchy error."
@@ -117,17 +137,20 @@ async def observe(
 
     from pathlib import Path
 
+    obs = ObserveResult(
+        ok=True,
+        message="Screen observed.",
+        screenshot_path=screenshot_path,
+        image_name=Path(screenshot_path).stem if screenshot_path else None,
+        width=width,
+        height=height,
+        elements_text=minimal_list_str,
+        elements=elements,
+        hierarchy_ok=hierarchy_ok,
+    )
+    object.__setattr__(obs, "package", getattr(device_data, "package", None))
+    object.__setattr__(obs, "activity", getattr(device_data, "activity", None))
     return (
-        ObserveResult(
-            ok=True,
-            message="Screen observed.",
-            screenshot_path=screenshot_path,
-            image_name=Path(screenshot_path).stem if screenshot_path else None,
-            width=width,
-            height=height,
-            elements_text=minimal_list_str,
-            elements=elements,
-            hierarchy_ok=hierarchy_ok,
-        ),
+        obs,
         screenshot_bytes,
     )

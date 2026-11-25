@@ -18,7 +18,6 @@
 Uses only the Python 3.12+ standard library so CI can run it before uv sync.
 """
 
-import json
 import sys
 import tomllib
 from pathlib import Path
@@ -52,15 +51,10 @@ def main() -> int:
         for artifact in artifacts:
             check_url(f"{label}: artifact", artifact.get("url", ""), "files.pythonhosted.org")
 
-    npm_lock = json.loads((ROOT / "apps/showcase_ui/package-lock.json").read_text(encoding="utf-8"))
-    for name, package in npm_lock["packages"].items():
-        if "resolved" in package:
-            check_url(f"package-lock.json: {name}", package["resolved"], "registry.npmjs.org")
-
     if errors:
         print("Dependency source check failed:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print("Dependency sources use public PyPI and npm registries.")
+    print("Dependency sources use public PyPI registry.")
     return 0
 
 

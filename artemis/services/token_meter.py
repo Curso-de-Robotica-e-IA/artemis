@@ -36,6 +36,7 @@ call into the DataEngine, carrying:
 This module never raises into the LLM call path and makes no decisions.
 """
 
+import os
 import threading
 from typing import Any
 
@@ -57,6 +58,111 @@ OPERATOR_CONTEXT_WINDOW_TOKENS = 1_000_000
 # Traced node names whose LLM calls carry the live executor context. Both the
 # Pro Operator and the Flash runner are "the operator" from the user's view.
 OPERATOR_NODE_NAMES = frozenset({"operator", "flashrunner"})
+
+
+def _int_val(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def resolve_operator_context_window(
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+    device_info: dict[str, Any] | None = None,
+) -> int:
+    """Resolves the active operator context window size in tokens.
+
+    Priority:
+    1. Explicit session device_info values (``context_window`` or
+       ``operator_context_window_tokens``).
+    2. Environment variable ``ARTEMIS_CONTEXT_WINDOW_TOKENS``.
+    3. User configuration in ``config/artemis.jsonc`` (``context_window`` in
+       ``default`` / presets / nodes, or ``memory.transcript.context_budget_tokens``).
+    4. Provider and model heuristics (Gemini 1M, Claude 200k, GPT-4 128k,
+       local models defaulting to configured transcript context budget or 32,768).
+    5. Fallback constant :data:`OPERATOR_CONTEXT_WINDOW_TOKENS` (1,000,000).
+    """
+    if isinstance(device_info, dict):
+        w = _int_val(
+            device_info.get("context_window")
+            or device_info.get("operator_context_window_tokens")
+        )
+        if w > 0:
+            return w
+        if not model:
+            model = device_info.get("llm_model") or device_info.get("model")
+        if not provider:
+            provider = device_info.get("llm_provider") or device_info.get("provider")
+
+    env_val = _int_val(os.environ.get("ARTEMIS_CONTEXT_WINDOW_TOKENS"))
+    if env_val > 0:
+        return env_val
+
+    cfg_default_window: int = 0
+    cfg_budget: int = 0
+    cfg_provider: str | None = None
+    cfg_model: str | None = None
+
+    try:
+        from artemis.config.paths import get_config_path
+        from third_party.mobile_use.utils.file import load_jsonc
+
+        cfg_path = get_config_path("artemis.jsonc")
+        with open(cfg_path, encoding="utf-8") as f:
+            raw_cfg = load_jsonc(f)
+        if isinstance(raw_cfg, dict):
+            def_block = raw_cfg.get("default")
+            if isinstance(def_block, dict):
+                cfg_default_window = _int_val(def_block.get("context_window"))
+                cfg_provider = def_block.get("provider")
+                cfg_model = def_block.get("model")
+            agent_block = raw_cfg.get("agent")
+            if isinstance(agent_block, dict):
+                mem = agent_block.get("memory")
+                if isinstance(mem, dict):
+                    tr = mem.get("transcript")
+                    if isinstance(tr, dict):
+                        cfg_budget = _int_val(tr.get("context_budget_tokens"))
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+
+    if cfg_default_window > 0:
+        return cfg_default_window
+
+    active_provider = str(provider or cfg_provider or "").strip().lower()
+    active_model = str(model or cfg_model or "").strip().lower()
+
+    if active_provider in ("google", "vertexai", "vertex_ai") or "gemini" in active_model:
+        if "pro" in active_model and ("1.5" in active_model or "2.0" in active_model or "2.5" in active_model):
+            return 2_000_000
+        return OPERATOR_CONTEXT_WINDOW_TOKENS
+
+    if active_provider == "anthropic" or "claude" in active_model:
+        return 200_000
+
+    if active_provider in ("openai", "openrouter", "ollama") or not active_provider:
+        if any(active_model.startswith(prefix) for prefix in ("gpt-4", "o1", "o3", "o4")):
+            return 128_000
+        if active_model.startswith("gpt-3.5"):
+            return 16_385
+        if cfg_budget > 0:
+            return cfg_budget
+        if any(sub in active_model for sub in ("llama-3.1", "llama-3.2", "llama-3.3")):
+            return 128_000
+        if "llama-3" in active_model:
+            return 8_192
+        if any(sub in active_model for sub in ("ornith", "qwen", "mistral")):
+            return 32_768
+        if active_model:
+            return 32_768
+
+    if cfg_budget > 0:
+        return cfg_budget
+
+    return OPERATOR_CONTEXT_WINDOW_TOKENS
 
 
 def extract_usage(response: Any) -> dict[str, int] | None:
@@ -224,6 +330,7 @@ def record_llm_usage(
     *,
     source: str | None = None,
     update_last_prompt: bool = True,
+    fallback_messages: list[Any] | None = None,
 ) -> dict | None:
     """Meters one LLM response and records an ``llm_usage`` trace, best-effort.
 
@@ -237,6 +344,22 @@ def record_llm_usage(
             return None
         session_id = getattr(engine, "current_session_id", None)
         usage = extract_usage(response)
+        if usage is None and fallback_messages:
+            try:
+                from artemis.memory.transcript import estimate_prompt_tokens
+
+                prompt_est = estimate_prompt_tokens(fallback_messages)
+                completion_est = max(1, len(str(getattr(response, "content", ""))) // 4)
+                usage = {
+                    "prompt_tokens": prompt_est,
+                    "completion_tokens": completion_est,
+                    "total_tokens": prompt_est + completion_est,
+                    "cached_tokens": 0,
+                }
+            except (TypeError, ValueError, AttributeError) as est_err:
+                logger.debug(f"Fallback token estimation skipped: {est_err}")
+                usage = None
+
         if not session_id or usage is None:
             return None
 

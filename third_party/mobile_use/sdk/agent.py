@@ -23,6 +23,7 @@ environment preparation, cancellation watching and UI hierarchy backend reportin
 """
 
 import asyncio
+import json
 import os
 
 try:
@@ -53,6 +54,7 @@ from artemis.clients.screen_client_factory import (
 from artemis.config import (
     OutputConfig,
     record_events,
+    settings,
 )
 from artemis.constants import RECURSION_LIMIT
 from artemis.context import (
@@ -106,8 +108,8 @@ class AgentBase:
     _tmp_traces_dir: Path
     _initialized: bool = False
     _device_context: DeviceContext
-    _adb_client: AdbClient | None
-    _ui_adb_client: ScreenClient | Any | None
+    _adb_client: AdbClient | None = None
+    _ui_adb_client: ScreenClient | Any | None = None
     _current_task: asyncio.Task | None = None
     _task_lock: asyncio.Lock
     _cloud_mobile_id: str | None = None
@@ -194,10 +196,64 @@ class AgentBase:
         # Asynchronously pre-warm LLM connection pools in the background
         asyncio.create_task(self._prewarm_llm_connections(api_key))
 
+        # Mandatory Touch API (/device) handshake when HTTP actuator backend is enabled
+        await self._init_touch_api_device()
+
         logger.info("✅ Artemis agent initialized.")
         self._initialized = True
 
         return True
+
+    async def _init_touch_api_device(self) -> None:
+        """Mandatory HTTP Touch API (/device) initialization on agent startup.
+
+        By default the Touch API has no device connected (GET / returns device=None)
+        and requires POST /device to connect and run its internal calibration/setup.
+        On the physical robot this initial call can take 3+ minutes, so ARTEMIS
+        awaits its completion here before allowing any task execution.
+        """
+        backend = str(getattr(settings, "ARTEMIS_ACTUATOR_BACKEND", "adb")).strip().lower()
+        if backend != "http":
+            return
+
+        from artemis.mcp.actuators.http_touch import HttpTouchActuator
+
+        device_id = self._device_context.device_id
+        touch_url = getattr(settings, "ARTEMIS_TOUCH_API_URL", "http://127.0.0.1:8001")
+        device_timeout_s = float(
+            getattr(settings, "ARTEMIS_TOUCH_API_DEVICE_TIMEOUT_S", 300.0)
+        )
+        publish_startup_progress(
+            "touch_api_device",
+            f"Connecting Touch API to device '{device_id}' ({touch_url}/device)...",
+            session_id=getattr(self, "_session_id", None),
+        )
+        logger.info(
+            f"Initializing HTTP Touch API device '{device_id}' via {touch_url}/device "
+            f"(timeout={device_timeout_s:.0f}s). Waiting for Touch API setup to finish..."
+        )
+        init_ctx = ArtemisContext(
+            device=self._device_context,
+            adb_client=getattr(self, "_adb_client", None),
+            ui_adb_client=getattr(self, "_ui_adb_client", None),
+            agent_config=self._config,
+        )
+        actuator = HttpTouchActuator(init_ctx, device_timeout_s=device_timeout_s)
+        res = await actuator.configure_device(device_id)
+        if not res.ok:
+            error_msg = (
+                f"Failed to configure device '{device_id}' on HTTP Touch API "
+                f"({touch_url}/device): {res.detail or res.message}"
+            )
+            logger.error(error_msg)
+            raise AgentError(error_msg)
+
+        logger.info(f"✅ HTTP Touch API device '{device_id}' ready: {res.message}")
+        publish_startup_progress(
+            "touch_api_ready",
+            f"Touch API ready for device '{device_id}'",
+            session_id=getattr(self, "_session_id", None),
+        )
 
     async def install_apk(self, apk_path: str | Path) -> None:
         """Install an APK on the connected device.
@@ -441,6 +497,8 @@ class AgentBase:
             agent_config=self._config,
         )
 
+        self._last_context = context
+        self._last_session_id = task_id
         output_config = None
         if request.output_description or request.output_format:
             output_config = OutputConfig(
@@ -872,10 +930,9 @@ class AgentBase:
     def _prepare_trace_paths(self, task: Task) -> str:
         """Create the temp (and, when recording, output) trace directories; return the task name."""
         task_name = task.get_name()
-        temp_trace_path = Path(self._tmp_traces_dir / task_name).resolve()
-        temp_trace_path.mkdir(parents=True, exist_ok=True)
-
         if task.request.record_trace:
+            temp_trace_path = Path(self._tmp_traces_dir / task_name).resolve()
+            temp_trace_path.mkdir(parents=True, exist_ok=True)
             traces_output_path = Path(task.request.trace_path).resolve()
             logger.info(f"[{task_name}] 📂 Traces output path: {traces_output_path}")
             logger.info(f"[{task_name}] 📄📂 Traces temp path: {temp_trace_path}")
@@ -884,6 +941,9 @@ class AgentBase:
 
     async def _finalize_tracing(self, task: Task, context: ArtemisContext):
         if context.data_engine:
+            pending_tasks = list(getattr(context.data_engine, "_pending_tasks", ()))
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
             session_status = "completed"
             if task.status == "failed":
                 session_status = "failed"
@@ -906,9 +966,24 @@ class AgentBase:
                 if temp_trace_path.exists():
                     shutil.rmtree(temp_trace_path)
                     logger.info(f"[{task_name}] Cleaned up temporary trace folder.")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"[{task_name}] Failed to clean up temp trace folder: {e}")
             return
+
+        # If the temporary trace folder is completely empty (no artifacts recorded),
+        # remove it rather than renaming an empty directory.
+        if temp_trace_path.exists():
+            try:
+                has_content = any(temp_trace_path.iterdir())
+            except OSError:
+                has_content = False
+            if not has_content:
+                try:
+                    temp_trace_path.rmdir()
+                    logger.info(f"[{task_name}] Cleaned up empty temporary trace folder.")
+                except OSError as e:
+                    logger.debug(f"[{task_name}] Failed to remove empty temp trace folder: {e}")
+                return
 
         status = resolve_trace_suffix(task.status, getattr(context, "run_outcome", None))
         ts = task.created_at.strftime("%Y-%m-%dT%H-%M-%S")
@@ -919,6 +994,23 @@ class AgentBase:
         logger.info(f"[{task_name}] Compiling trace FROM FOLDER: " + str(temp_trace_path))
         create_gif_from_trace_folder(temp_trace_path)
         create_steps_json_from_trace_folder(temp_trace_path)
+        steps_json_path = temp_trace_path / "steps.json"
+        if context.data_engine and hasattr(context.data_engine, "get_agent_friendly_steps"):
+            try:
+                existing_steps_raw = (
+                    steps_json_path.read_text(encoding="utf-8").strip()
+                    if steps_json_path.exists()
+                    else "[]"
+                )
+                if existing_steps_raw in ("", "[]"):
+                    engine_steps = context.data_engine.get_agent_friendly_steps()
+                    if isinstance(engine_steps, list) and engine_steps:
+                        steps_json_path.write_text(
+                            json.dumps(engine_steps, default=str, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+            except (OSError, TypeError, ValueError) as exc:
+                logger.debug(f"[{task_name}] Could not export DataEngine steps to steps.json: {exc}")
 
         logger.info(f"[{task_name}] Video created, removing dust...")
         remove_images_from_trace_folder(temp_trace_path)
@@ -926,6 +1018,8 @@ class AgentBase:
         logger.info(f"[{task_name}] 📽️ Trace compiled, moving to output path 📽️")
 
         output_folder_path = temp_trace_path.rename(traces_output_path / new_name).resolve()
+        if context.data_engine:
+            context.data_engine._session_dir_override = output_folder_path
         logger.info(f"[{task_name}] 📂✅ Traces located in: {output_folder_path}")
 
         new_video_path = output_folder_path / "recording.mp4"

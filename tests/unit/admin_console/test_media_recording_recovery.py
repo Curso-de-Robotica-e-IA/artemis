@@ -230,3 +230,31 @@ def test_resolve_video_segments_passes_through_session_offsets(tmp_path, monkeyp
     assert segments[1]["offset_ms"] == 12700 and segments[1]["duration_ms"] == 5000
     # Legacy entries without offsets stay offset-free so the UI falls back to back-to-back.
     assert "offset_ms" not in segments[2]
+
+
+def test_resolve_session_dir_and_notes(tmp_path, monkeypatch):
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    monkeypatch.setattr(media_module, "TRACES_PATH", traces)
+
+    sess_id = "41c4a7e4-416c-484a-bbc9-e34e9a1a42c5"
+    worker_folder = traces / f"web_123_{sess_id[:8]}_PASS_2026-11-12"
+    notes_dir = worker_folder / "notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "task_plan.md").write_text("# Plan Checklist\n- [x] Done", encoding="utf-8")
+    (worker_folder / "check_ledger.jsonl").write_text(
+        '{"item_text": "Check 1", "verdict": "pass"}\n', encoding="utf-8"
+    )
+
+    resolved = MediaService.resolve_session_dir(sess_id)
+    assert resolved == worker_folder
+
+    plan = MediaService.get_task_plan_content(sess_id)
+    assert "# Plan Checklist" in plan
+
+    checks = MediaService.get_session_checks(sess_id)
+    assert len(checks["records"]) == 1
+    assert checks["records"][0]["item_text"] == "Check 1"
+
+    notes = MediaService.get_session_notes_content(sess_id)
+    assert "task_plan.md" in notes

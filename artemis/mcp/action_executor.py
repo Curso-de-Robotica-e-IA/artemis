@@ -44,7 +44,7 @@ from artemis.mcp.action_manifest import OPTIONAL_ACTIONS, REQUIRED_ACTIONS
 from artemis.mcp.action_specs import exception_prefix
 from artemis.mcp.action_session import ActionSession, get_action_session
 from artemis.mcp.action_types import ActionCode, ActionResult
-from artemis.mcp.actuators.adb import AdbActuator
+from artemis.mcp.actuators import Actuator, create_actuator
 from artemis.agents.validator.tool_declarations import (
     ToolExecutionResult,
     normalize_coordinate_target,
@@ -89,11 +89,13 @@ class McpActionExecutor:
         self,
         ctx: ArtemisContext,
         controller: UnifiedMobileController | None = None,
-        actuator: AdbActuator | None = None,
+        actuator: Actuator | None = None,
         agent_name: str = "validator",
     ):
         self.ctx = ctx
-        self.actuator = actuator or getattr(ctx, "actuator", None) or AdbActuator(ctx, controller)
+        self.actuator = (
+            actuator or getattr(ctx, "actuator", None) or create_actuator(ctx, controller=controller)
+        )
         self.controller = self.actuator.controller
         # Identifies the calling agent / profile to the Explorer tier resolver
         # (``explorer.flash_mode`` vs ``explorer.pro_mode``); the agent itself
@@ -171,6 +173,7 @@ class McpActionExecutor:
         xml_list: str | None = None
         target_semantics: dict[str, Any] = {}
         target_coordinates: list[int] | None = None
+        obs: Any = None
         with span:
             try:
                 session = await self._session_or_start()
@@ -196,13 +199,17 @@ class McpActionExecutor:
                     message = finalize(res) if finalize else res.message
 
                 if res.ok or self._observe_despite_failure(raw_name, res):
-                    obs = await session.observe(settle_ms=400)
+                    obs = await session.observe()
                     if obs.ok:
                         shot_path = obs.screenshot_path
                         xml_list = obs.elements_text
                         if obs.hierarchy_ok:
                             state.indexed_points = [el["center"] for el in obs.elements]
                             state.indexed_elements = obs.elements
+                        if getattr(obs, "activity", None):
+                            state.current_activity = obs.activity
+                        if getattr(obs, "package", None):
+                            state.current_package = obs.package
                         if shot_path:
                             try:
                                 img_bytes = Path(shot_path).read_bytes()
@@ -242,11 +249,15 @@ class McpActionExecutor:
             screenshot_bytes=img_bytes,
             screenshot_path=shot_path,
             ui_elements_text=xml_list,
+            activity=getattr(obs, "activity", None) or getattr(state, "current_activity", None),
+            package=getattr(obs, "package", None) or getattr(state, "current_package", None),
             metadata={
                 "code": res.code.value,
                 "normalized_coordinates": res.normalized_coordinates,
                 "target_semantics": target_semantics,
                 "target_coordinates": target_coordinates,
+                "activity": getattr(obs, "activity", None) or getattr(state, "current_activity", None),
+                "package": getattr(obs, "package", None) or getattr(state, "current_package", None),
             },
         )
 

@@ -73,6 +73,8 @@ class UIAutomatorScreenData(BaseModel):
     elements: list[dict]
     width: int
     height: int
+    package: str | None = None
+    activity: str | None = None
 
 
 def parse_hierarchy_xml_to_elements(hierarchy_xml: str) -> list[dict]:
@@ -427,6 +429,18 @@ class UIAutomatorClient:
 
         # Parse XML to flat elements list
         elements = parse_hierarchy_xml_to_elements(hierarchy_xml)
+        package = None
+        activity = None
+        try:
+            current = device.app_current()
+            if isinstance(current, dict):
+                package = current.get("package")
+                activity = current.get("activity")
+            elif hasattr(current, "package") and hasattr(current, "activity"):
+                package = current.package
+                activity = current.activity
+        except Exception as e:
+            logger.debug(f"Could not get current app in UIAutomatorClient: {e}")
 
         return UIAutomatorScreenData(
             base64=pil_to_base64(screenshot, format="JPEG"),
@@ -434,6 +448,8 @@ class UIAutomatorClient:
             elements=elements,
             width=screenshot.width,
             height=screenshot.height,
+            package=package,
+            activity=activity,
         )
 
     def disconnect(self, stop_server: bool = False) -> None:

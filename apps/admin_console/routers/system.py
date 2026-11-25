@@ -20,7 +20,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from artemis.core.diagnostics import readiness_engine
 from artemis.core.diagnostics.adb_server_connection import (
@@ -481,15 +481,319 @@ async def get_model_config_and_env():
         },
     ]
 
+    try:
+        from apps.admin_console.services.custom_model_service import (
+            SUPPORTED_PROVIDER_OPTIONS,
+            build_pro_targets_state,
+            get_image_max_dim_state,
+        )
+    except ImportError:
+        from admin_console.services.custom_model_service import (
+            SUPPORTED_PROVIDER_OPTIONS,
+            build_pro_targets_state,
+            get_image_max_dim_state,
+        )
+
+    image_res_state = get_image_max_dim_state(parsed_config=parsed_config, config_path=config_path)
+
     return {
         "config_path": config_path or "config/artemis.jsonc",
         "config_filename": "artemis.jsonc",
         "config_content": config_content,
         "default_model": parsed_config.get("default", {}),
+        "image_max_dim": image_res_state["image_max_dim"],
+        "pro_targets": build_pro_targets_state(parsed_config),
+        "supported_providers": SUPPORTED_PROVIDER_OPTIONS,
         "presets": parsed_config.get("presets", {}),
         "env_path": str(env_path),
         "env_filename": ".env",
         "env_vars": env_vars,
+    }
+
+
+class UpdateDefaultModelRequest(BaseModel):
+    """Payload to update the global default model in artemis.jsonc."""
+
+    provider: str = Field(default="openai", description="LLM provider identifier")
+    model: str = Field(description="Selected model ID from the selected provider")
+    update_fallback: bool = Field(
+        default=True,
+        description="Whether to keep default.fallback synced to the selected provider/model",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="Optional custom OpenAI/Ollama base URL to save alongside the model",
+    )
+    persist_base_url: bool = Field(
+        default=True,
+        description="Whether to persist base_url to OPENAI_BASE_URL in .env when provided",
+    )
+
+
+class UpdateTargetModelRequest(BaseModel):
+    """Payload to update a Pro Mode target override in artemis.jsonc."""
+
+    target: str = Field(
+        description=("Target identifier (object_detector, hopper, step_summarizer, or chunking)")
+    )
+    provider: str = Field(description="LLM provider identifier")
+    model: str = Field(description="Selected model ID for this target")
+    base_url: str | None = Field(
+        default=None,
+        description="Optional custom OpenAI/Ollama base URL to save alongside the model",
+    )
+    persist_base_url: bool = Field(
+        default=False,
+        description="Whether to persist base_url to OPENAI_BASE_URL in .env when provided",
+    )
+
+
+class ResetTargetModelRequest(BaseModel):
+    """Payload to clear a Pro Mode target override so it inherits default."""
+
+    target: str = Field(
+        description=("Target identifier (object_detector, hopper, step_summarizer, or chunking)")
+    )
+
+
+class UpdateImageResolutionRequest(BaseModel):
+    """Payload to update the global screenshot max dimension in artemis.jsonc."""
+
+    image_max_dim: int = Field(
+        description=(
+            "Maximum pixel dimension (longest side) for screenshots sent to vision models "
+            "(>= 0; 0 disables downscaling)"
+        )
+    )
+
+    @field_validator("image_max_dim", mode="before")
+    @classmethod
+    def _reject_booleans_and_non_integers(cls, value: object) -> int:
+        if isinstance(value, bool):
+            raise ValueError("image_max_dim must be an integer, not a boolean.")
+        if isinstance(value, float):
+            raise ValueError("image_max_dim must be a whole integer.")
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("image_max_dim cannot be empty.")
+            parsed = int(stripped)
+        elif isinstance(value, int):
+            parsed = value
+        else:
+            raise ValueError("image_max_dim must be an integer >= 0.")
+        if parsed < 0:
+            raise ValueError("image_max_dim must be >= 0 (0 disables downscaling).")
+        return parsed
+
+
+@router.get("/custom-models")
+async def list_custom_endpoint_models(
+    request: Request,
+    base_url: str | None = None,
+    provider: str | None = None,
+):
+    """Fetch available models for the selected provider or OpenAI-compatible endpoint."""
+    try:
+        from apps.admin_console.services.custom_model_service import list_models_for_provider
+    except ImportError:
+        from admin_console.services.custom_model_service import list_models_for_provider
+
+    _require_local_admin_request(request)
+
+    try:
+        return await list_models_for_provider(provider=provider, base_url=base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/model-config/default")
+async def update_default_model_endpoint(request: Request, payload: UpdateDefaultModelRequest):
+    """Update the default provider/model in artemis.jsonc and optionally OPENAI_BASE_URL."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_default_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_default_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_default_model_config(
+            provider=payload.provider,
+            model=payload.model,
+            update_fallback=payload.update_fallback,
+            base_url=payload.base_url,
+            persist_base_url=payload.persist_base_url,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    updated_default = result["default_model"]
+    return {
+        "status": "success",
+        "message": (
+            f"Default model updated to {updated_default.get('provider')}/"
+            f"{updated_default.get('model')}."
+        ),
+        "default_model": updated_default,
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.post("/model-config/target")
+async def update_target_model_endpoint(request: Request, payload: UpdateTargetModelRequest):
+    """Apply an explicit provider/model override to a Pro Mode target in artemis.jsonc."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_pro_target_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_pro_target_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_pro_target_model_config(
+            target=payload.target,
+            provider=payload.provider,
+            model=payload.model,
+            base_url=payload.base_url,
+            persist_base_url=payload.persist_base_url,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    target_state = result["target"]
+    return {
+        "status": "success",
+        "message": (
+            f"Updated {target_state['config_path']} to "
+            f"{target_state['effective_provider']}/{target_state['effective_model']}."
+        ),
+        "target": target_state,
+        "pro_targets": result["pro_targets"],
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.post("/model-config/target/reset")
+async def reset_target_model_endpoint(request: Request, payload: ResetTargetModelRequest):
+    """Clear explicit overrides on a Pro Mode target so it inherits default."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import reset_pro_target_model_config
+    except ImportError:
+        from admin_console.services.custom_model_service import reset_pro_target_model_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = reset_pro_target_model_config(target=payload.target)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    target_state = result["target"]
+    return {
+        "status": "success",
+        "message": (
+            f"Reset {target_state['config_path']} to inherit default "
+            f"({target_state['effective_provider'] or 'default'}/"
+            f"{target_state['effective_model'] or 'unset'})."
+        ),
+        "target": target_state,
+        "pro_targets": result["pro_targets"],
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
+    }
+
+
+@router.get("/image-resolution")
+async def get_image_resolution_endpoint():
+    """Retrieve the active screenshot resolution limit (image_max_dim) from artemis.jsonc."""
+    from artemis.config.paths import get_config_path
+    from third_party.mobile_use.utils.file import load_jsonc
+
+    try:
+        from apps.admin_console.services.custom_model_service import get_image_max_dim_state
+    except ImportError:
+        from admin_console.services.custom_model_service import get_image_max_dim_state
+
+    config_path: str | None = None
+    parsed_config: dict | None = None
+    try:
+        config_path_obj = get_config_path("artemis.jsonc")
+        config_path = str(config_path_obj)
+        with open(config_path_obj, encoding="utf-8") as f:
+            loaded = load_jsonc(f)
+            if isinstance(loaded, dict):
+                parsed_config = loaded
+    except (FileNotFoundError, OSError, ValueError):
+        parsed_config = None
+
+    return get_image_max_dim_state(parsed_config=parsed_config, config_path=config_path)
+
+
+@router.post("/image-resolution")
+async def update_image_resolution_endpoint(
+    request: Request,
+    payload: UpdateImageResolutionRequest,
+):
+    """Update agent.image_max_dim in artemis.jsonc for dynamic screenshot scaling."""
+    from pydantic import ValidationError
+
+    try:
+        from apps.admin_console.services.custom_model_service import update_image_max_dim_config
+    except ImportError:
+        from admin_console.services.custom_model_service import update_image_max_dim_config
+
+    _require_local_admin_request(request)
+
+    try:
+        result = update_image_max_dim_config(payload.image_max_dim)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}") from exc
+
+    refreshed_env = await get_model_config_and_env()
+    updated_dim = result["image_max_dim"]
+    status_msg = (
+        "Screenshot downscaling disabled (Original resolution active)."
+        if updated_dim == 0
+        else f"Screenshot resolution updated to {updated_dim} px."
+    )
+    return {
+        "status": "success",
+        "message": status_msg,
+        "image_max_dim": updated_dim,
+        "config_path": result["config_path"],
+        "model_config_env": refreshed_env,
     }
 
 

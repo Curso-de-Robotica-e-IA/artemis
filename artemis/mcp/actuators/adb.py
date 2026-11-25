@@ -94,7 +94,7 @@ async def ensure_focus_at_coords(controller, x: int, y: int) -> str | None:
         return result.error
 
     # Wait for the UI to settle and keyboard to pop up after tapping
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.3)
     return None
 
 
@@ -235,7 +235,7 @@ class AdbActuator:
         self,
         start: tuple[int, int],
         end: tuple[int, int],
-        duration_ms: int = 800,
+        duration_ms: int = 400,
     ) -> ActionResult:
         nx1, ny1 = start
         nx2, ny2 = end
@@ -410,5 +410,8 @@ class AdbActuator:
     async def get_ui_elements(self) -> Any:
         return await self.controller.get_ui_elements()
 
-    async def get_screen_data(self) -> Any:
-        return await self.controller.get_screen_data()
+    async def get_screen_data(self, skip_settling: bool = False) -> Any:
+        try:
+            return await self.controller.get_screen_data(skip_settling=skip_settling)
+        except TypeError:
+            return await self.controller.get_screen_data()

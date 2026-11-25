@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Access to immutable defaults and web assets shipped with Artemis.
-
-Python wheels are installed as ordinary directories by pip, so callers that
-need to hand a path to another library (for example FastAPI's ``FileResponse``)
-can safely use the paths returned here. Source checkouts continue to prefer
-their editable ``config`` and ``apps/showcase_ui/dist`` trees; these resources
-are the installation fallback.
-"""
+"""Access to immutable defaults and resources shipped with Artemis."""
 
 from importlib.resources import files
 from pathlib import Path

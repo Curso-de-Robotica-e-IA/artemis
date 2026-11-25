@@ -114,6 +114,49 @@ async def test_videos_endpoint_still_serves_real_recordings():
 
 
 @pytest.mark.asyncio
+async def test_images_endpoint_serves_from_execution_folders():
+    token = py_secrets.token_hex(4)
+    exec_dir = TRACES_PATH / f"test-exec-{token}"
+    img_dir = exec_dir / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    img_file = img_dir / f"img-{token}.jpg"
+    img_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+    try:
+        async with _client() as ac:
+            # Bare hash/name
+            res = await ac.get(f"/images/img-{token}")
+            assert res.status_code == 200
+            assert res.headers["content-type"].startswith("image/jpeg")
+
+            # Name with .jpg
+            res = await ac.get(f"/images/img-{token}.jpg")
+            assert res.status_code == 200
+
+            # API prefix
+            res = await ac.get(f"/api/images/img-{token}")
+            assert res.status_code == 200
+
+            # Relative path within execution folder
+            res = await ac.get(f"/images/{exec_dir.name}/images/{img_file.name}")
+            assert res.status_code == 200
+    finally:
+        import shutil
+        shutil.rmtree(exec_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_images_endpoint_refuses_traversal_and_non_image_files():
+    async with _client() as ac:
+        for target in (
+            "%2e%2e/.env",
+            "%2e%2e%2fpyproject.toml",
+            "nonexistent-image-12345",
+        ):
+            res = await ac.get(f"/images/{target}")
+            assert res.status_code == 404, target
+
+
+@pytest.mark.asyncio
 async def test_local_file_endpoint_refuses_non_media_workspace_files():
     async with _client() as ac:
         for target in (

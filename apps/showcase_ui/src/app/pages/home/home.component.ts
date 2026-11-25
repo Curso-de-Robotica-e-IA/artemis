@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
-import { Component, signal, computed, effect, inject, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { Component, signal, computed, effect, inject, untracked, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AgentService } from '../../services/agent.service';
-import { SystemService } from '../../services/system.service';
+import {
+  CustomEndpointModel,
+  ProModelTargetKey,
+  ProModelTargetState,
+  SupportedProviderOption,
+  SystemService
+} from '../../services/system.service';
 import {
   AdbServerConnectionResult,
   AdbServerDevice,
@@ -44,6 +50,44 @@ import {
 } from '../../core/models/pro-tuning.model';
 
 export type TuningKind = 'verify' | 'explore';
+
+export interface TargetDraftState {
+  provider: string;
+  model: string;
+  edited: boolean;
+  isSaving: boolean;
+  isResetting: boolean;
+  isFetching: boolean;
+  saveMessage: string | null;
+  saveError: string | null;
+  fetchWarning: string | null;
+}
+
+const DEFAULT_PROVIDER_OPTIONS: SupportedProviderOption[] = [
+  { id: 'ollama', label: 'Ollama (Local)', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'google', label: 'Google Gemini', uses_base_url: false, env_key: 'GEMINI_API_KEY' },
+  { id: 'openai', label: 'OpenAI', uses_base_url: false, env_key: 'OPENAI_API_KEY' },
+  { id: 'openrouter', label: 'OpenRouter', uses_base_url: false, env_key: 'OPEN_ROUTER_API_KEY' },
+  { id: 'anthropic', label: 'Anthropic', uses_base_url: false, env_key: 'ANTHROPIC_API_KEY' },
+  { id: 'xai', label: 'xAI (Grok)', uses_base_url: false, env_key: 'XAI_API_KEY' },
+  { id: 'vllm', label: 'vLLM (Local)', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'custom', label: 'Custom OpenAI-Compatible', uses_base_url: true, env_key: 'OPENAI_BASE_URL' },
+  { id: 'vertexai', label: 'Google Vertex AI', uses_base_url: false, env_key: null }
+];
+
+function createEmptyTargetDraft(provider: string = 'google', model: string = ''): TargetDraftState {
+  return {
+    provider,
+    model,
+    edited: false,
+    isSaving: false,
+    isResetting: false,
+    isFetching: false,
+    saveMessage: null,
+    saveError: null,
+    fetchWarning: null
+  };
+}
 
 /** One 2x2 px square of the "maxed out" dither texture drawn over a slider rail. */
 export interface DitherPixel {
@@ -121,13 +165,86 @@ export class HomeComponent implements OnInit, OnDestroy {
   public activeAdbGuideTab = signal<AdbGuideTab>('emulator');
   public emulatorSetupMode = signal<'studio' | 'cli'>('studio');
 
-  // Interactive guide tab for LLM / OCR credentials: 'gemini' | 'ocr'
-  public modelSetupMode = signal<'gemini' | 'custom'>('gemini');
+  // Collapsible Vision OCR & full config viewer toggles
   public showOcrConfig = signal<boolean>(false);
   public showFullConfigFile = signal<boolean>(false);
 
   // Model & Environment configuration from backend
   public modelConfigEnv = computed(() => this.systemService.modelConfigEnv());
+  public providerOptions = computed<SupportedProviderOption[]>(
+    () => this.modelConfigEnv()?.supported_providers ?? DEFAULT_PROVIDER_OPTIONS
+  );
+  public proTargets = computed<ProModelTargetState[]>(
+    () => this.modelConfigEnv()?.pro_targets ?? []
+  );
+  public showProModeConfig = signal<boolean>(true);
+  public proTargetDrafts = signal<Record<ProModelTargetKey, TargetDraftState>>({
+    object_detector: createEmptyTargetDraft(),
+    hopper: createEmptyTargetDraft(),
+    step_summarizer: createEmptyTargetDraft(),
+    chunking: createEmptyTargetDraft()
+  });
+
+  // Custom / multi-provider model discovery & selection state
+  public customBaseUrlInput = signal<string>('');
+  public isCustomBaseUrlEdited = signal<boolean>(false);
+  public selectedCustomProvider = signal<string>('ollama');
+  public selectedCustomModel = signal<string>('');
+  public isCustomSelectionEdited = signal<boolean>(false);
+  public customModels = computed(() => this.systemService.customModels());
+  public providerModelsCache = computed(() => this.systemService.providerModelsCache());
+  public defaultProviderModels = computed<CustomEndpointModel[]>(() =>
+    this.getModelsForProvider(this.selectedCustomProvider(), this.selectedCustomModel())
+  );
+  public customModelsEndpointUsed = signal<string | null>(null);
+  public customModelsWarning = signal<string | null>(null);
+  public isLoadingCustomModels = signal<boolean>(false);
+  public customModelsError = signal<string | null>(null);
+  public isSavingCustomModel = signal<boolean>(false);
+  public customModelSaveMessage = signal<string | null>(null);
+  public customModelSaveError = signal<string | null>(null);
+  private hasAutoFetchedCustomModels = false;
+  private hasPrefetchedProTargets = false;
+  public savedCustomBaseUrl = computed<string>(() => {
+    const vars = this.modelConfigEnv()?.env_vars || [];
+    const entry = vars.find(v => v.name === 'OPENAI_BASE_URL');
+    return entry?.is_set && entry.preview ? entry.preview : '';
+  });
+  public isCustomModelDirty = computed<boolean>(() => {
+    const activeProvider = this.modelConfigEnv()?.default_model?.provider || '';
+    const activeModel = this.modelConfigEnv()?.default_model?.model || '';
+    const chosenModel = this.selectedCustomModel().trim();
+    const chosenProvider = this.selectedCustomProvider().trim();
+    const baseUrl = this.customBaseUrlInput().trim();
+    if (!chosenModel) return false;
+    return (
+      chosenModel !== activeModel ||
+      chosenProvider !== activeProvider ||
+      (!!baseUrl && baseUrl !== this.savedCustomBaseUrl())
+    );
+  });
+
+  // Screenshot Resolution (agent.image_max_dim) state
+  public readonly imageMaxDimPresets: ReadonlyArray<{ value: number; label: string }> = [
+    { value: 720, label: '720' },
+    { value: 1024, label: '1024' },
+    { value: 1280, label: '1280' },
+    { value: 1600, label: '1600' },
+    { value: 1920, label: '1920' },
+    { value: 0, label: 'Original' }
+  ];
+  public activeImageMaxDim = computed<number>(() => {
+    const val = this.modelConfigEnv()?.image_max_dim;
+    return typeof val === 'number' && Number.isFinite(val) && val >= 0 ? Math.trunc(val) : 1280;
+  });
+  public selectedImageMaxDim = signal<number>(1280);
+  public isImageMaxDimPresetValid = computed<boolean>(() =>
+    this.imageMaxDimPresets.some(preset => preset.value === this.selectedImageMaxDim())
+  );
+  public isImageMaxDimEdited = signal<boolean>(false);
+  public isSavingImageMaxDim = signal<boolean>(false);
+  public imageMaxDimSaveMessage = signal<string | null>(null);
+  public imageMaxDimSaveError = signal<string | null>(null);
 
   // Google Gemini API Key State
   public geminiKeyInput = signal<string>('');
@@ -365,7 +482,6 @@ export class HomeComponent implements OnInit, OnDestroy {
   // Step-level readiness
   public isEnvironmentReady = computed(() => this.systemService.isEnvironmentReady());
   public isCredentialsReady = computed(() => this.systemService.isCredentialsReady());
-  public isSkipCredentialsCheck = computed(() => this.systemService.isSkipCredentialsCheck());
   public isDeviceReady = computed(() => this.systemService.isDeviceReady());
 
   // Device information
@@ -488,6 +604,31 @@ export class HomeComponent implements OnInit, OnDestroy {
     return this.ocrKeyInput().trim() !== this.savedOcrKey().trim();
   });
 
+  public geminiEnvItem = computed(
+    () => (this.modelConfigEnv()?.env_vars || []).find(v => v.name === 'GEMINI_API_KEY') ?? null
+  );
+
+  public ocrEnvItem = computed(
+    () =>
+      (this.modelConfigEnv()?.env_vars || []).find(
+        v => v.name === 'VISION_API_KEY' || v.name === 'OCR_API_KEY'
+      ) ?? null
+  );
+
+  public isGeminiConfigured = computed<boolean>(() => {
+    return !!this.savedGeminiKey().trim() || !!this.geminiEnvItem()?.is_set;
+  });
+
+  public isOcrKeyConfigured = computed<boolean>(() => {
+    return this.isOcrConfigured() || !!this.savedOcrKey().trim() || !!this.ocrEnvItem()?.is_set;
+  });
+
+  public otherEnvVars = computed(() =>
+    (this.modelConfigEnv()?.env_vars || []).filter(
+      v => v.name !== 'GEMINI_API_KEY' && v.name !== 'VISION_API_KEY' && v.name !== 'OCR_API_KEY'
+    )
+  );
+
   // Rich Smart Suggestions Library (Device-Aware, Flash vs Pro Tailored)
   public readonly allSuggestions = this.taskRecService.allTasks;
 
@@ -526,11 +667,73 @@ export class HomeComponent implements OnInit, OnDestroy {
       const current = this.systemService.currentApiKey();
       const googleKey = keys['google'] || current || '';
       const ocrKey = keys['ocr'] || '';
-      if (!this.isGeminiKeyEdited()) {
+      if (!untracked(() => this.isGeminiKeyEdited())) {
         this.geminiKeyInput.set(googleKey);
       }
-      if (!this.isOcrKeyEdited()) {
+      if (!untracked(() => this.isOcrKeyEdited())) {
         this.ocrKeyInput.set(ocrKey);
+      }
+    });
+
+    effect(() => {
+      const cfg = this.modelConfigEnv();
+      const baseUrlFromEnv = this.savedCustomBaseUrl();
+      if (!untracked(() => this.isCustomBaseUrlEdited()) && baseUrlFromEnv) {
+        this.customBaseUrlInput.set(baseUrlFromEnv);
+      }
+      if (!untracked(() => this.isCustomSelectionEdited()) && cfg?.default_model) {
+        if (cfg.default_model.model) {
+          this.selectedCustomModel.set(cfg.default_model.model);
+        }
+        if (cfg.default_model.provider) {
+          this.selectedCustomProvider.set(cfg.default_model.provider);
+        }
+      }
+      if (cfg?.pro_targets?.length) {
+        this.proTargetDrafts.update(current => {
+          const next = { ...current };
+          for (const target of cfg.pro_targets || []) {
+            const existing = next[target.key] || createEmptyTargetDraft();
+            if (!existing.edited) {
+              next[target.key] = {
+                ...existing,
+                provider: target.effective_provider || cfg.default_model?.provider || 'google',
+                model: target.effective_model || cfg.default_model?.model || ''
+              };
+            }
+          }
+          return next;
+        });
+      }
+      if (!untracked(() => this.isImageMaxDimEdited()) && typeof cfg?.image_max_dim === 'number') {
+        this.selectedImageMaxDim.set(Math.trunc(cfg.image_max_dim));
+      }
+      if (cfg) {
+        untracked(() => {
+          const provider = (
+            cfg.default_model?.provider ||
+            this.selectedCustomProvider() ||
+            'google'
+          )
+            .trim()
+            .toLowerCase();
+          let startedDefaultFetch = false;
+          if (!this.hasAutoFetchedCustomModels) {
+            if (!this.isLocalCompatProvider(provider) || baseUrlFromEnv) {
+              this.hasAutoFetchedCustomModels = true;
+              startedDefaultFetch = true;
+              this.fetchCustomModels(true);
+            }
+          }
+          if (cfg.pro_targets?.length && !this.hasPrefetchedProTargets) {
+            this.hasPrefetchedProTargets = true;
+            this.prefetchProTargetProviders(
+              cfg.pro_targets,
+              baseUrlFromEnv,
+              startedDefaultFetch ? provider : undefined
+            );
+          }
+        });
       }
     });
   }
@@ -581,14 +784,385 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.emulatorSetupMode.set(mode);
   }
 
-  public setModelSetupMode(mode: 'gemini' | 'custom'): void {
-    this.modelSetupMode.set(mode);
-    if (mode === 'custom') {
-      this.systemService.setSkipCredentialsCheck(true);
-      this.systemService.fetchModelConfigEnv().subscribe();
-    } else {
-      this.systemService.setSkipCredentialsCheck(false);
+  public isLocalCompatProvider(provider: string | null | undefined): boolean {
+    const clean = (provider || '').trim().toLowerCase();
+    return clean === 'ollama' || clean === 'vllm' || clean === 'custom';
+  }
+
+  public getModelsForProvider(provider: string, selectedModel?: string | null): CustomEndpointModel[] {
+    const cleanProvider = (provider || '').trim().toLowerCase();
+    const cached = this.providerModelsCache()[cleanProvider]?.models || [];
+    if (cached.length === 0) {
+      return [];
     }
+    const trimmedSelected = (selectedModel || '').trim();
+    if (trimmedSelected && !cached.some(m => m.id === trimmedSelected)) {
+      return [
+        { id: trimmedSelected, name: trimmedSelected, provider: cleanProvider },
+        ...cached
+      ];
+    }
+    return cached;
+  }
+
+  private prefetchProTargetProviders(
+    targets: ProModelTargetState[],
+    baseUrl: string,
+    skipProvider?: string
+  ): void {
+    const providers = new Set<string>();
+    const cleanedSkip = (skipProvider || '').trim().toLowerCase();
+    for (const target of targets) {
+      const p = (target.effective_provider || '').trim().toLowerCase();
+      if (p && p !== cleanedSkip) {
+        providers.add(p);
+      }
+    }
+    const cache = this.providerModelsCache();
+    for (const prov of providers) {
+      if (cache[prov]) {
+        continue;
+      }
+      if (this.isLocalCompatProvider(prov) && !baseUrl) {
+        continue;
+      }
+      this.systemService.fetchCustomModels(
+        this.isLocalCompatProvider(prov) ? baseUrl : undefined,
+        prov
+      ).subscribe({ error: () => {} });
+    }
+  }
+
+  public onCustomBaseUrlChange(val: string): void {
+    this.customBaseUrlInput.set(val);
+    this.isCustomBaseUrlEdited.set(true);
+    this.customModelsError.set(null);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+  }
+
+  public onCustomProviderChange(val: string): void {
+    const clean = val.trim().toLowerCase();
+    this.selectedCustomProvider.set(clean);
+    this.isCustomSelectionEdited.set(true);
+    this.customModelsError.set(null);
+    this.customModelsWarning.set(null);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+
+    const cached = this.providerModelsCache()[clean]?.models;
+    if (cached && cached.length > 0) {
+      if (!cached.some(m => m.id === this.selectedCustomModel().trim())) {
+        this.selectedCustomModel.set(cached[0].id);
+      }
+      return;
+    }
+    this.fetchCustomModels(true);
+  }
+
+  public onCustomModelSelectChange(val: string): void {
+    this.selectedCustomModel.set(val);
+    this.isCustomSelectionEdited.set(true);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+  }
+
+  public fetchCustomModels(silentIfEmptyUrl: boolean = false): void {
+    const provider = (this.selectedCustomProvider() || 'ollama').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
+    const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
+    if (isLocal && !url) {
+      if (!silentIfEmptyUrl) {
+        this.customModelsError.set(
+          'Enter your Ollama / OpenAI-compatible URL (e.g. http://localhost:11434/v1).'
+        );
+      }
+      return;
+    }
+
+    this.isLoadingCustomModels.set(true);
+    this.customModelsError.set(null);
+    this.customModelsWarning.set(null);
+    this.systemService.fetchCustomModels(isLocal ? url : undefined, provider).subscribe({
+      next: (res) => {
+        this.isLoadingCustomModels.set(false);
+        this.customModelsEndpointUsed.set(res.endpoint_used || null);
+        this.customModelsWarning.set(res.fallback_used && res.warning ? res.warning : null);
+        const models = res.models || [];
+        if (models.length === 0) {
+          this.customModelsError.set(
+            res.warning || `No models found for provider '${provider}'.`
+          );
+          return;
+        }
+        const currentModel = this.selectedCustomModel().trim();
+        const hasMatch = models.some(m => m.id === currentModel);
+        if (!currentModel || (this.isCustomSelectionEdited() && !hasMatch)) {
+          this.selectedCustomModel.set(models[0].id);
+        }
+      },
+      error: (err) => {
+        this.isLoadingCustomModels.set(false);
+        this.customModelsEndpointUsed.set(null);
+        this.customModelsError.set(
+          err?.error?.detail || err?.message || `Failed to fetch models for provider '${provider}'.`
+        );
+      }
+    });
+  }
+
+  public saveSelectedCustomModel(): void {
+    const model = this.selectedCustomModel().trim();
+    const provider = (this.selectedCustomProvider() || 'ollama').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
+    const baseUrl = this.customBaseUrlInput().trim();
+    if (!model) {
+      this.customModelSaveError.set('Select a model before applying.');
+      return;
+    }
+
+    this.isSavingCustomModel.set(true);
+    this.customModelSaveError.set(null);
+    this.customModelSaveMessage.set(null);
+
+    const shouldPersistBaseUrl = isLocal && !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
+    this.systemService.updateDefaultModel({
+      provider,
+      model,
+      update_fallback: true,
+      base_url: shouldPersistBaseUrl ? baseUrl : undefined,
+      persist_base_url: shouldPersistBaseUrl
+    }).subscribe({
+      next: (res) => {
+        this.isSavingCustomModel.set(false);
+        this.isCustomBaseUrlEdited.set(false);
+        this.isCustomSelectionEdited.set(false);
+        this.customModelSaveMessage.set(res?.message || `Default model set to ${provider}/${model}.`);
+        setTimeout(() => this.customModelSaveMessage.set(null), 5000);
+      },
+      error: (err) => {
+        this.isSavingCustomModel.set(false);
+        this.customModelSaveError.set(
+          err?.error?.detail || err?.message || 'Failed to update default model.'
+        );
+      }
+    });
+  }
+
+  public toggleProModeConfig(): void {
+    this.showProModeConfig.update(v => !v);
+  }
+
+  private patchTargetDraft(targetKey: ProModelTargetKey, patch: Partial<TargetDraftState>): void {
+    this.proTargetDrafts.update(current => ({
+      ...current,
+      [targetKey]: {
+        ...(current[targetKey] || createEmptyTargetDraft()),
+        ...patch
+      }
+    }));
+  }
+
+  public onTargetProviderChange(targetKey: ProModelTargetKey, provider: string): void {
+    const clean = provider.trim().toLowerCase();
+    this.patchTargetDraft(targetKey, {
+      provider: clean,
+      edited: true,
+      saveMessage: null,
+      saveError: null,
+      fetchWarning: null
+    });
+
+    const cached = this.providerModelsCache()[clean]?.models;
+    const currentModel = (this.proTargetDrafts()[targetKey]?.model || '').trim();
+    if (cached && cached.length > 0) {
+      if (!cached.some(m => m.id === currentModel)) {
+        this.patchTargetDraft(targetKey, { model: cached[0].id });
+      }
+      return;
+    }
+    this.fetchModelsForTarget(targetKey, true);
+  }
+
+  public onTargetModelChange(targetKey: ProModelTargetKey, model: string): void {
+    this.patchTargetDraft(targetKey, {
+      model,
+      edited: true,
+      saveMessage: null,
+      saveError: null
+    });
+  }
+
+  public fetchModelsForTarget(
+    targetKey: ProModelTargetKey,
+    silentIfEmptyUrl: boolean = false
+  ): void {
+    const draft = this.proTargetDrafts()[targetKey] || createEmptyTargetDraft();
+    const provider = (draft.provider || 'google').trim().toLowerCase();
+    const isLocal = this.isLocalCompatProvider(provider);
+    const url = this.customBaseUrlInput().trim() || this.savedCustomBaseUrl();
+    if (isLocal && !url) {
+      if (!silentIfEmptyUrl) {
+        this.patchTargetDraft(targetKey, {
+          saveError: 'Configure OPENAI_BASE_URL above before fetching local endpoint models.'
+        });
+      }
+      return;
+    }
+
+    this.patchTargetDraft(targetKey, {
+      isFetching: true,
+      saveError: null,
+      fetchWarning: null
+    });
+    this.systemService.fetchCustomModels(isLocal ? url : undefined, provider).subscribe({
+      next: (res) => {
+        const models = res.models || [];
+        const currentModel = (this.proTargetDrafts()[targetKey]?.model || '').trim();
+        const hasMatch = models.some(m => m.id === currentModel);
+        const nextModel =
+          models.length > 0 && (!currentModel || (this.proTargetDrafts()[targetKey]?.edited && !hasMatch))
+            ? models[0].id
+            : currentModel;
+        this.patchTargetDraft(targetKey, {
+          isFetching: false,
+          model: nextModel,
+          fetchWarning: res.fallback_used && res.warning ? res.warning : null,
+          saveError: models.length === 0 ? (res.warning || `No models found for '${provider}'.`) : null
+        });
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isFetching: false,
+          saveError: err?.error?.detail || err?.message || `Failed to fetch models for '${provider}'.`
+        });
+      }
+    });
+  }
+
+  public applyTargetModel(targetKey: ProModelTargetKey): void {
+    const draft = this.proTargetDrafts()[targetKey] || createEmptyTargetDraft();
+    const provider = (draft.provider || 'google').trim().toLowerCase();
+    const model = (draft.model || '').trim();
+    if (!model) {
+      this.patchTargetDraft(targetKey, { saveError: 'Select or enter a model before applying.' });
+      return;
+    }
+
+    const isLocal = this.isLocalCompatProvider(provider);
+    const baseUrl = this.customBaseUrlInput().trim();
+    const shouldPersistBaseUrl = isLocal && !!baseUrl && baseUrl !== this.savedCustomBaseUrl();
+
+    this.patchTargetDraft(targetKey, {
+      isSaving: true,
+      saveError: null,
+      saveMessage: null
+    });
+    this.systemService.updateTargetModel({
+      target: targetKey,
+      provider,
+      model,
+      base_url: shouldPersistBaseUrl ? baseUrl : undefined,
+      persist_base_url: shouldPersistBaseUrl
+    }).subscribe({
+      next: (res) => {
+        this.patchTargetDraft(targetKey, {
+          isSaving: false,
+          edited: false,
+          saveMessage: res?.message || `Updated to ${provider}/${model}.`
+        });
+        setTimeout(() => this.patchTargetDraft(targetKey, { saveMessage: null }), 5000);
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isSaving: false,
+          saveError: err?.error?.detail || err?.message || 'Failed to update target model.'
+        });
+      }
+    });
+  }
+
+  public resetTargetModel(targetKey: ProModelTargetKey): void {
+    this.patchTargetDraft(targetKey, {
+      isResetting: true,
+      saveError: null,
+      saveMessage: null
+    });
+    this.systemService.resetTargetModel(targetKey).subscribe({
+      next: (res) => {
+        this.patchTargetDraft(targetKey, {
+          isResetting: false,
+          edited: false,
+          saveMessage: res?.message || 'Reset target to inherit default model.'
+        });
+        setTimeout(() => this.patchTargetDraft(targetKey, { saveMessage: null }), 5000);
+      },
+      error: (err) => {
+        this.patchTargetDraft(targetKey, {
+          isResetting: false,
+          saveError: err?.error?.detail || err?.message || 'Failed to reset target override.'
+        });
+      }
+    });
+  }
+
+  public formatImageMaxDimBadge(val: number): string {
+    return val === 0 ? 'Original' : `${val} px`;
+  }
+
+  public selectImageMaxDimPreset(value: number, event?: MouseEvent): void {
+    // Blur after pointer clicks so no lingering focus ring competes with active styling.
+    if (event && event.detail > 0 && event.currentTarget instanceof HTMLButtonElement) {
+      event.currentTarget.blur();
+    }
+    this.selectedImageMaxDim.set(value);
+    this.isImageMaxDimEdited.set(true);
+    this.imageMaxDimSaveError.set(null);
+    this.imageMaxDimSaveMessage.set(null);
+  }
+
+  public saveImageMaxDim(event?: MouseEvent): void {
+    if (event && event.detail > 0 && event.currentTarget instanceof HTMLButtonElement) {
+      event.currentTarget.blur();
+    }
+    const selected = this.selectedImageMaxDim();
+    if (!this.isImageMaxDimPresetValid()) {
+      this.imageMaxDimSaveError.set('Select one of the available resolution options.');
+      return;
+    }
+
+    this.isSavingImageMaxDim.set(true);
+    this.imageMaxDimSaveError.set(null);
+    this.imageMaxDimSaveMessage.set(null);
+
+    this.systemService.updateImageResolution(selected).subscribe({
+      next: (res) => {
+        this.isSavingImageMaxDim.set(false);
+        this.isImageMaxDimEdited.set(false);
+        this.selectedImageMaxDim.set(Math.trunc(res.image_max_dim));
+        this.imageMaxDimSaveMessage.set(
+          res?.message || `Screenshot resolution updated to ${this.formatImageMaxDimBadge(res.image_max_dim)}.`
+        );
+        setTimeout(() => this.imageMaxDimSaveMessage.set(null), 5000);
+      },
+      error: (err) => {
+        this.isSavingImageMaxDim.set(false);
+        this.imageMaxDimSaveError.set(
+          err?.error?.detail || err?.message || 'Failed to update screenshot resolution.'
+        );
+      }
+    });
+  }
+
+  public formatCustomModelOption(model: CustomEndpointModel): string {
+    const meta: string[] = [];
+    if (model.parameter_size) meta.push(model.parameter_size);
+    if (model.quantization_level) meta.push(model.quantization_level);
+    if (typeof model.size_bytes === 'number' && model.size_bytes > 0) {
+      const gb = model.size_bytes / (1024 ** 3);
+      meta.push(`${gb.toFixed(1)} GB`);
+    }
+    return meta.length > 0 ? `${model.id} (${meta.join(' · ')})` : model.id;
   }
 
   public toggleFullConfigFile(): void {
@@ -621,6 +1195,37 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.ocrSaveMessage.set(null);
   }
 
+  private isGoogleProviderSelected(): boolean {
+    const defaultProvider = (this.selectedCustomProvider() || '').trim().toLowerCase();
+    if (defaultProvider === 'google' || defaultProvider === 'gemini') {
+      return true;
+    }
+    const drafts = this.proTargetDrafts();
+    return Object.values(drafts).some((draft) => {
+      const p = (draft?.provider || '').trim().toLowerCase();
+      return p === 'google' || p === 'gemini';
+    });
+  }
+
+  private refreshGoogleModelsIfSelected(): void {
+    if (!this.isGoogleProviderSelected()) {
+      return;
+    }
+    this.systemService.fetchCustomModels(undefined, 'google').subscribe({
+      next: (res) => {
+        const defaultProvider = (this.selectedCustomProvider() || '').trim().toLowerCase();
+        if (defaultProvider === 'google' || defaultProvider === 'gemini') {
+          const models = res.models || [];
+          const currentModel = this.selectedCustomModel().trim();
+          if (models.length > 0 && (!currentModel || !models.some(m => m.id === currentModel))) {
+            this.selectedCustomModel.set(models[0].id);
+          }
+        }
+      },
+      error: () => {}
+    });
+  }
+
   public saveGeminiKey(): void {
     const key = this.geminiKeyInput().trim();
     if (!key) return;
@@ -633,6 +1238,7 @@ export class HomeComponent implements OnInit, OnDestroy {
         this.isSavingGeminiKey.set(false);
         this.isGeminiKeyEdited.set(false);
         this.geminiSaveMessage.set(res?.message || '✓ Gemini API key verified & saved successfully.');
+        this.refreshGoogleModelsIfSelected();
         setTimeout(() => this.geminiSaveMessage.set(null), 5000);
       },
       error: (err) => {
@@ -643,17 +1249,19 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public clearGeminiKey(): void {
+    const hadConfiguredKey = this.isGeminiConfigured();
     this.geminiKeyInput.set('');
     this.isGeminiKeyEdited.set(false);
     this.geminiSaveError.set(null);
     this.geminiSaveMessage.set(null);
 
-    if (this.savedGeminiKey().trim()) {
+    if (hadConfiguredKey) {
       this.isSavingGeminiKey.set(true);
       this.systemService.updateApiKey('google', '', true).subscribe({
         next: (res) => {
           this.isSavingGeminiKey.set(false);
           this.geminiSaveMessage.set(res?.message || '✓ Gemini API key cleared.');
+          this.refreshGoogleModelsIfSelected();
           setTimeout(() => this.geminiSaveMessage.set(null), 5000);
         },
         error: (err) => {
@@ -689,12 +1297,13 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   public clearOcrKey(): void {
+    const hadConfiguredKey = this.isOcrKeyConfigured();
     this.ocrKeyInput.set('');
     this.isOcrKeyEdited.set(false);
     this.ocrSaveError.set(null);
     this.ocrSaveMessage.set(null);
 
-    if (this.savedOcrKey().trim()) {
+    if (hadConfiguredKey) {
       this.isSavingOcrKey.set(true);
       this.systemService.updateApiKey('ocr', '', true).subscribe({
         next: (res) => {
@@ -786,10 +1395,6 @@ export class HomeComponent implements OnInit, OnDestroy {
       default:
         return 'Configure your API key or use environment definitions.';
     }
-  }
-
-  public skipCredentialsCheck(): void {
-    this.systemService.skipCredentialsCheck();
   }
 
   public getApiKeyPlaceholder(tab: string): string {

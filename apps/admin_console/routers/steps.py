@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import json
 import traceback
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-
-from artemis.config import TEST_OUTPUTS_DIR
 
 try:
     from admin_console.database.repositories.step_repository import step_repo
@@ -53,11 +52,14 @@ async def get_step_traces_endpoint(step_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _resolve_trace_db_path(session_id: str | None, step_number: int | None):
+def _resolve_trace_db_path(session_id: str | None, step_number: int | None) -> Path | None:
     if session_id and step_number is not None:
+        session_dir = media_service.resolve_session_dir(session_id)
         sandbox_db_path = (
-            TEST_OUTPUTS_DIR
-            / f"{session_id}_step_{step_number:02d}"
+            session_dir
+            / "replay"
+            / "outputs"
+            / f"step_{step_number:02d}"
             / "temp_traces"
             / "data_engine.db"
         )

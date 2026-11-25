@@ -58,24 +58,31 @@ async def forward_worker_output(
 
     When ``log_path`` is given, the output is also teed into that file so
     the trace's advertised stdout.log actually exists for diagnostics.
+    Creation of the log file and parent directory is deferred until the first
+    chunk of output arrives, avoiding orphaned empty trace folders.
     """
     if stream is None:
         return
 
     log_file = None
-    if log_path:
-        try:
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            log_file = open(log_path, "w", buffering=1, encoding="utf-8", errors="replace")
-        except Exception as exc:
-            print(f"[QueueWorker] Could not open worker log file '{log_path}': {exc}")
+
+    def _get_log_file():
+        nonlocal log_file
+        if log_file is None and log_path:
+            try:
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                log_file = open(log_path, "w", buffering=1, encoding="utf-8", errors="replace")
+            except OSError as exc:
+                print(f"[QueueWorker] Could not open worker log file '{log_path}': {exc}")
+        return log_file
 
     def _emit(text: str) -> None:
         sys.stdout.write(text)
         sys.stdout.flush()
-        if log_file is not None:
+        f = _get_log_file()
+        if f is not None:
             try:
-                log_file.write(text)
+                f.write(text)
             except (OSError, ValueError):
                 # Best-effort tee into stdout.log; console output above
                 # already carried the text.

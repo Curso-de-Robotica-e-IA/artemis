@@ -30,6 +30,11 @@ class ModelService:
     _llm_info_cache: tuple[float, str, str] | None = None
 
     @classmethod
+    def invalidate_cache(cls) -> None:
+        """Clear the short-lived active LLM display cache after config changes."""
+        cls._llm_info_cache = None
+
+    @classmethod
     def _get_llm_provider_and_model(cls) -> tuple[str, str]:
         cached = cls._llm_info_cache
         now = time.monotonic()

@@ -26,7 +26,7 @@ _initialized_dbs = set()
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
     """Returns a SQLite connection with timeout and Row row_factory."""
-    path = db_path or DB_PATH
+    path = Path(db_path) if db_path else DB_PATH
     path_key = str(path)
     if path_key not in _initialized_dbs:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -46,6 +46,7 @@ import json
 import sqlite3
 from typing import Any
 
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.core.tool_failure import ToolFailure
 from artemis.utils.task_tree import format_actions_clean
 from third_party.mobile_use.utils.logger import get_logger
@@ -160,7 +161,7 @@ def _rendered_action(action_taken: Any) -> str:
         return ""
 
 
-def _action_text(action_taken: Any) -> str:
+def _action_text(action_taken: Any, *, include_raw: bool = True) -> str:
     """Combine the rendered action with raw fields for *scoring*.
 
     Rendered text identifies self-described targets. Raw JSON also makes
@@ -170,16 +171,18 @@ def _action_text(action_taken: Any) -> str:
     if not action_taken:
         return ""
     rendered = _rendered_action(action_taken)
+    if not include_raw:
+        return rendered
     raw = json.dumps(action_taken, ensure_ascii=False, default=str)
     return f"{rendered}\n{raw}" if rendered else raw
 
 
-def _step_haystack(step: dict) -> str:
+def _step_haystack(step: dict, *, include_raw_action: bool = True) -> str:
     """The scoring surface of a step: every recorded field, raw JSON included."""
     extra = step.get("extra_metadata") or {}
     fields = [
         str(step.get("summary") or ""),
-        _action_text(step.get("action_taken")),
+        _action_text(step.get("action_taken"), include_raw=include_raw_action),
         json.dumps(step.get("last_execution_result"), ensure_ascii=False, default=str)
         if step.get("last_execution_result")
         else "",
@@ -258,7 +261,7 @@ def _step_display_text(step: dict) -> str:
     return " | ".join(f.strip() for f in fields if f and f.strip())
 
 
-def _image_text(reader: Any, image_name: str | None) -> str:
+def _image_text(reader: Any, image_name: str | None, *, include_ui_tree: bool = True) -> str:
     """Raw XML/OCR text stored for one screenshot — the textual description
     of that image (package/activity strings live inside the XML blob)."""
     if not image_name:
@@ -270,7 +273,8 @@ def _image_text(reader: Any, image_name: str | None) -> str:
     if record is None:
         return ""
     parts = []
-    for blob in (record.ui_tree, record.ocr_result):
+    blobs = (record.ui_tree, record.ocr_result) if include_ui_tree else (record.ocr_result,)
+    for blob in blobs:
         if blob:
             parts.append(
                 blob if isinstance(blob, str) else json.dumps(blob, ensure_ascii=False, default=str)
@@ -342,14 +346,20 @@ def _screen_names(step: dict) -> list[str]:
     return names
 
 
-def _screen_text(reader: Any, step: dict) -> str:
+def _screen_text(reader: Any, step: dict, *, include_ui_tree: bool = True) -> str:
     """Description text of the screenshots behind a step (its own pre- and
     post-action screenshots plus any screenshot a tool result embedded) —
     the raw XML/OCR blobs, for *scoring* only."""
-    return "\n".join(t for t in (_image_text(reader, n) for n in _screen_names(step)) if t)
+    return "\n".join(
+        t
+        for t in (
+            _image_text(reader, n, include_ui_tree=include_ui_tree) for n in _screen_names(step)
+        )
+        if t
+    )
 
 
-def _screen_display_text(reader: Any, step: dict) -> str:
+def _screen_display_text(reader: Any, step: dict, *, include_ui_tree: bool = True) -> str:
     """The readable content of the same screenshots for the *excerpt*: element
     text / content descriptions / resource ids and OCR text joined by
     ``" | "``, never the UI-tree JSON."""
@@ -361,7 +371,8 @@ def _screen_display_text(reader: Any, step: dict) -> str:
             continue
         if record is None:
             continue
-        for blob in (record.ui_tree, record.ocr_result):
+        blobs = (record.ui_tree, record.ocr_result) if include_ui_tree else (record.ocr_result,)
+        for blob in blobs:
             if blob:
                 _collect_screen_strings(blob, strings)
     return " | ".join(strings)
@@ -432,12 +443,16 @@ def search_history_text(
     terms = _terms(query)
     session_start = getattr(reader, "session_start_time", None)
 
-    if not steps:
-        return "search_history: no recorded steps yet."
-    if step_range and not scoped_steps:
-        return f"search_history: no recorded steps in range {range_start}–{range_end}."
+    is_vision_only = bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode()
 
-    sections: list[str] = []
+    if not steps:
+        msg = "search_history: no recorded steps yet."
+        return f"{VISION_ONLY_NOTICE}\n\n{msg}" if is_vision_only else msg
+    if step_range and not scoped_steps:
+        msg = f"search_history: no recorded steps in range {range_start}–{range_end}."
+        return f"{VISION_ONLY_NOTICE}\n\n{msg}" if is_vision_only else msg
+
+    sections: list[str] = [VISION_ONLY_NOTICE] if is_vision_only else []
 
     # --- Range ledger: the explicit re-entry point for compressed-history
     # marker lines — full-width build_action_ledger rows.
@@ -455,8 +470,12 @@ def search_history_text(
     if terms:
         screen_eligible = {id(s) for s in scoped_steps[-scan_steps:]} if scan_steps > 0 else set()
         for step in scoped_steps:
-            haystack = _step_haystack(step)
-            screen = _screen_text(reader, step) if id(step) in screen_eligible else ""
+            haystack = _step_haystack(step, include_raw_action=not is_vision_only)
+            screen = (
+                _screen_text(reader, step, include_ui_tree=not is_vision_only)
+                if id(step) in screen_eligible
+                else ""
+            )
             score = _score(haystack, terms)
             screen_score = _score(screen, terms) if screen else 0
             total = score + screen_score
@@ -472,7 +491,7 @@ def search_history_text(
             display = (
                 _step_display_text(step)
                 if score >= screen_score
-                else _screen_display_text(reader, step)
+                else _screen_display_text(reader, step, include_ui_tree=not is_vision_only)
             )
             display_hit = _score(display, terms) > 0
             summary_hit = bool(summary) and _score(str(summary), terms) > 0

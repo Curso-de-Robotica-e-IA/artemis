@@ -16,8 +16,7 @@
 
 The command renders the same readiness probes the web console's device wizard
 and the ``mobile_diagnose`` MCP tool run (:mod:`artemis.core.diagnostics`), so
-the terminal, the browser and the IDE agree on one verdict. Only two rows are
-CLI-specific and not engine probes: Node.js/npm and the Showcase UI build.
+the terminal, the browser and the IDE agree on one verdict.
 """
 
 from __future__ import annotations
@@ -131,68 +130,6 @@ async def _diagnose(fix: bool) -> tuple[list[ProbeResult], list[FixOutcome]]:
 # ---------------------------------------------------------------------------
 # CLI-only extra rows (not engine probes)
 # ---------------------------------------------------------------------------
-
-
-def _npm_row() -> ExtraRow:
-    npm_path = shutil.which("npm")
-    if npm_path:
-        return ExtraRow(
-            key="nodejs_npm",
-            title="Node.js / npm",
-            status="pass",
-            status_markup="[bold green]✔ Installed[/bold green]",
-            summary="Installed",
-            detail=f"{npm_path} (Ready to build Showcase UI)",
-        )
-    hint = (
-        "winget install OpenJS.NodeJS.LTS"
-        if platform.os_type == OSType.WINDOWS
-        else "brew install node"
-        if platform.os_type == OSType.MACOS
-        else "sudo apt-get install -y nodejs npm"
-    )
-    return ExtraRow(
-        key="nodejs_npm",
-        title="Node.js / npm",
-        status="missing",
-        status_markup="[dim]⚪ Optional[/dim]",
-        summary="Not Found",
-        detail=f"Not found in PATH. ({hint})",
-    )
-
-
-def _showcase_row() -> ExtraRow:
-    from artemis.resources import get_bundled_showcase_dist
-
-    base_dist = ROOT_DIR / "apps" / "showcase_ui" / "dist"
-    candidates = [
-        base_dist / "frontend" / "browser" / "index.html",
-        base_dist / "browser" / "index.html",
-        base_dist / "frontend" / "index.html",
-        base_dist / "index.html",
-    ]
-    found_showcase = next((p for p in candidates if p.exists()), None)
-    if found_showcase is None:
-        bundled_showcase = get_bundled_showcase_dist()
-        if bundled_showcase is not None:
-            found_showcase = bundled_showcase / "index.html"
-    if found_showcase:
-        return ExtraRow(
-            key="showcase_ui",
-            title="Showcase UI",
-            status="pass",
-            status_markup="[bold green]✔ Compiled[/bold green]",
-            summary="Compiled",
-            detail=f"{found_showcase.parent} (Angular ready)",
-        )
-    return ExtraRow(
-        key="showcase_ui",
-        title="Showcase UI",
-        status="missing",
-        status_markup="[bold yellow]○ Not Compiled[/bold yellow]",
-        summary="Not Compiled",
-        detail="Run ./start.sh or artemis ui to auto-compile.",
-    )
 
 
 def _helper_row(results: list[ProbeResult]) -> ExtraRow | None:
@@ -433,7 +370,7 @@ def doctor_command(
 ) -> None:
     """Run diagnostics to inspect system dependencies, device connectivity, and configuration."""
     results, fixes = asyncio.run(_diagnose(fix))
-    extras = [_npm_row(), _showcase_row()]
+    extras: list[ExtraRow] = []
     helper_row = _helper_row(results)
     if helper_row is not None:
         extras.append(helper_row)

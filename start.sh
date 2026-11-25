@@ -350,6 +350,10 @@ if [ ! -f "${SHOWCASE_INDEX}" ] && [ ! -f "${SHOWCASE_INDEX_ALT1}" ] && [ ! -f "
         echo -e "   ${YELLOW}🎨 Showcase UI build not found. Compiling Angular Showcase UI...${NC}"
         (
             cd "${SCRIPT_DIR}/apps/showcase_ui"
+            if [ -d "node_modules" ] && { { [ -d "node_modules/ajv" ] && [ ! -f "node_modules/ajv/dist/ajv.js" ]; } || [ ! -d "node_modules/@angular/cli" ]; }; then
+                echo -e "   ${YELLOW}⚠ Incomplete or corrupted node_modules detected. Removing for clean installation...${NC}"
+                rm -rf node_modules
+            fi
             npm install --silent
             # Auto-patch Angular CLI node version constraint if running on Node 22.22.x (e.g. Cloudtop / Debian)
             CLI_NODE_VERSION="${SCRIPT_DIR}/apps/showcase_ui/node_modules/@angular/cli/src/utilities/node-version.js"
@@ -358,6 +362,14 @@ if [ ! -f "${SHOWCASE_INDEX}" ] && [ ! -f "${SHOWCASE_INDEX_ALT1}" ] && [ ! -f "
                     sed -i '' 's/22\.22\.3/22.22.0/g' "${CLI_NODE_VERSION}" 2>/dev/null || true
                 else
                     sed -i 's/22\.22\.3/22.22.0/g' "${CLI_NODE_VERSION}" 2>/dev/null || true
+                fi
+            fi
+            BUILD_TARGET="${SCRIPT_DIR}/apps/showcase_ui/node_modules/@angular/build/src/tools/esbuild/target.js"
+            if [ -f "${BUILD_TARGET}" ]; then
+                if [ "$(uname -s)" = "Darwin" ]; then
+                    sed -i '' 's/22\.22\.3/22.22.0/g' "${BUILD_TARGET}" 2>/dev/null || true
+                else
+                    sed -i 's/22\.22\.3/22.22.0/g' "${BUILD_TARGET}" 2>/dev/null || true
                 fi
             fi
             npm run build

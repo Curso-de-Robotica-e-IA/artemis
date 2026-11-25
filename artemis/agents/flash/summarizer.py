@@ -27,6 +27,7 @@ frame, the ``flash_summarizer.md`` neutral-wording contract, and versioned
 
 import asyncio
 import base64
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -34,9 +35,17 @@ from uuid import UUID
 from jinja2 import Template
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from artemis.config import settings
 from artemis.context import ArtemisContext
 from artemis.memory.step_memory import JobKey, StepMemoryService
-from artemis.services.llm import RobustChatModelWrapper, get_google_llm, get_llm
+from artemis.utils.image_scaling import encode_image_for_llm
+from artemis.llm.google import is_google_provider
+from artemis.services.llm import (
+    RobustChatModelWrapper,
+    build_chat_model,
+    get_google_llm,
+    get_llm,
+)
 from artemis.services.token_meter import record_llm_usage
 from artemis.utils.task_tree import format_actions_clean
 from artemis.utils.visualization import draw_action_overlay_on_image
@@ -151,6 +160,7 @@ class VisualStepSummarizer(StepMemoryService):
         model_name: str | None = None,
         retry_limit: int = 3,
         *,
+        provider: str | None = None,
         max_concurrency: int = 1,
         flush_timeout_s: float = 30.0,
     ):
@@ -161,20 +171,65 @@ class VisualStepSummarizer(StepMemoryService):
             flush_timeout_s=flush_timeout_s,
         )
 
-        # Initialize lightweight VLM: prioritize explicit model_name
-        target_model = model_name or "gemini-2.5-flash-lite"
+        # Initialize lightweight VLM: prioritize explicit summarizer override,
+        # otherwise inherit from default/summarizer node configuration.
+        resolved_provider = provider if isinstance(provider, str) and provider else None
+        resolved_model = model_name if isinstance(model_name, str) and model_name else None
+        if resolved_model is None:
+            llm_cfg = getattr(ctx, "llm_config", None) if ctx is not None else None
+            default_cfg = getattr(llm_cfg, "default", None)
+            def_provider = getattr(default_cfg, "provider", None)
+            def_model = getattr(default_cfg, "model", None)
+            if isinstance(def_model, str) and def_model:
+                resolved_model = def_model
+                if resolved_provider is None and isinstance(def_provider, str) and def_provider:
+                    resolved_provider = def_provider
+
+        target_model = resolved_model or "gemini-2.5-flash-lite"
         self._model_name = target_model
         try:
-            if model_name:
-                self._llm = get_google_llm(model_name=target_model, temperature=0.0)
-            else:
-                self._llm = get_llm(ctx, name="summarizer", is_utils=True)
-        except Exception:
-            self._llm = get_google_llm(model_name=target_model, temperature=0.0)
+            self._llm = get_llm(
+                ctx,
+                name="summarizer",
+                is_utils=False,
+                temperature=0.0,
+                model_name=resolved_model,
+                provider=resolved_provider,
+            )
+        except Exception as exc:
+            logger.debug(
+                f"Could not initialize primary summarizer LLM ({resolved_model}); "
+                f"attempting fallback: {exc}"
+            )
+            try:
+                self._llm = get_llm(
+                    ctx,
+                    name="summarizer",
+                    is_utils=False,
+                    use_fallback=True,
+                    temperature=0.0,
+                )
+            except Exception:
+                target_model = resolved_model or "gemini-2.5-flash-lite"
+                try:
+                    if resolved_provider and not is_google_provider(resolved_provider):
+                        self._llm = build_chat_model(
+                            resolved_provider, target_model, temperature=0.0
+                        )
+                    else:
+                        self._llm = get_google_llm(model_name=target_model, temperature=0.0)
+                except Exception:
+                    logger.warning(
+                        f"Could not initialize summarizer LLM; step summarizer will be inactive: {exc}"
+                    )
+                    self._llm = None
         try:
-            configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
-            if isinstance(configured, str) and configured:
-                self._model_name = configured
+            if self._llm is not None:
+                configured = getattr(self._llm, "model", None) or getattr(
+                    self._llm, "model_name", None
+                )
+                if isinstance(configured, str) and configured:
+                    self._model_name = configured
         except Exception as exc:
             logger.debug(
                 "Could not read the configured summarizer model name; keeping %s: %s",
@@ -346,7 +401,7 @@ class VisualStepSummarizer(StepMemoryService):
         (the compaction thresholds' live context base), hence
         ``update_last_prompt=False``.
         """
-        if isinstance(self._llm, RobustChatModelWrapper):
+        if self._llm is None or isinstance(self._llm, RobustChatModelWrapper):
             return
         engine = getattr(self.ctx, "data_engine", None) if self.ctx else None
         record_llm_usage(
@@ -417,7 +472,7 @@ class VisualStepSummarizer(StepMemoryService):
                     action_name=action_name,
                     action_args=action_args,
                 )
-                b64_pre = base64.b64encode(annotated_pre_bytes).decode("utf-8")
+                b64_pre = encode_image_for_llm(annotated_pre_bytes)
                 content_blocks.append(
                     {
                         "type": "text",
@@ -434,7 +489,7 @@ class VisualStepSummarizer(StepMemoryService):
                 )
 
             if post_bytes:
-                b64_post = base64.b64encode(post_bytes).decode("utf-8")
+                b64_post = encode_image_for_llm(post_bytes)
                 content_blocks.append(
                     {
                         "type": "text",
@@ -452,6 +507,9 @@ class VisualStepSummarizer(StepMemoryService):
                         "image_url": {"url": f"data:image/jpeg;base64,{b64_post}"},
                     }
                 )
+
+            if self._llm is None:
+                return None
 
             messages: list[BaseMessage] = [
                 SystemMessage(content=rendered_prompt),

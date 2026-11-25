@@ -33,6 +33,7 @@ from artemis.agents.explorer.constants import (
     ASK_EXPLORER_QUERY_DESCRIPTION,
     ASK_EXPLORER_TOOL_NAME,
 )
+from artemis.config import VISION_ONLY_NOTICE, is_vision_only_mode, settings
 from artemis.context import ArtemisContext
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.core.tool_declaration import ToolDeclaration
@@ -61,13 +62,17 @@ class ToolExecutionResult(BaseModel):
     ui_elements_text: str | None = None
     raw_result: Any = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    package: str | None = None
+    activity: str | None = None
 
     def to_langchain_tool_message(self) -> ToolMessage:
         """Converts execution result into a standardized multimodal LangChain ToolMessage."""
         content_blocks: list[dict[str, Any]] = [
             {"type": "text", "text": self.text_summary or f"Action '{self.tool_name}' dispatched."}
         ]
-        if self.ui_elements_text:
+        if bool(getattr(settings, "VISION_ONLY_MODE", False)) or is_vision_only_mode():
+            content_blocks.append({"type": "text", "text": VISION_ONLY_NOTICE})
+        elif self.ui_elements_text:
             content_blocks.append(
                 {
                     "type": "text",
@@ -175,13 +180,17 @@ async def capture_screenshot_and_parse_ui(
     Thin adapter over :func:`artemis.mcp.observation.observe` that adds the LangGraph
     ``State`` write-back (indexed points/elements) the agents rely on.
     """
-    obs, screenshot_bytes = await observe(ctx, controller, settle_ms=0 if skip_settling else 400)
+    obs, screenshot_bytes = await observe(ctx, controller, settle_ms=0 if skip_settling else None)
     if not obs.ok:
         return None, None, None
 
     if obs.hierarchy_ok:
         state.indexed_points = [el["center"] for el in obs.elements]
         state.indexed_elements = obs.elements
+    if getattr(obs, "activity", None):
+        state.current_activity = obs.activity
+    if getattr(obs, "package", None):
+        state.current_package = obs.package
 
     return obs.screenshot_path, screenshot_bytes, obs.elements_text
 

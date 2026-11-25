@@ -220,7 +220,7 @@ function Install-PortableScrcpy {
 }
 
 function Test-NodeCompatible {
-    if (-not (Test-CommandExists "node") -or (-not (Test-CommandExists "npm") -and -not (Test-CommandExists "npm.cmd"))) { return $false }
+    if (-not (Test-CommandExists "node") -or (-not (Test-CommandExists ) -and -not (Test-CommandExists "npm.cmd"))) { return $false }
     try {
         $verRaw = (& node -v 2>$null)
         if (-not $verRaw) { return $false }
@@ -394,105 +394,18 @@ if (-not (Test-Path ".env")) {
     Write-Host "   [OK] .env configuration file exists." -ForegroundColor Green
 }
 
-# 5. Check and Build Showcase UI (Angular)
-Write-Host "`n5. Checking Showcase UI Build (Angular)..." -ForegroundColor Yellow
-$ShowcaseIndex = "$RootDir\apps\showcase_ui\dist\frontend\browser\index.html"
-$ShowcaseIndexAlt1 = "$RootDir\apps\showcase_ui\dist\browser\index.html"
-$ShowcaseIndexAlt2 = "$RootDir\apps\showcase_ui\dist\index.html"
-if ((-not (Test-Path $ShowcaseIndex)) -and (-not (Test-Path $ShowcaseIndexAlt1)) -and (-not (Test-Path $ShowcaseIndexAlt2))) {
-    if (-not (Test-NodeCompatible)) {
-        if (Test-CommandExists "node") {
-            $curVer = (& node -v 2>$null)
-            Write-Host "   [WARN] Detected Node.js $curVer, but Angular CLI requires Node.js >= v22.22.0." -ForegroundColor Yellow
-        } else {
-            Write-Host "   [WARN] Node.js/npm not found (required for Showcase UI)." -ForegroundColor Cyan
-        }
-
-        # 1. Try nvm if available on Windows
-        if (Test-CommandExists "nvm") {
-            Write-Host "   [INFO] Installing Node.js 22 LTS via nvm..." -ForegroundColor Cyan
-            & nvm install 22.23.2 | Out-Null
-            & nvm use 22.23.2 | Out-Null
-            Update-EnvironmentPath
-        }
-
-        # 2. Try WinGet
-        if (-not (Test-NodeCompatible)) {
-            $useWinGetNode = $false
-            if (Test-CommandExists "winget") {
-                if ([Console]::IsInputRedirected -eq $false) {
-                    $ans = Read-Host "   Install/Upgrade Node.js via WinGet (may require Administrator)? [Y/n]"
-                    if ($ans -eq "" -or $ans -match "^[Yy]") {
-                        $useWinGetNode = $true
-                    }
-                } else {
-                    $useWinGetNode = $true
-                }
-            }
-
-            if ($useWinGetNode) {
-                Write-Host "   [INFO] Installing/Upgrading Node.js LTS via WinGet..." -ForegroundColor Cyan
-                winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent 2>$null | Out-Null
-                Update-EnvironmentPath
-            }
-        }
-
-        # 3. Zero-admin user-space fallback for Node.js if still not compatible
-        if (-not (Test-NodeCompatible)) {
-            Install-PortableNode
-        }
-    }
-
-    if (Test-NodeCompatible) {
-        $nodeVer = (& node -v 2>$null)
-        Write-Host "   [OK] Node.js $nodeVer is ready." -ForegroundColor Green
-        Write-Host "   [INFO] Compiling Angular Showcase UI..." -ForegroundColor Cyan
-        Push-Location "$RootDir\apps\showcase_ui"
-        try {
-            $npmExec = if (Test-CommandExists "npm.cmd") { "npm.cmd" } else { "npm" }
-            Write-Host "   [INFO] Installing frontend npm dependencies..." -ForegroundColor Cyan
-            & $npmExec install --no-audit --no-fund --loglevel=error
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "   [WARN] npm install returned exit code $LASTEXITCODE. Trying silent install..." -ForegroundColor DarkYellow
-                & $npmExec install --silent
-            }
-            $cliNodeVersion = "$RootDir\apps\showcase_ui\node_modules\@angular\cli\src\utilities\node-version.js"
-            if (Test-Path $cliNodeVersion) {
-                (Get-Content $cliNodeVersion) -replace '22\.22\.3', '22.22.0' | Set-Content $cliNodeVersion
-            }
-            Write-Host "   [INFO] Building Angular frontend application..." -ForegroundColor Cyan
-            & $npmExec run build
-            if (Test-Path $ShowcaseIndex) {
-                Write-Host "   [OK] Showcase UI compiled successfully." -ForegroundColor Green
-            } elseif (Test-Path $ShowcaseIndexAlt1) {
-                Write-Host "   [OK] Showcase UI compiled successfully." -ForegroundColor Green
-            } else {
-                Write-Host "   [WARN] Showcase UI build finished but index.html was not found in expected dist directory." -ForegroundColor DarkYellow
-            }
-        } catch {
-            Write-Host "   [WARN] Failed to build Showcase UI: $_" -ForegroundColor DarkYellow
-        } finally {
-            Pop-Location
-        }
-    } else {
-        Write-Host "   [WARN] Could not configure compatible Node.js (>= 22.22.0). Showcase UI will show fallback notice on launch." -ForegroundColor DarkYellow
-    }
-} else {
-    Write-Host "   [OK] Showcase UI build already exists." -ForegroundColor Green
-}
-
 # 6. Toolchain Readiness Summary
 Write-Host "`n6. Toolchain Readiness Summary:" -ForegroundColor Yellow
-$tools = @("adb", "ffmpeg", "scrcpy", "uv", "npm")
+$tools = @("adb", "ffmpeg", "scrcpy", "uv", )
 foreach ($t in $tools) {
     $hasCmd = Test-CommandExists $t
-    if (-not $hasCmd -and $t -eq "npm") {
+    if (-not $hasCmd -and $t -eq ) {
         $hasCmd = Test-CommandExists "npm.cmd"
     }
     if ($hasCmd) {
-        $targetName = if ($t -eq "npm" -and -not (Test-CommandExists "npm") -and (Test-CommandExists "npm.cmd")) { "npm.cmd" } else { $t }
+        $targetName = if ($t -eq  -and -not (Test-CommandExists ) -and (Test-CommandExists "npm.cmd")) { "npm.cmd" } else { $t }
         $p = (Get-Command $targetName).Source
-        if ($t -eq "npm" -and (Test-CommandExists "node")) {
+        if ($t -eq  -and (Test-CommandExists "node")) {
             $nVer = (& node -v 2>$null)
             Write-Host "   [OK] $t ($nVer) -> $p" -ForegroundColor Green
         } else {
@@ -510,11 +423,12 @@ Write-Host "======================================================" -ForegroundC
 
 if ($Launch -or $Open) {
     Start-LocalAdbServer
-    Write-Host "[INFO] Launching Showcase UI..." -ForegroundColor Green
-    uv run python -m artemis ui --open
+    Write-Host "[INFO] Running Artemis doctor..." -ForegroundColor Green
+    uv run python -m artemis doctor
 } else {
-    Write-Host "To start the Showcase UI and interactive onboarding:" -ForegroundColor White
-    Write-Host "  -> .\start.bat   (or: uv run python -m artemis ui)" -ForegroundColor Cyan
+    Write-Host "To configure and run Artemis:" -ForegroundColor White
+    Write-Host "  -> uv run artemis init" -ForegroundColor Cyan
+    Write-Host "  -> uv run artemis run `"Open Settings`"" -ForegroundColor Cyan
     Write-Host ""
 }
 

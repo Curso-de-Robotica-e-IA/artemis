@@ -14,6 +14,7 @@
 
 """Agent tools, sub-agent capabilities, and explorer settings configuration."""
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -328,6 +329,10 @@ class OutputterConfig(BaseModel):
 class ExplorerConfig(BaseModel):
     """Configuration specific to UI Explorer visual sub-agent (Flash / Pro / Ultra)."""
 
+    enabled: bool = Field(
+        default=True,
+        description="Whether UI Explorer sub-agent is enabled. If false, ask_explorer and object_detector tools are disabled.",
+    )
     default_version: ExplorerVersion = Field(
         default=DEFAULT_EXPLORER_VERSION,
         description="Default Explorer version mode ('flash', 'pro', or 'ultra').",
@@ -390,9 +395,19 @@ class StepSummarizerConfig(BaseModel):
         default=True,
         description="Whether to asynchronously summarize historical steps to replace pruned images.",
     )
-    model: str = Field(
-        default="gemini-2.5-flash-lite",
-        description="Lightweight model used for background step state summarization.",
+    provider: str | None = Field(
+        default=None,
+        description=(
+            "Optional LLM provider override for background step state summarization. "
+            "When omitted alongside model, inherits the global default provider."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Lightweight model used for background step state summarization. "
+            "When None, inherits the global default model."
+        ),
     )
     prune_history_xml: bool = Field(
         default=True,
@@ -687,9 +702,19 @@ class MemoryChunkingConfig(BaseModel):
             " the hard threshold waives it (emergency)."
         ),
     )
-    model: str = Field(
-        default="gemini-3.8-flash",
-        description="Model used for the chunk-level StepCapsuleLens (bands ①+②).",
+    provider: str | None = Field(
+        default=None,
+        description=(
+            "Optional LLM provider override for StepCapsuleLens. "
+            "When omitted alongside model, inherits the global default provider."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model used for the chunk-level StepCapsuleLens (bands ①+②). "
+            "When None, inherits the global default model."
+        ),
     )
     max_chunks: int = Field(
         default=8,
@@ -783,6 +808,10 @@ class FlashProfileConfig(BaseModel):
 class ProExplorerConfig(BaseModel):
     """Explorer perception settings under Pro profile."""
 
+    enabled: bool = Field(
+        default=True,
+        description="Whether UI Explorer sub-agent is enabled under Pro profile.",
+    )
     mode: ExplorerVersion = Field(
         default="flash",
         description="Explorer perception mode under Pro profile ('flash', 'pro', or 'ultra').",
@@ -856,6 +885,15 @@ class ProProfileConfig(BaseModel):
 
 class AgentGlobalConfig(BaseModel):
     """Global configuration parsed from artemis.jsonc / agent_config.json."""
+
+    image_max_dim: int = Field(
+        default=1280,
+        ge=0,
+        description=(
+            "Maximum dimension in pixels (longest side) for screenshots sent to vision LLMs. "
+            "Preserves aspect ratio; 0 disables downscaling."
+        ),
+    )
 
     # ⚡ Profile-categorized configurations
     flash: FlashProfileConfig = Field(
@@ -938,6 +976,8 @@ class AgentGlobalConfig(BaseModel):
                         data["explorer"]["pro_mode"] = exp_pro["mode"]
                     if "caching" in exp_pro and "caching" not in data["explorer"]:
                         data["explorer"]["caching"] = exp_pro["caching"]
+                    if "enabled" in exp_pro and "enabled" not in data["explorer"]:
+                        data["explorer"]["enabled"] = exp_pro["enabled"]
 
         # 2. Sync from flash block to explorer.flash_mode
         if "flash" in data and isinstance(data["flash"], dict):
@@ -961,6 +1001,11 @@ class AgentGlobalConfig(BaseModel):
             "pro" not in data or "video_analyzer" not in data.get("pro", {})
         ):
             data.setdefault("pro", {})["video_analyzer"] = data["video_analyzer"]
+        if "explorer" in data and isinstance(data["explorer"], dict):
+            if "enabled" in data["explorer"]:
+                data.setdefault("pro", {}).setdefault("explorer", {})
+                if "enabled" not in data["pro"]["explorer"]:
+                    data["pro"]["explorer"]["enabled"] = data["explorer"]["enabled"]
 
         # 3b. Legacy alias: an explicit flash.step_summarizer.retry_limit keeps
         # working by seeding memory.runtime.retry_limit when the new key is
@@ -1064,6 +1109,16 @@ def resolve_explorer_version(
     )
 
 
+def _inherit_default_model_fields(target: dict[str, Any], default_block: dict[str, Any]) -> None:
+    """Populate missing model/provider fields on a sub-module block from ``default``."""
+    if target.get("model"):
+        return
+    if default_block.get("provider"):
+        target["provider"] = default_block["provider"]
+    if default_block.get("model"):
+        target["model"] = default_block["model"]
+
+
 def load_agent_config(
     config_path: Path | None = None,
 ) -> AgentGlobalConfig:
@@ -1091,8 +1146,58 @@ def load_agent_config(
         with open(resolved_path, encoding="utf-8") as f:
             data = load_jsonc(f)
             if isinstance(data, dict) and "agent" in data:
-                return AgentGlobalConfig.model_validate(data["agent"])
+                agent_dict = copy.deepcopy(data["agent"])
+                default_block = data.get("default")
+                if isinstance(agent_dict, dict) and isinstance(default_block, dict):
+                    flash_block = agent_dict.setdefault("flash", {})
+                    if isinstance(flash_block, dict):
+                        ss_block = flash_block.get("step_summarizer")
+                        if ss_block is None:
+                            ss_block = {}
+                            flash_block["step_summarizer"] = ss_block
+                        if isinstance(ss_block, dict):
+                            _inherit_default_model_fields(ss_block, default_block)
+
+                    memory_block = agent_dict.setdefault("memory", {})
+                    if isinstance(memory_block, dict):
+                        chunking_block = memory_block.get("chunking")
+                        if chunking_block is None:
+                            chunking_block = {}
+                            memory_block["chunking"] = chunking_block
+                        if isinstance(chunking_block, dict):
+                            _inherit_default_model_fields(chunking_block, default_block)
+                return AgentGlobalConfig.model_validate(agent_dict)
             return AgentGlobalConfig.model_validate(data)
     except Exception as e:
         logger.error(f"Failed to load agent config from '{resolved_path}': {e}")
         raise ValueError(f"Failed to parse '{resolved_path}': {e}") from e
+
+
+def is_tool_denylisted(ctx: Any, tool_name: str, agent_name: str = "operator") -> bool:
+    """Check if a tool is denylisted in agent config for the given agent."""
+    if ctx is None:
+        return False
+    agent_cfg = getattr(ctx, "agent_config", None)
+    if not agent_cfg:
+        return False
+    denylists = getattr(agent_cfg, "denylisted_tools", None)
+    if not denylists or not isinstance(denylists, dict):
+        return False
+    agent_denylist = denylists.get(agent_name, []) or []
+    global_denylist = denylists.get("global", []) or []
+    return tool_name in agent_denylist or tool_name in global_denylist
+
+
+def is_explorer_enabled(ctx: Any, agent_name: str = "operator") -> bool:
+    """Check if Explorer (and ask_explorer / object_detector) is enabled."""
+    if is_tool_denylisted(ctx, "ask_explorer", agent_name):
+        return False
+    setup = getattr(ctx, "execution_setup", None)
+    if setup and getattr(setup, "explorer", None):
+        if getattr(setup.explorer, "enabled", True) is False:
+            return False
+    agent_cfg = getattr(ctx, "agent_config", None)
+    if agent_cfg and getattr(agent_cfg, "explorer", None):
+        if getattr(agent_cfg.explorer, "enabled", True) is False:
+            return False
+    return True

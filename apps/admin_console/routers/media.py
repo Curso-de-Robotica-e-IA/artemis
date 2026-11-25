@@ -85,20 +85,16 @@ async def get_admin_index():
     return "<h1>Admin Console index.html not found</h1>"
 
 
-@router.get("/images/{image_name}")
-@router.get("/api/images/{image_name}")
-async def get_image(image_name: str):
-    if not image_name.endswith(".jpg"):
-        image_name += ".jpg"
-    try:
-        images_root = IMAGES_DIR.resolve()
-        image_path = (images_root / image_name).resolve(strict=True)
-    except (OSError, ValueError):
-        raise HTTPException(status_code=404, detail="Image not found")
-    if not image_path.is_file() or not image_path.is_relative_to(images_root):
+@router.get("/images/{image_name:path}")
+@router.get("/api/images/{image_name:path}")
+async def get_image(image_name: str, session_id: str | None = None):
+    image_path = media_service.resolve_image_path(image_name, session_id=session_id)
+    if not image_path or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
 
-    return FileResponse(image_path, media_type="image/jpeg")
+    suffix = image_path.suffix.lower()
+    media_type = media_service._IMAGE_MEDIA_TYPES.get(suffix, "image/jpeg")
+    return FileResponse(image_path, media_type=media_type)
 
 
 @router.get("/videos/{video_path:path}")
