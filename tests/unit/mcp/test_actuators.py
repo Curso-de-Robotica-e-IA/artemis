@@ -67,6 +67,27 @@ async def test_long_press_message_and_duration(actuator):
 
 
 @pytest.mark.asyncio
+async def test_android_driver_long_press_always_passes_duration_ms():
+    """AndroidAdbDriver.long_press must always forward duration_ms (even when < 500ms)."""
+    from unittest.mock import MagicMock
+
+    from artemis.drivers.android.adb_driver import AndroidAdbDriver
+
+    driver = AndroidAdbDriver.__new__(AndroidAdbDriver)
+    driver._held_position = None
+    driver._device = MagicMock()
+    driver._device.shell = MagicMock(return_value="")
+
+    ok_short = await driver.long_press(120, 340, duration_ms=300)
+    assert ok_short is True
+    driver._device.shell.assert_called_with("input swipe 120 340 120 340 300")
+
+    ok_long = await driver.long_press(120, 340, duration_ms=2500)
+    assert ok_long is True
+    driver._device.shell.assert_called_with("input swipe 120 340 120 340 2500")
+
+
+@pytest.mark.asyncio
 async def test_swipe_reports_normalized_endpoints(actuator):
     res = await actuator.swipe((500, 800), (500, 200), 400)
     assert res.ok
@@ -75,10 +96,13 @@ async def test_swipe_reports_normalized_endpoints(actuator):
 
 
 @pytest.mark.asyncio
-async def test_drag_converts_normalized_and_reports_hold_ms(actuator):
-    res = await actuator.drag((200, 400), (800, 400), hold_ms=1500, duration_ms=500)
+async def test_drag_and_drop_converts_normalized_and_reports_hold_ms(actuator):
+    res = await actuator.drag_and_drop((200, 400), (800, 400), hold_ms=1500, duration_ms=500)
     assert res.ok
-    assert res.message == "Dragged from [200, 400] to [800, 400] (normalized, held 1500ms)."
+    assert (
+        res.message
+        == "Dragged and dropped from [200, 400] to [800, 400] (normalized, initial press 1500ms)."
+    )
     assert res.normalized_coordinates == [200, 400, 800, 400]
     assert res.duration_ms == 500
     assert actuator.action_history[-1] == {
@@ -91,9 +115,9 @@ async def test_drag_converts_normalized_and_reports_hold_ms(actuator):
 
 
 @pytest.mark.asyncio
-async def test_drag_and_hold_then_drop(actuator):
+async def test_drag_and_hold_then_drop_after_hold(actuator):
     # Dropping without an active hold fails cleanly
-    res_fail = await actuator.drop((500, 100))
+    res_fail = await actuator.drop_after_hold((500, 100))
     assert not res_fail.ok
 
     # Drag and hold keeps pointer pressed
@@ -104,7 +128,7 @@ async def test_drag_and_hold_then_drop(actuator):
     assert actuator.action_history[-1]["action"] == "drag_and_hold"
 
     # Drop onto revealed target
-    res_drop = await actuator.drop((500, 100), duration_ms=350)
+    res_drop = await actuator.drop_after_hold((500, 100), duration_ms=350)
     assert res_drop.ok
     assert res_drop.message == "Dropped at [500, 100] (normalized)."
     assert res_drop.normalized_coordinates == [500, 100]
@@ -118,7 +142,7 @@ async def test_drag_and_hold_then_drop(actuator):
     # Drop in place
     res_hold2 = await actuator.drag_and_hold((200, 600), (200, 500), hold_ms=500, duration_ms=200)
     assert res_hold2.ok
-    res_drop_in_place = await actuator.drop()
+    res_drop_in_place = await actuator.drop_after_hold()
     assert res_drop_in_place.ok
     assert res_drop_in_place.message == "Dropped in place at held position."
 

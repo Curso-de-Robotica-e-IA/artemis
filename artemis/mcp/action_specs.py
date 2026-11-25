@@ -213,9 +213,9 @@ async def _wire_swipe(actuator: Any, a: dict[str, Any]) -> ActionResult:
     )
 
 
-async def _wire_drag(actuator: Any, a: dict[str, Any]) -> ActionResult:
+async def _wire_drag_and_drop(actuator: Any, a: dict[str, Any]) -> ActionResult:
     start, end = a["start"], a["end"]
-    return await actuator.drag(
+    return await actuator.drag_and_drop(
         (int(start[0]), int(start[1])),
         (int(end[0]), int(end[1])),
         hold_ms=a["hold_ms"],
@@ -233,10 +233,10 @@ async def _wire_drag_and_hold(actuator: Any, a: dict[str, Any]) -> ActionResult:
     )
 
 
-async def _wire_drop(actuator: Any, a: dict[str, Any]) -> ActionResult:
+async def _wire_drop_after_hold(actuator: Any, a: dict[str, Any]) -> ActionResult:
     target = a["target"]
     norm = (int(target[0]), int(target[1])) if target else None
-    return await actuator.drop(norm, duration_ms=a["duration_ms"])
+    return await actuator.drop_after_hold(norm, duration_ms=a["duration_ms"])
 
 
 async def _wire_press_key(actuator: Any, a: dict[str, Any]) -> ActionResult:
@@ -274,15 +274,23 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="click",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Click on the target location on the screen (supports element"
-                " index or absolute normalized coordinates)."
+                "[ACTION] Tap once (or repeatedly on the SAME point via times=2, etc.) and"
+                " release immediately.\n"
+                "\n"
+                "• Use for: buttons, links, checkboxes, tabs, icons, or double-tapping a"
+                " single spot.\n"
+                "• Do NOT use for: focusing a field before typing (call input_text directly"
+                " — it focuses the field itself), pressing and holding (use long_press),"
+                " dragging (use drag_and_drop or drag_and_hold), or tapping multiple"
+                " DIFFERENT points rapidly in one burst."
             ),
             params=(
                 ParamSpec(
                     "target",
                     IndexOrCoords,
-                    "Click target. Can be an element index number (int, e.g. 3) OR"
-                    " normalized coordinates (list of 2 integers, e.g. [500, 600]).",
+                    "Tap target: an element index integer (e.g. 3) OR a 2-integer normalized"
+                    " coordinate pair [x, y] in 0-1000 scale (e.g. [500, 600]). Never pass a"
+                    " single coordinate number.",
                 ),
                 ParamSpec(
                     "target_description",
@@ -294,16 +302,16 @@ _SPECS: tuple[ActionSpec, ...] = (
                 ParamSpec(
                     "times",
                     int,
-                    "Number of consecutive clicks on this target. Use this for"
-                    " double-clicks or multi-clicks (e.g. 7 to enter developer"
-                    " mode). Default is 1.",
+                    "Number of consecutive taps on this SAME target (e.g. 2 for double-tap,"
+                    " 7 for developer mode). Default is 1.",
                     required=False,
                     default=1,
                 ),
                 ParamSpec(
                     "delay_ms",
                     int,
-                    "Delay in milliseconds between consecutive clicks. Default is 100.",
+                    "Delay in milliseconds between consecutive taps when times > 1. Default"
+                    " is 100.",
                     required=False,
                     default=100,
                 ),
@@ -329,9 +337,15 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="click_sequence",
         declaration=DeclarationDialect(
             description=(
-                "[ACTION] Executes a sequence of taps one by one in order on the"
-                " specified targets (e.g. [[500, 280], [885, 362]]). The screen will be returned ONLY after all clicks"
-                " in the sequence have completed."
+                "[ACTION] Tap multiple DIFFERENT [x, y] coordinate points in order as one"
+                " atomic burst (the screen is captured ONLY after all taps finish).\n"
+                "\n"
+                "• Use for: transient / auto-dismissing overlays or control bars that would"
+                " vanish during turn latency if tapped across separate turns.\n"
+                "• Do NOT use for: repeated taps on the same spot (use click with times),"
+                " normal multi-screen navigation (intermediate screens will not have loaded"
+                " yet), or element indices — sequence ONLY accepts [x, y] coordinate pairs,"
+                " NEVER integer indices."
             ),
             parameters={
                 "type": "object",
@@ -342,11 +356,13 @@ _SPECS: tuple[ActionSpec, ...] = (
                             "type": "array",
                             "items": {"type": "integer"},
                             "description": (
-                                "Normalized coordinates [x, y] in 0-1000 scale (e.g., [500, 280])."
+                                "Normalized coordinate pair [x, y] in 0-1000 scale"
+                                " (e.g., [500, 280]). Element indices are NOT accepted."
                             ),
                         },
                         "description": (
-                            "List of targets to tap in sequence, e.g. [[500, 280], [885, 362]]."
+                            "Ordered list of [x, y] coordinate pairs to tap, e.g."
+                            " [[500, 280], [885, 362]]."
                         ),
                     },
                     "target_descriptions": {
@@ -390,16 +406,29 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="long_press",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Long press on the target location on the screen (supports"
-                " element index or absolute normalized coordinates)."
+                "[ACTION] Press and hold in place for duration ms, then RELEASE the finger"
+                " (DOWN -> WAIT -> UP).\n"
+                "\n"
+                "• Use for: opening context menus, entering multi-select mode, showing"
+                " app-icon shortcuts, or opening the home-screen customization menu (on an"
+                " empty wallpaper area).\n"
+                "• Do NOT use for:\n"
+                "  - Starting a drag, moving/resizing/removing icons or widgets, or holding"
+                " before drop_after_hold: long_press ALWAYS releases the finger at the end!"
+                " Call drag_and_drop or drag_and_hold + drop_after_hold directly instead"
+                " (they already include the initial press delay hold_ms).\n"
+                "  - Opening a transient control (such as a camera zoom dial) that"
+                " auto-dismisses before the next turn: use a continuous drag_and_hold +"
+                " drop_after_hold (or drag_and_drop) from the trigger instead.\n"
+                "  - Never repeat long_press on the same target just changing duration if"
+                " 1-2 attempts show no progress — switch to a different tool or target."
             ),
             params=(
                 ParamSpec(
                     "target",
                     IndexOrCoords,
-                    "Long press target. Can be an element index number (int, e.g."
-                    " 3) OR normalized coordinates (list of 2 integers, e.g. [500,"
-                    " 600]).",
+                    "Long press target: an element index integer (e.g. 3) OR a 2-integer"
+                    " normalized coordinate pair [x, y] in 0-1000 scale (e.g. [500, 600]).",
                 ),
                 ParamSpec(
                     "target_description",
@@ -411,7 +440,7 @@ _SPECS: tuple[ActionSpec, ...] = (
                 ParamSpec(
                     "duration",
                     int,
-                    "Long press duration in milliseconds (default 1000).",
+                    "Press duration in milliseconds before releasing (default 1000).",
                     required=False,
                     default=1000,
                 ),
@@ -438,22 +467,25 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="input_text",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Type text into the target input field (supports replacing"
-                " whole text or appending to the end, and multi-line strings with"
-                " '\\n')."
+                "[ACTION] Focus (tap) the target input field, optionally clear existing"
+                " text, and type text into it (supports multi-line strings with '\\n').\n"
+                "\n"
+                "• Use for: entering text into search bars, forms, or chat boxes in ONE"
+                " step — do NOT call click on the input field first.\n"
+                "• Note: input_text does NOT press Enter/Submit automatically; follow with"
+                " press_key(key='ENTER') or click the search/submit button if needed."
             ),
             params=(
                 ParamSpec(
                     "text",
                     str,
-                    "The text content to input. Supports multi-line content with '\\n'.",
+                    "The text content to type. Supports multi-line content with '\\n'.",
                 ),
                 ParamSpec(
                     "target",
                     IndexOrCoords,
-                    "Input target field. Can be an input box element index number"
-                    " (int, e.g. 3) OR normalized coordinates (list of 2 integers,"
-                    " e.g. [500, 600]).",
+                    "Input field target: an element index integer (e.g. 3) OR a 2-integer"
+                    " normalized coordinate pair [x, y] in 0-1000 scale (e.g. [500, 600]).",
                 ),
                 ParamSpec(
                     "target_description",
@@ -493,75 +525,83 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="swipe",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Perform a swipe, drag, or slider-adjustment gesture on the screen.\n"
+                "[ACTION] Perform an immediate single-finger swipe gesture"
+                " (DOWN -> MOVE -> UP, with NO initial press delay).\n"
                 "\n"
-                "• Directional Scrolling ('direction'): Recommended for general browsing and standard page scrolling in most scenarios. Automatically computes safe swipe vectors and adaptive duration, retains a ~40% visual overlap anchor for zero-omission traversal, and prevents inertial flings. Supports scoping to a sub-container via 'target'. If it fails on certain custom layouts, fall back to specifying exact coordinates ('start' and 'end') directly.\n"
-                "• Precise Coordinate Gestures ('start', 'end'): Best for local, fine-grained interactions such as adjusting sliders/SeekBars (e.g., volume, brightness, progress bars), drag-and-drop / list reordering, or as a reliable fallback when directional scrolling fails on specific containers. Always drag slightly PAST the target position to overcome touch slop and reliably trigger the update. When setting a slider to Maximum (100%) or Minimum (0%), swipe fully to the extreme boundary.\n"
-                "\n"
-                "Args:\n"
-                "    direction: Smart directional scrolling ('up', 'down', 'left', 'right'). Automatically computes safe swipe vectors, retaining 40% visual overlap: 'up' (reveal content below), 'down' (reveal content above), 'left', 'right'.\n"
-                "    start: Start normalized coordinates [start_x, start_y] in 0-1000 scale.\n"
-                "    end: End normalized coordinates [end_x, end_y] in 0-1000 scale.\n"
-                "    target: Optional target element index (e.g. 2) or container bounds [left, top, right, bottom] to scope the directional swipe within.\n"
-                "    gesture: Backward-compatible parameter: direction string OR custom coordinates list [start_x, start_y, end_x, end_y] in 0-1000 scale.\n"
-                "    target_description: What is being dragged, in a few words (e.g. 'brightness slider knob'). REQUIRED for coordinate gestures ('start'/'end' or a coordinates list); ignored for directional scrolling.\n"
-                "    duration: Optional gesture duration in milliseconds (default 800)."
+                "• Mode 1 — Directional Scroll (pass 'direction', optional 'target'):"
+                " Standard list/page scrolling ('up' reveals content below, 'down' reveals"
+                " content above, 'left'/'right' switch pages/tabs). Automatically computes"
+                " safe vectors with ~40% visual overlap.\n"
+                "• Mode 2 — Coordinate Swipe (pass 'start', 'end', and 'target_description'):"
+                " Immediate local motions with NO press delay — adjusting an already-active"
+                " slider/SeekBar (volume, brightness, progress bar), pull-to-refresh, or"
+                " scrolling a custom container. Swipe slightly PAST the desired slider"
+                " value (or to the extreme edge for 0%/100%). Do NOT mix Mode 1 and Mode 2.\n"
+                "• Do NOT use swipe for:\n"
+                "  - Pinch-to-zoom or two-finger rotation: strictly single-touch! For zoom,"
+                " use single-touch UI controls (zoom presets like '1x'/'2x', holding or"
+                " dragging a zoom control, '+'/'-' buttons, or double-tap).\n"
+                "  - Drag-and-drop, icon/list reordering, or controls requiring an initial"
+                " press delay: if swipe has no effect, switch to drag_and_drop (known"
+                " visible destination), drag_and_hold + drop_after_hold (control/drop zone"
+                " stays open only while pressed), or long_press."
             ),
             params=(
                 ParamSpec(
                     "direction",
                     Direction | None,
-                    "Direction for scrolling and swiping: 'up' (drags bottom-to-top, scrolling down to reveal content below),"
-                    " 'down' (drags top-to-bottom, scrolling up to reveal content above),"
-                    " 'left' (drags right-to-left, scrolling right),"
-                    " 'right' (drags left-to-right, scrolling left).",
+                    "Mode 1 (scroll/page switch): 'up' (reveal content below), 'down'"
+                    " (reveal content above), 'left' (scroll right), 'right' (scroll left)."
+                    " Omit when using start/end.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "start",
                     list[int] | None,
-                    "Start normalized coordinates [start_x, start_y] in 0-1000 scale for precise,"
-                    " local interactions (e.g. adjusting sliders, SeekBars, fine range selection, or drag-and-drop).",
+                    "Mode 2 start [x, y] in 0-1000 scale for immediate local motions"
+                    " without press delay (already-active slider, SeekBar, custom"
+                    " scrollable container). Omit when using direction.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "end",
                     list[int] | None,
-                    "End normalized coordinates [end_x, end_y] in 0-1000 scale for precise,"
-                    " local interactions (e.g. adjusting sliders, SeekBars, fine range selection, or drag-and-drop).",
+                    "Mode 2 end [x, y] in 0-1000 scale. Required with start; omit when"
+                    " using direction.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "target",
                     int | list[int] | str | None,
-                    "Optional target element index (e.g. 2) or container bounds [left, top, right, bottom] to scope the directional swipe within.",
+                    "Optional Mode 1 container scope: element index (e.g. 2) or bounds"
+                    " [left, top, right, bottom] to scroll inside.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "gesture",
                     Direction | list[int] | None,
-                    "Backward-compatible swipe gesture: smart direction string ('up', 'down', 'left', 'right')"
-                    " OR precise custom coordinates [start_x, start_y, end_x, end_y] in 0-1000 scale.",
+                    "Legacy alias (prefer 'direction' or 'start'+'end'): direction string"
+                    " OR 4-integer list [start_x, start_y, end_x, end_y].",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "target_description",
                     str | None,
-                    "What is being dragged, in a few words (e.g. 'brightness slider"
-                    " knob'). REQUIRED for coordinate gestures ('start'/'end' or a"
-                    " coordinates list); ignored for directional scrolling.",
+                    "What is being swiped, in a few words (e.g. 'brightness slider"
+                    " knob'). REQUIRED for Mode 2 coordinate swipes; ignored for Mode 1"
+                    " directional scrolling.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "duration",
                     int | None,
-                    "Optional swipe/drag duration in milliseconds (default 800; computed"
+                    "Optional swipe duration in milliseconds (default 800; computed"
                     " automatically for directional swipes).",
                     required=False,
                     default=None,
@@ -587,35 +627,37 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
     ),
     ActionSpec(
-        name="drag",
+        name="drag_and_drop",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press, hold, drag an item from a start location to an end"
-                " location, and release (drop) it in one continuous gesture.\n"
+                "[ACTION] Press (initial press delay hold_ms), move an item from start to"
+                " end, and RELEASE in one continuous turn (DOWN -> DELAY -> MOVE -> UP).\n"
                 "\n"
-                "Use this when both the start item and final drop destination are already"
-                " visible on screen — such as moving home-screen app icons or widgets to"
-                " a known spot, drag-and-drop between containers, or reordering list items"
-                " that activate on long press. If the drop target (such as a 'Remove' or"
-                " 'Uninstall' bar) only appears while the item is actively being held, use"
-                " a drag-and-hold gesture instead so you can inspect the screen before"
-                " dropping. For ordinary scrolling or sliders that do not require an"
-                " initial hold, use a standard swipe gesture instead."
+                "• Use for: moving icons/widgets, drag-and-drop between containers, or"
+                " reordering list items when the final drop destination is ALREADY visible."
+                " Do NOT call long_press before this tool — hold_ms is already built in.\n"
+                "• Do NOT use for:\n"
+                "  - Drop zones or continuous controls ('Remove'/'Uninstall' bar, folder"
+                " creation, edge page switching, continuous camera zoom slider) that ONLY"
+                " appear or need live visual adjustment while pressed: use drag_and_hold +"
+                " drop_after_hold instead (drag_and_drop releases at the end and dismisses"
+                " transient controls).\n"
+                "  - Immediate scrolling or sliders without press delay: if hold_ms opens"
+                " a context/selection menu instead of moving, switch to swipe (or retry"
+                " with hold_ms=0)."
             ),
             params=(
                 ParamSpec(
                     "start",
                     IndexOrCoords,
-                    "Start location to press and hold. Can be an element index number"
-                    " (int, e.g. 3) OR normalized coordinates (list of 2 integers, e.g."
-                    " [500, 600]).",
+                    "Start location to press and pick up from: element index integer (e.g."
+                    " 3) OR normalized [x, y] pair (e.g. [500, 600]).",
                 ),
                 ParamSpec(
                     "end",
                     IndexOrCoords,
-                    "Destination location to drag and release at. Can be an element index"
-                    " number (int, e.g. 7) OR normalized coordinates (list of 2 integers,"
-                    " e.g. [200, 400]).",
+                    "Final drop destination where the finger releases: element index"
+                    " integer (e.g. 7) OR normalized [x, y] pair (e.g. [200, 400]).",
                 ),
                 ParamSpec(
                     "target_description",
@@ -629,16 +671,16 @@ _SPECS: tuple[ActionSpec, ...] = (
                 ParamSpec(
                     "hold_ms",
                     int,
-                    "How long to press and hold at the start location in milliseconds"
-                    " before moving (e.g. 1000 for 1s, 2000 for 2s). Default is 1000.",
+                    "Initial press delay in milliseconds at start before moving (e.g. 1000"
+                    " for 1s, 0 for immediate start). Default is 1000.",
                     required=False,
                     default=1000,
                 ),
                 ParamSpec(
                     "duration_ms",
                     int,
-                    "Duration of the drag movement from start to end in milliseconds"
-                    " after the hold completes. Default is 400.",
+                    "Duration of the movement from start to end in milliseconds after the"
+                    " initial press delay. Default is 400.",
                     required=False,
                     default=400,
                 ),
@@ -646,8 +688,8 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
         wire=WireDialect(
             description=(
-                "Press and hold at a 0-1000 normalized start [x, y] coordinate, then drag"
-                " continuously to an end [x, y] coordinate without lifting."
+                "Press at a 0-1000 normalized start [x, y] coordinate (with initial press"
+                " delay), drag continuously to end [x, y], and release."
             ),
             params=(
                 ParamSpec("start", list[int]),
@@ -655,7 +697,7 @@ _SPECS: tuple[ActionSpec, ...] = (
                 ParamSpec("hold_ms", int, required=False, default=1000),
                 ParamSpec("duration_ms", int, required=False, default=400),
             ),
-            bind=_wire_drag,
+            bind=_wire_drag_and_drop,
         ),
         differences=(
             "start/end: the agent dialect accepts an element index or a coordinate pair"
@@ -668,54 +710,58 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="drag_and_hold",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press, hold, and drag an item from start to end WITHOUT releasing"
-                " the finger (keeps the touch actively pressed on screen).\n"
+                "[ACTION] Press (initial press delay hold_ms) and drag from start to end"
+                " WITHOUT releasing the finger (DOWN -> DELAY -> MOVE; finger stays"
+                " pressed across turns until drop_after_hold is called).\n"
                 "\n"
-                "Use this when UI drop zones or options (such as 'Remove', 'Uninstall',"
-                " folder creation, or home-screen edge page switching) ONLY appear while"
-                " the item is being held and dragged. The next screenshot is captured"
-                " while the finger remains pressed so you can observe the revealed target"
-                " and then release onto it with a drop action. Calling this again while"
-                " already holding continues moving the held item without lifting."
+                "• Use for: targets or continuous controls that ONLY appear or need live"
+                " visual feedback while the finger stays pressed — 'Remove'/'Uninstall'"
+                " bars, edge page switching, folder creation, or pressing and sliding a"
+                " camera '1x'/'2x' zoom control to adjust a continuous zoom slider. Do NOT"
+                " call long_press first — hold_ms is already built in.\n"
+                "• Multi-turn rule: the next screenshot is captured while pressed; call"
+                " drag_and_hold again to keep adjusting without lifting, and ALWAYS finish"
+                " with drop_after_hold.\n"
+                "• Do NOT use for: destinations already visible that can finish in 1 turn"
+                " (use drag_and_drop), or immediate slides/scrolls (if hold_ms opens a"
+                " context menu instead of moving, switch to swipe or retry with hold_ms=0)."
             ),
             params=(
                 ParamSpec(
                     "start",
                     IndexOrCoords,
-                    "Start location to press and hold. Can be an element index number"
-                    " (int, e.g. 3) OR normalized coordinates (list of 2 integers, e.g."
-                    " [500, 600]).",
+                    "Start location to press and begin dragging from: element index integer"
+                    " (e.g. 3) OR normalized [x, y] pair (e.g. [500, 600]).",
                 ),
                 ParamSpec(
                     "end",
                     IndexOrCoords,
                     "Intermediate location to move to while keeping the finger pressed"
-                    " (often slightly offset from start, e.g. 50-100 units up, to enter"
-                    " drag mode and reveal drop targets). Accepts an element index (int)"
-                    " OR normalized coordinates [x, y].",
+                    " (often offset 50-100 units from start to enter drag mode or open a"
+                    " continuous control): element index (int) OR normalized [x, y] pair.",
                 ),
                 ParamSpec(
                     "target_description",
                     str | None,
                     "What is being picked up and held, in a few words (e.g. 'Chrome app"
-                    " icon'). REQUIRED when start is a coordinate pair; ignored when"
-                    " start is an element index.",
+                    " icon', '1x zoom button'). REQUIRED when start is a coordinate pair;"
+                    " ignored when start is an element index.",
                     required=False,
                     default=None,
                 ),
                 ParamSpec(
                     "hold_ms",
                     int,
-                    "How long to press and hold at the start location in milliseconds"
-                    " before moving (e.g. 1000 for 1s, 2000 for 2s). Default is 1000.",
+                    "Initial press delay in milliseconds at start before moving (e.g. 1000"
+                    " for 1s, 0 for immediate drag). Default is 1000.",
                     required=False,
                     default=1000,
                 ),
                 ParamSpec(
                     "duration_ms",
                     int,
-                    "Duration of the movement from start to end in milliseconds after"
-                    " the hold completes. Default is 400.",
+                    "Duration of the movement from start to end in milliseconds after the"
+                    " initial press delay. Default is 400.",
                     required=False,
                     default=400,
                 ),
@@ -723,8 +769,8 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
         wire=WireDialect(
             description=(
-                "Press, hold, and drag from a 0-1000 normalized start [x, y] coordinate"
-                " to end [x, y] without releasing the touch."
+                "Press at a 0-1000 normalized start [x, y] coordinate (with initial press"
+                " delay) and drag to end [x, y] without releasing the touch."
             ),
             params=(
                 ParamSpec("start", list[int]),
@@ -742,23 +788,25 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
     ),
     ActionSpec(
-        name="drop",
+        name="drop_after_hold",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Move an actively held drag-and-hold touch to the target"
-                " destination and release (drop) the finger.\n"
+                "[ACTION] Move an actively held drag_and_hold touch to an optional target"
+                " and RELEASE the finger (MOVE -> UP).\n"
                 "\n"
-                "Use this after a drag-and-hold once the revealed drop zone (such as"
-                " 'Remove' or 'Uninstall') is visible on screen. Omit target to release"
-                " the finger in place at its current held position."
+                "• Use ONLY after drag_and_hold, once the revealed drop zone ('Remove',"
+                " 'Uninstall', folder) is visible or the held slider has reached the target"
+                " value. Omit target to release in place.\n"
+                "• Do NOT call after long_press, drag_and_drop, or swipe — those already"
+                " released the finger and drop_after_hold will fail."
             ),
             params=(
                 ParamSpec(
                     "target",
                     IndexOrCoords | None,
-                    "Optional drop destination: an element index number (int, e.g. 2) OR"
-                    " normalized coordinates (list of 2 integers, e.g. [500, 100]). Omit"
-                    " to release in place at the current held position.",
+                    "Optional drop destination: element index integer (e.g. 2) OR"
+                    " normalized [x, y] pair (e.g. [500, 100]). Omit to release in place"
+                    " at the currently held position.",
                     required=False,
                     default=None,
                 ),
@@ -790,7 +838,7 @@ _SPECS: tuple[ActionSpec, ...] = (
                 ParamSpec("target", list[int] | None, required=False, default=None),
                 ParamSpec("duration_ms", int, required=False, default=400),
             ),
-            bind=_wire_drop,
+            bind=_wire_drop_after_hold,
         ),
         differences=(
             "target: the agent dialect accepts an element index, a coordinate pair, or"
@@ -803,14 +851,20 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="press_key",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press a physical or virtual system button (e.g. ENTER, BACK,"
-                " HOME, APP_SWITCH)."
+                "[ACTION] Press one of the 4 supported Android system keys: ONLY 'ENTER',"
+                " 'BACK', 'HOME', or 'APP_SWITCH'.\n"
+                "\n"
+                "• Use for: submitting search/text ('ENTER'), navigating back ('BACK'),"
+                " returning to the home screen ('HOME'), or opening recent apps"
+                " ('APP_SWITCH').\n"
+                "• Do NOT pass unsupported keys (such as VOLUME_UP, VOLUME_DOWN, POWER,"
+                " MENU, or DELETE) — only the 4 enum values above are accepted."
             ),
             params=(
                 ParamSpec(
                     "key",
                     Literal["ENTER", "BACK", "HOME", "APP_SWITCH"],
-                    "Standard Android system button name (ENTER, BACK, HOME, APP_SWITCH).",
+                    "Exact system key name — ONLY 'ENTER', 'BACK', 'HOME', or 'APP_SWITCH'.",
                 ),
             ),
         ),
@@ -831,13 +885,20 @@ _SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         name="manage_app",
         operator=OperatorDialect(
-            description="[ACTION] Launch or force stop a specified application.",
+            description=(
+                "[ACTION] Launch or force-stop an application directly by display name or"
+                " package name.\n"
+                "\n"
+                "• Use for: opening, switching to, or resetting an app (prefer manage_app"
+                " over manually hunting for icons on the home screen or app drawer)."
+            ),
             params=(
-                ParamSpec("action", Literal["launch", "stop"], "The action type."),
+                ParamSpec("action", Literal["launch", "stop"], "Either 'launch' or 'stop'."),
                 ParamSpec(
                     "app_name",
                     str,
-                    "Display name or package name of the application.",
+                    "Display name (e.g. 'Camera', 'Settings') or Android package name"
+                    " (e.g. 'com.android.settings').",
                 ),
             ),
         ),
@@ -854,19 +915,20 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="wait_for_delay",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Pause execution and wait for a specified duration in milliseconds.\n"
+                "[ACTION] Pause execution for time_in_ms milliseconds without touching the"
+                " screen.\n"
                 "\n"
-                "Use this whenever you need time to elapse—whether for UI loading, animations,\n"
-                "screen transitions, or longer scheduled delays and intervals specified in the task."
+                "• Use for: active loading/splash screens, animations, transitions, or"
+                " explicit wait intervals required by the task.\n"
+                "• Do NOT loop wait_for_delay on a static screen — if nothing changes after"
+                " 1-2 waits, take a different action instead."
             ),
             params=(
                 ParamSpec(
                     "time_in_ms",
                     int,
-                    "The exact duration to wait in milliseconds. Accurately convert the"
-                    " required time duration into milliseconds based on your objective"
-                    " or plan (e.g., 2000 for 2s, 5000 for 5s, 60000 for 1 minute,"
-                    " 180000 for 3 minutes, 300000 for 5 minutes).",
+                    "Wait duration in milliseconds (e.g. 2000 for 2s, 5000 for 5s, 60000"
+                    " for 1 minute).",
                 ),
             ),
         ),
@@ -925,9 +987,9 @@ OPERATOR_SHELL_ORDER: tuple[str, ...] = (
     "click",
     "input_text",
     "swipe",
-    "drag",
+    "drag_and_drop",
     "drag_and_hold",
-    "drop",
+    "drop_after_hold",
     "press_key",
     "manage_app",
     "wait_for_delay",
@@ -941,9 +1003,9 @@ EXCEPTION_PREFIXES: dict[str, str] = {
     "long_press": "Error during long press",
     "input_text": "Error during input text",
     "swipe": "Error during swipe",
-    "drag": "Error during drag",
+    "drag_and_drop": "Error during drag and drop",
     "drag_and_hold": "Error during drag and hold",
-    "drop": "Error during drop",
+    "drop_after_hold": "Error during drop after hold",
     "press_key": "Error during press_key",
     "manage_app": "Error during manage_app",
     "wait_for_delay": "Error during wait_for_delay",

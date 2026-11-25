@@ -562,8 +562,8 @@
       "type": "object"
     }
   },
-  "drag": {
-    "description": "Press and hold at a 0-1000 normalized start [x, y] coordinate, then drag continuously to an end [x, y] coordinate without lifting.",
+  "drag_and_drop": {
+    "description": "Press at a 0-1000 normalized start [x, y] coordinate (with initial press delay), drag continuously to end [x, y], and release.",
     "inputSchema": {
       "properties": {
         "start": {
@@ -595,7 +595,7 @@
         "start",
         "end"
       ],
-      "title": "dragArguments",
+      "title": "drag_and_dropArguments",
       "type": "object"
     },
     "outputSchema": {
@@ -683,7 +683,7 @@
     }
   },
   "drag_and_hold": {
-    "description": "Press, hold, and drag from a 0-1000 normalized start [x, y] coordinate to end [x, y] without releasing the touch.",
+    "description": "Press at a 0-1000 normalized start [x, y] coordinate (with initial press delay) and drag to end [x, y] without releasing the touch.",
     "inputSchema": {
       "properties": {
         "start": {
@@ -802,7 +802,7 @@
       "type": "object"
     }
   },
-  "drop": {
+  "drop_after_hold": {
     "description": "Move an actively held touch to an optional 0-1000 normalized [x, y] target and release it.",
     "inputSchema": {
       "properties": {
@@ -827,7 +827,7 @@
           "type": "integer"
         }
       },
-      "title": "dropArguments",
+      "title": "drop_after_holdArguments",
       "type": "object"
     },
     "outputSchema": {

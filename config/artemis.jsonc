@@ -8,11 +8,11 @@
   // ------------------------------------------------------------------------------
   "default": {
     "provider": "ollama",
-    "model": "qwen3.8:27b",
+    "model": "gemma4:31b",
     "thinking_level": "medium",
     "fallback": {
       "provider": "ollama",
-      "model": "qwen3.8:27b",
+      "model": "gemma4:31b",
       "thinking_level": "medium"
     }
   },

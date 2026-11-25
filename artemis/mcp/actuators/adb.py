@@ -251,7 +251,7 @@ class AdbActuator:
             duration_ms=duration_ms,
         )
 
-    async def drag(
+    async def drag_and_drop(
         self,
         start: tuple[int, int],
         end: tuple[int, int],
@@ -266,10 +266,13 @@ class AdbActuator:
             px1, py1, px2, py2, hold_ms=hold_ms, duration=duration_ms
         )
         if err:
-            return ActionResult.failure("drag", f"Error dragging: {err}", detail=str(err))
+            return ActionResult.failure(
+                "drag_and_drop", f"Error during drag and drop: {err}", detail=str(err)
+            )
         return ActionResult.success(
-            "drag",
-            f"Dragged from [{nx1}, {ny1}] to [{nx2}, {ny2}] (normalized, held {hold_ms}ms).",
+            "drag_and_drop",
+            f"Dragged and dropped from [{nx1}, {ny1}] to [{nx2}, {ny2}]"
+            f" (normalized, initial press {hold_ms}ms).",
             normalized_coordinates=[int(nx1), int(ny1), int(nx2), int(ny2)],
             duration_ms=duration_ms,
         )
@@ -295,12 +298,12 @@ class AdbActuator:
         return ActionResult.success(
             "drag_and_hold",
             f"Dragged from [{nx1}, {ny1}] to [{nx2}, {ny2}] and holding"
-            f" (normalized, held {hold_ms}ms, not released).",
+            f" (normalized, initial press {hold_ms}ms, not released).",
             normalized_coordinates=[int(nx1), int(ny1), int(nx2), int(ny2)],
             duration_ms=duration_ms,
         )
 
-    async def drop(
+    async def drop_after_hold(
         self,
         target: tuple[int, int] | None = None,
         duration_ms: int = 400,
@@ -315,8 +318,8 @@ class AdbActuator:
         err = await self.controller.drop_coords(px, py, duration=duration_ms)
         if err:
             return ActionResult.failure(
-                "drop",
-                f"Error dropping: {err}",
+                "drop_after_hold",
+                f"Error dropping after hold: {err}",
                 detail=str(err),
                 normalized_coordinates=coords,
             )
@@ -326,7 +329,7 @@ class AdbActuator:
             else "Dropped in place at held position."
         )
         return ActionResult.success(
-            "drop",
+            "drop_after_hold",
             msg,
             normalized_coordinates=coords,
             duration_ms=duration_ms,

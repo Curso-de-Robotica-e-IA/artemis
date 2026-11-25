@@ -323,7 +323,16 @@ class AndroidAdbDriver(BaseDeviceDriver):
             return False
 
     async def long_press(self, x: int, y: int, duration_ms: int = 1000) -> bool:
-        return await self.tap(x=x, y=y, duration_ms=duration_ms)
+        await self._release_held_if_active()
+        dur = max(1, int(duration_ms))
+        try:
+            cmd = f"input swipe {x} {y} {x} {y} {dur}"
+            logger.info(f"[ADB] {cmd}")
+            await asyncio.to_thread(self.device.shell, cmd)
+            return True
+        except (AdbError, OSError, RuntimeError, TimeoutError, ValueError) as e:
+            logger.error(f"Long press failed at ({x}, {y}) for {dur}ms: {e}")
+            return False
 
     async def swipe(
         self,

@@ -331,7 +331,7 @@ class VisualStepSummarizer(StepMemoryService):
             args.setdefault("intent", own_verb)
         # Flash's coordinate swipe/drag names its points ``start``/``end``; the
         # history renderer reads ``start_coordinates``/``end_coordinates``.
-        if action_name in ("swipe", "drag", "drag_and_hold"):
+        if action_name in ("swipe", "drag_and_drop", "drag", "drag_and_hold"):
             raw = args.get("args") if isinstance(args.get("args"), dict) else {}
             start = args.get("start", raw.get("start"))
             end = args.get("end", raw.get("end"))
@@ -343,7 +343,7 @@ class VisualStepSummarizer(StepMemoryService):
             ):
                 args.setdefault("start_coordinates", start)
                 args.setdefault("end_coordinates", end)
-            if action_name in ("drag", "drag_and_hold"):
+            if action_name in ("drag_and_drop", "drag", "drag_and_hold"):
                 if "hold_ms" not in args and raw.get("hold_ms") is not None:
                     args["hold_ms"] = raw["hold_ms"]
                 if "duration_ms" not in args and raw.get("duration_ms") is not None:

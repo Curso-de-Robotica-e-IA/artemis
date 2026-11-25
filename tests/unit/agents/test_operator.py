@@ -909,6 +909,30 @@ async def test_long_press_action_translation():
     )
     assert "Error" in err
 
+    # 4. Test long_press accepts duration_ms alias and forwards through to_canonical_call
+    from artemis.mcp.action_names import to_canonical_call
+
+    actions_ms, err = node._translate_and_validate_tool(
+        {"name": "long_press", "args": {"target": 1, "duration_ms": 2500}},
+        mock_state,
+    )
+    assert err is None
+    assert actions_ms[0]["duration"] == 2500
+    assert to_canonical_call(actions_ms[0]) == (
+        "long_press",
+        {"target": [185, 125], "duration_ms": 2500},
+    )
+    assert to_canonical_call(
+        {"action": "long_press_on", "normalized_coordinates": [300, 400], "duration_ms": 3200}
+    ) == ("long_press", {"target": [300, 400], "duration_ms": 3200})
+
+    # 5. Test invalid duration is rejected
+    bad_actions, bad_err = node._translate_and_validate_tool(
+        {"name": "long_press", "args": {"target": 1, "duration": 0}},
+        mock_state,
+    )
+    assert bad_actions == [] and "duration" in bad_err
+
 
 @pytest.mark.asyncio
 async def test_drag_action_translation():
@@ -941,7 +965,7 @@ async def test_drag_action_translation():
     # 1. Index start -> coordinate end
     actions, err = node._translate_and_validate_tool(
         {
-            "name": "drag",
+            "name": "drag_and_drop",
             "args": {"start": 1, "end": [500, 600], "hold_ms": 2000, "duration_ms": 600},
         },
         mock_state,
@@ -949,7 +973,7 @@ async def test_drag_action_translation():
     assert err is None
     assert actions == [
         {
-            "action": "drag",
+            "action": "drag_and_drop",
             "coordinates": [200, 300, 540, 1440],
             "coordinate_space": "pixel",
             "normalized_coordinates": [185, 125, 500, 600],
@@ -966,7 +990,7 @@ async def test_drag_action_translation():
 
     # Verify Validator canonical call translation
     canonical_name, wire_args = to_canonical_call(actions[0])
-    assert canonical_name == "drag"
+    assert canonical_name == "drag_and_drop"
     assert wire_args == {
         "start": [185, 125],
         "end": [500, 600],
@@ -976,7 +1000,7 @@ async def test_drag_action_translation():
 
     # 2. Coordinate start without target_description is rejected
     actions, err = node._translate_and_validate_tool(
-        {"name": "drag", "args": {"start": [200, 400], "end": [800, 400]}},
+        {"name": "drag_and_drop", "args": {"start": [200, 400], "end": [800, 400]}},
         mock_state,
     )
     assert actions == [] and "target_description" in err
@@ -984,7 +1008,7 @@ async def test_drag_action_translation():
     # 3. Coordinate start with target_description succeeds
     actions, err = node._translate_and_validate_tool(
         {
-            "name": "drag",
+            "name": "drag_and_drop",
             "args": {
                 "start": [200, 400],
                 "end": [800, 400],
@@ -1017,29 +1041,32 @@ async def test_drag_action_translation():
         "duration_ms": 300,
     }
 
-    # 5. drop translation (coordinate target with description, and in-place) + canonical call
+    # 5. drop_after_hold translation (coordinate target with description, and in-place) + canonical call
     drop_err_actions, drop_err = node._translate_and_validate_tool(
-        {"name": "drop", "args": {"target": [500, 90]}}, mock_state
+        {"name": "drop_after_hold", "args": {"target": [500, 90]}}, mock_state
     )
     assert drop_err_actions == [] and "target_description" in drop_err
 
     drop_actions, err = node._translate_and_validate_tool(
         {
-            "name": "drop",
+            "name": "drop_after_hold",
             "args": {"target": [500, 90], "target_description": "Remove zone", "duration_ms": 350},
         },
         mock_state,
     )
     assert err is None
     drop_canon, drop_wire = to_canonical_call(drop_actions[0])
-    assert drop_canon == "drop"
+    assert drop_canon == "drop_after_hold"
     assert drop_wire == {"target": [500, 90], "duration_ms": 350}
 
     drop_in_place, err = node._translate_and_validate_tool(
-        {"name": "drop", "args": {}}, mock_state
+        {"name": "drop_after_hold", "args": {}}, mock_state
     )
     assert err is None
-    assert to_canonical_call(drop_in_place[0]) == ("drop", {"target": None, "duration_ms": 400})
+    assert to_canonical_call(drop_in_place[0]) == (
+        "drop_after_hold",
+        {"target": None, "duration_ms": 400},
+    )
 
 
 @pytest.mark.asyncio

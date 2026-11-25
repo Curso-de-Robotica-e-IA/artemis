@@ -138,7 +138,7 @@ def format_action_clean(action_obj) -> str:
         dragged = _target_label(action_obj, fallback="")
         dragged_str = f" {dragged}" if dragged else ""
         return f"Swiped{dragged_str} from {start_coords} to {end_coords}{duration_str}"
-    elif act_type in ("drag", "drag_and_hold"):
+    elif act_type in ("drag_and_drop", "drag", "drag_and_hold"):
         raw_args = action_obj.get("args") if isinstance(action_obj.get("args"), dict) else {}
         hold_ms = action_obj.get("hold_ms")
         if hold_ms is None:
@@ -170,7 +170,7 @@ def format_action_clean(action_obj) -> str:
         dragged_str = f" {dragged}" if dragged else ""
         verb = "Dragged and held" if act_type == "drag_and_hold" else "Dragged"
         return f"{verb}{dragged_str} from {start_coords} to {end_coords}{hold_str}{duration_str}"
-    elif act_type == "drop":
+    elif act_type in ("drop_after_hold", "drop"):
         raw_args = action_obj.get("args") if isinstance(action_obj.get("args"), dict) else {}
         duration = (
             action_obj.get("duration_ms")
@@ -465,8 +465,10 @@ def format_tool_call_clean(
         "click_sequence",
         "tap_sequence",
         "swipe",
+        "drag_and_drop",
         "drag",
         "drag_and_hold",
+        "drop_after_hold",
         "drop",
         "input_text",
         "focus_and_input_text",
@@ -583,9 +585,12 @@ def format_tool_call_clean(
                 "Error during click: ",
                 "Swipe failed: ",
                 "Error during swipe: ",
+                "Error during drag and drop: ",
                 "Error during drag: ",
                 "Error dragging: ",
                 "Error during drag and hold: ",
+                "Error during drop after hold: ",
+                "Error dropping after hold: ",
                 "Error during drop: ",
                 "Error dropping: ",
                 "Error executing key press: ",
@@ -887,8 +892,10 @@ def _render_step_detailed(
         ACTION_TOOLS = {
             "click",
             "swipe",
+            "drag_and_drop",
             "drag",
             "drag_and_hold",
+            "drop_after_hold",
             "drop",
             "input_text",
             "press_key",

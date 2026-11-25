@@ -80,7 +80,14 @@ def check_ui_change(
         logger.info(f"Action: {action_name} | Global UI change ratio: {global_change_ratio:.4f}")
 
         # 4. Strategy based on action type
-        if action_name in ("swipe", "drag", "drag_and_hold", "drop"):
+        if action_name in (
+            "swipe",
+            "drag_and_drop",
+            "drag",
+            "drag_and_hold",
+            "drop_after_hold",
+            "drop",
+        ):
             # Swipe/drag/drop expects large scale movement
             return global_change_ratio > full_screen_threshold
 

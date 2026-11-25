@@ -48,16 +48,19 @@ async def test_click_end_to_end():
         await session.aclose()
 
 
-async def test_drag_end_to_end():
+async def test_drag_and_drop_end_to_end():
     actuator = MockActuator(width=1000, height=2000)
     session = await _session_for(actuator)
     try:
         res = await session.call(
-            "drag",
+            "drag_and_drop",
             {"start": [200, 500], "end": [800, 250], "hold_ms": 2000, "duration_ms": 600},
         )
         assert res.ok
-        assert res.message == "Dragged from [200, 500] to [800, 250] (normalized, held 2000ms)."
+        assert (
+            res.message
+            == "Dragged and dropped from [200, 500] to [800, 250] (normalized, initial press 2000ms)."
+        )
         assert actuator.action_history[-1] == {
             "action": "drag",
             "start": (200, 1000),
@@ -69,7 +72,7 @@ async def test_drag_end_to_end():
         await session.aclose()
 
 
-async def test_drag_and_hold_then_drop_end_to_end():
+async def test_drag_and_hold_then_drop_after_hold_end_to_end():
     actuator = MockActuator(width=1000, height=2000)
     session = await _session_for(actuator)
     try:
@@ -79,7 +82,7 @@ async def test_drag_and_hold_then_drop_end_to_end():
         )
         assert res_hold.ok
         assert "not released" in res_hold.message
-        res_drop = await session.call("drop", {"target": [500, 100], "duration_ms": 400})
+        res_drop = await session.call("drop_after_hold", {"target": [500, 100], "duration_ms": 400})
         assert res_drop.ok
         assert res_drop.message == "Dropped at [500, 100] (normalized)."
         assert actuator.action_history[-1] == {
@@ -116,9 +119,9 @@ async def test_partial_actuator_hides_optional_tools():
         for absent in (
             "click",
             "swipe",
-            "drag",
+            "drag_and_drop",
             "drag_and_hold",
-            "drop",
+            "drop_after_hold",
             "manage_app",
             "wait_for_text",
             "open_link",

@@ -82,7 +82,7 @@ class Actuator(Protocol):
         duration_ms: int = 400,
     ) -> ActionResult: ...
 
-    async def drag(
+    async def drag_and_drop(
         self,
         start: tuple[int, int],
         end: tuple[int, int],
@@ -98,7 +98,7 @@ class Actuator(Protocol):
         duration_ms: int = 400,
     ) -> ActionResult: ...
 
-    async def drop(
+    async def drop_after_hold(
         self,
         target: tuple[int, int] | None = None,
         duration_ms: int = 400,

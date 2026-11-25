@@ -529,7 +529,7 @@ def create_touch_api_app(
             return _validation_error_response(exc)
         try:
             act = await _get_actuator()
-            res = await act.drag(
+            res = await act.drag_and_drop(
                 start=(req.start_nx, req.start_ny),
                 end=(req.end_nx, req.end_ny),
                 hold_ms=req.hold_ms,
@@ -576,7 +576,7 @@ def create_touch_api_app(
                 if req.end_nx is not None and req.end_ny is not None
                 else None
             )
-            res = await act.drop(target=target, duration_ms=req.duration_ms)
+            res = await act.drop_after_hold(target=target, duration_ms=req.duration_ms)
             return _action_result_to_response(res)
         except (RuntimeError, OSError, ValueError, TimeoutError) as exc:
             return JSONResponse(

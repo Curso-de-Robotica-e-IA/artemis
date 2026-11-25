@@ -675,11 +675,11 @@ class FlashRunner:
         norm_coords = None
         norm_start = None
         norm_end = None
-        if name in ("click", "tap", "long_press", "input_text", "drop") and (
+        if name in ("click", "tap", "long_press", "input_text", "drop_after_hold", "drop") and (
             isinstance(resolved, (list, tuple)) and len(resolved) == 2
         ):
             return [int(resolved[0]), int(resolved[1])], None, None
-        if name in ("drag", "drag_and_hold"):
+        if name in ("drag_and_drop", "drag", "drag_and_hold"):
             if isinstance(resolved, (list, tuple)) and len(resolved) == 4:
                 norm_coords = [int(v) for v in resolved]
                 return norm_coords, norm_coords[:2], norm_coords[2:]
@@ -705,7 +705,7 @@ class FlashRunner:
                 if norm_coords:
                     norm_start = norm_coords[:2]
                     norm_end = norm_coords[2:]
-        elif name in ("click", "tap", "long_press", "input_text", "drop"):
+        elif name in ("click", "tap", "long_press", "input_text", "drop_after_hold", "drop"):
             target = args.get("target") or args.get("coordinates")
             if isinstance(target, (list, tuple)) and len(target) == 2:
                 norm_coords = list(target)

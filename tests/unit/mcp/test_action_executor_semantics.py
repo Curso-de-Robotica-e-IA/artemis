@@ -170,9 +170,9 @@ def test_index_resolution_uses_the_live_device_resolution():
         ("long_press", {"target": [500, 600]}, "long press"),
         ("input_text", {"text": "hi", "target": [500, 600]}, "input text"),
         ("swipe", {"start": [200, 600], "end": [800, 600]}, "swipe"),
-        ("drag", {"start": [200, 600], "end": [800, 600]}, "drag"),
+        ("drag_and_drop", {"start": [200, 600], "end": [800, 600]}, "drag and drop"),
         ("drag_and_hold", {"start": [200, 600], "end": [200, 500]}, "drag and hold"),
-        ("drop", {"target": [500, 100]}, "drop"),
+        ("drop_after_hold", {"target": [500, 100]}, "drop after hold"),
     ],
 )
 def test_coordinate_targets_without_description_are_refused(name, args, label):
@@ -352,15 +352,15 @@ def test_click_sequence_accepts_a_serialized_pair_list():
     assert wire_args["sequence"] == [[500, 600], [10, 10]]
 
 
-def test_drag_resolves_indices_and_coordinates():
+def test_drag_and_drop_resolves_indices_and_coordinates():
     executor = _make_executor()
     # Index start -> coordinate end (no target_description needed)
     wire_name, wire_args, _, recorded = executor._translate(
-        "drag",
+        "drag_and_drop",
         {"start": 1, "end": [800, 200], "hold_ms": 1800, "duration_ms": 600},
         _indexed_state(),
     )
-    assert wire_name == "drag"
+    assert wire_name == "drag_and_drop"
     assert wire_args == {
         "start": [500, 520],
         "end": [800, 200],
@@ -372,7 +372,7 @@ def test_drag_resolves_indices_and_coordinates():
 
     # Index start -> index end
     _, wire_args2, _, _ = executor._translate(
-        "drag",
+        "drag_and_drop",
         {"start": 1, "end": 2},
         _indexed_state(),
     )
@@ -385,7 +385,7 @@ def test_drag_resolves_indices_and_coordinates():
 
     # Coordinate start with target_description -> coordinate end
     _, wire_args3, _, recorded3 = executor._translate(
-        "drag",
+        "drag_and_drop",
         {
             "start": [200, 400],
             "end": [700, 400],
@@ -405,14 +405,16 @@ def test_drag_resolves_indices_and_coordinates():
 
     # Invalid hold_ms / duration_ms refused
     with pytest.raises(_ArgError, match="hold_ms"):
-        executor._translate("drag", {"start": 1, "end": [800, 200], "hold_ms": -1}, _indexed_state())
+        executor._translate(
+            "drag_and_drop", {"start": 1, "end": [800, 200], "hold_ms": -1}, _indexed_state()
+        )
     with pytest.raises(_ArgError, match="duration_ms"):
         executor._translate(
-            "drag", {"start": 1, "end": [800, 200], "duration_ms": 0}, _indexed_state()
+            "drag_and_drop", {"start": 1, "end": [800, 200], "duration_ms": 0}, _indexed_state()
         )
 
 
-def test_drag_and_hold_and_drop_translation():
+def test_drag_and_hold_and_drop_after_hold_translation():
     executor = _make_executor()
     wire_name, wire_args, _, recorded = executor._translate(
         "drag_and_hold",
@@ -430,17 +432,17 @@ def test_drag_and_hold_and_drop_translation():
 
     # Drop onto coordinate target with description
     drop_name, drop_args, _, drop_rec = executor._translate(
-        "drop",
+        "drop_after_hold",
         {"target": [500, 90], "target_description": "Remove zone", "duration_ms": 350},
         _state(),
     )
-    assert drop_name == "drop"
+    assert drop_name == "drop_after_hold"
     assert drop_args == {"target": [500, 90], "duration_ms": 350}
     assert drop_rec == {"target_description": "Remove zone"}
 
     # Drop onto indexed element
     _, drop_idx_args, _, drop_idx_rec = executor._translate(
-        "drop",
+        "drop_after_hold",
         {"target": 2},
         _indexed_state(),
     )
@@ -448,10 +450,33 @@ def test_drag_and_hold_and_drop_translation():
     assert drop_idx_rec["target_text"] == "Search settings"
 
     # Drop in place (no target -> no description required)
-    _, drop_in_place, _, drop_in_place_rec = executor._translate("drop", {}, _state())
+    _, drop_in_place, _, drop_in_place_rec = executor._translate("drop_after_hold", {}, _state())
     assert drop_in_place == {"target": None, "duration_ms": 400}
     assert drop_in_place_rec == {}
 
     # Invalid duration_ms refused
     with pytest.raises(_ArgError, match="duration_ms"):
-        executor._translate("drop", {"duration_ms": 0}, _state())
+        executor._translate("drop_after_hold", {"duration_ms": 0}, _state())
+
+
+def test_long_press_forwards_duration_spellings_and_validates():
+    executor = _make_executor()
+
+    _, args_dur, _, _ = executor._translate(
+        "long_press", {"target": 1, "duration": 2200}, _indexed_state()
+    )
+    assert args_dur == {"target": [500, 520], "duration_ms": 2200}
+
+    _, args_ms, _, _ = executor._translate(
+        "long_press", {"target": 1, "duration_ms": 3500}, _indexed_state()
+    )
+    assert args_ms == {"target": [500, 520], "duration_ms": 3500}
+
+    _, args_none, _, _ = executor._translate(
+        "long_press", {"target": 1, "duration": None}, _indexed_state()
+    )
+    assert args_none == {"target": [500, 520], "duration_ms": 1000}
+
+    with pytest.raises(_ArgError, match="duration_ms"):
+        executor._translate("long_press", {"target": 1, "duration": 0}, _indexed_state())
+

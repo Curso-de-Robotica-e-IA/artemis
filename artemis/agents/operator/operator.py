@@ -1198,7 +1198,15 @@ class OperatorNode:
 
         elif tool_name == "long_press":
             target = args.get("target")
-            duration = args.get("duration", 1000)
+            raw_duration = args.get("duration")
+            if raw_duration is None:
+                raw_duration = args.get("duration_ms")
+            try:
+                duration = int(1000 if raw_duration is None else raw_duration)
+            except (ValueError, TypeError):
+                return [], "Error: 'duration' must be an integer."
+            if duration < 1:
+                return [], f"Error: 'duration' must be >= 1, got {duration}."
             el, err = resolve_target_element(target, args.get("target_description"))
             if err:
                 return [], err
@@ -1347,7 +1355,10 @@ class OperatorNode:
                 }
             ], None
 
-        elif tool_name in ("drag", "drag_and_hold"):
+        elif tool_name in ("drag_and_drop", "drag", "drag_and_hold"):
+            canonical_drag_action = (
+                "drag_and_hold" if tool_name == "drag_and_hold" else "drag_and_drop"
+            )
             start_arg = args.get("start")
             end_arg = args.get("end")
             start_el, err = resolve_target_element(start_arg, args.get("target_description"))
@@ -1408,7 +1419,7 @@ class OperatorNode:
             nx2, ny2 = int(round(x2 * 1000.0 / width)), int(round(y2 * 1000.0 / height))
             return [
                 {
-                    "action": tool_name,
+                    "action": canonical_drag_action,
                     "coordinates": [x1, y1, x2, y2],
                     COORDINATE_SPACE_KEY: COORDINATE_SPACE_PIXEL,
                     "normalized_coordinates": [nx1, ny1, nx2, ny2],
@@ -1420,7 +1431,7 @@ class OperatorNode:
                 }
             ], None
 
-        elif tool_name == "drop":
+        elif tool_name in ("drop_after_hold", "drop"):
             target = args.get("target")
             raw_dur = args.get("duration_ms", args.get("duration", 400))
             try:
@@ -1431,7 +1442,7 @@ class OperatorNode:
                 return [], f"Error: 'duration_ms' must be >= 1, got {duration_ms}."
 
             if target is None:
-                return [{"action": "drop", "duration_ms": duration_ms}], None
+                return [{"action": "drop_after_hold", "duration_ms": duration_ms}], None
 
             el, err = resolve_target_element(target, args.get("target_description"))
             if err:
@@ -1442,7 +1453,7 @@ class OperatorNode:
             ]
             return [
                 {
-                    "action": "drop",
+                    "action": "drop_after_hold",
                     "coordinates": el["center"],
                     COORDINATE_SPACE_KEY: COORDINATE_SPACE_PIXEL,
                     "normalized_coordinates": norm_c,

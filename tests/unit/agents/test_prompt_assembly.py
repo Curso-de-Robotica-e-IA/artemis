@@ -33,9 +33,9 @@ OPERATOR_DEVICE_TOOLS = (
     "click",
     "input_text",
     "swipe",
-    "drag",
+    "drag_and_drop",
     "drag_and_hold",
-    "drop",
+    "drop_after_hold",
     "press_key",
     "manage_app",
     "wait_for_delay",
@@ -134,13 +134,13 @@ def test_reduced_enums_stay_well_formed():
         available_tools=OPERATOR_PROMPT_TOOLSET - {"manage_app", "wait_for_delay"},
     )
     assert (
-        "Physical device actions (`click`, `input_text`, `swipe`, `drag`, `drag_and_hold`,"
-        " `drop`, `press_key`, `long_press`)"
+        "Physical device actions (`click`, `input_text`, `swipe`, `drag_and_drop`,"
+        " `drag_and_hold`, `drop_after_hold`, `press_key`, `long_press`)"
         in out
     )
     assert (
-        "Turn-Ending Action (`click`, `swipe`, `drag`, `drag_and_hold`, `drop`,"
-        " `input_text`, `long_press`, or `press_key`)"
+        "Turn-Ending Action (`click`, `swipe`, `drag_and_drop`, `drag_and_hold`,"
+        " `drop_after_hold`, `input_text`, `long_press`, or `press_key`)"
         in out
     )
 
@@ -150,12 +150,14 @@ def test_full_set_enum_slots_render_verbatim():
     template = load_operator_prompts()["main_template"]
     out = apply_operator_prompt_contract(template)
     assert (
-        "Physical device actions (`click`, `input_text`, `swipe`, `drag`, `drag_and_hold`,"
-        " `drop`, `press_key`, `manage_app`, `wait_for_delay`, `long_press`)" in out
+        "Physical device actions (`click`, `input_text`, `swipe`, `drag_and_drop`,"
+        " `drag_and_hold`, `drop_after_hold`, `press_key`, `manage_app`, `wait_for_delay`,"
+        " `long_press`)" in out
     )
     assert (
-        "Turn-Ending Action (`click`, `swipe`, `drag`, `drag_and_hold`, `drop`,"
-        " `input_text`, `long_press`, `press_key`, `manage_app`, or `wait_for_delay`)" in out
+        "Turn-Ending Action (`click`, `swipe`, `drag_and_drop`, `drag_and_hold`,"
+        " `drop_after_hold`, `input_text`, `long_press`, `press_key`, `manage_app`,"
+        " or `wait_for_delay`)" in out
     )
     assert "Helper/Subagent tools (`ask_explorer`, `ask_diagnoser`, `video_analyzer`)" in out
     assert "ADB/task tools (`run_adb_command`, `manage_task`)" in out
@@ -178,7 +180,16 @@ def _render_flash(available_tools: frozenset[str]) -> str:
 
 
 FLASH_FULL = frozenset(
-    {"manage_app", "wait_for_delay", "click_sequence", "click", "swipe", "drag", "drag_and_hold", "drop"}
+    {
+        "manage_app",
+        "wait_for_delay",
+        "click_sequence",
+        "click",
+        "swipe",
+        "drag_and_drop",
+        "drag_and_hold",
+        "drop_after_hold",
+    }
 )
 
 
@@ -186,19 +197,20 @@ def test_flash_full_set_keeps_both_segments():
     out = _render_flash(FLASH_FULL)
     assert "**App Launching**" in out
     assert "**Timed Waiting & Transitions**" in out
-    assert "**Press-Hold-and-Drag (`drag`)**" in out
-    assert "**Drag-and-Hold then Drop (`drag_and_hold` + `drop`)**" in out
+    assert "**Drag-and-Drop (`drag_and_drop`)**" in out
+    assert "**Drag-and-Hold then Drop (`drag_and_hold` + `drop_after_hold`)**" in out
+    assert "**Gesture Choice & Cross-Fallback**" in out
     assert "{%" not in out
 
 
-def test_flash_without_drag_drops_drag_guidance():
-    out = _render_flash(FLASH_FULL - {"drag"})
-    assert "**Press-Hold-and-Drag" not in out
-    assert not _tool_refs(out, "drag")
+def test_flash_without_drag_and_drop_drops_drag_guidance():
+    out = _render_flash(FLASH_FULL - {"drag_and_drop"})
+    assert "**Drag-and-Drop" not in out
+    assert not _tool_refs(out, "drag_and_drop")
 
 
-def test_flash_without_drag_and_hold_or_drop_drops_hold_guidance():
-    for missing in ("drag_and_hold", "drop"):
+def test_flash_without_drag_and_hold_or_drop_after_hold_drops_hold_guidance():
+    for missing in ("drag_and_hold", "drop_after_hold"):
         out = _render_flash(FLASH_FULL - {missing})
         assert "**Drag-and-Hold then Drop" not in out
         assert not _tool_refs(out, missing)
@@ -217,3 +229,79 @@ def test_flash_without_wait_for_delay_drops_timed_waiting():
     assert "**Timed Waiting & Transitions**" not in out
     assert not _tool_refs(out, "wait_for_delay")
     assert "**State Drift & Progression Tolerance**" in out
+
+
+def test_single_touch_contract_present_and_cleanly_gated():
+    """Both Operator and Flash explicitly state single-touch limits (no pinch/multi-touch),
+    avoid claiming volume-key support via press_key, and never leak backticked tool refs
+    when swipe or long_press is removed."""
+    op_template = load_operator_prompts()["main_template"]
+    op_full = apply_operator_prompt_contract(op_template)
+    assert "**Single-Touch Only (No Pinch / Multi-Touch)**" in op_full
+    assert "`swipe` NEVER performs a pinch gesture" in op_full
+    assert "volume keys via `press_key`" not in op_full
+    assert "**Long Press Releases at the End (`long_press`)**" in op_full
+
+    op_no_swipe = apply_operator_prompt_contract(
+        op_template, available_tools=OPERATOR_PROMPT_TOOLSET - {"swipe"}
+    )
+    assert "**Single-Touch Only (No Pinch / Multi-Touch)**" in op_no_swipe
+    assert not _tool_refs(op_no_swipe, "swipe")
+
+    op_no_lp = apply_operator_prompt_contract(
+        op_template, available_tools=OPERATOR_PROMPT_TOOLSET - {"long_press"}
+    )
+    assert "**Long Press Releases at the End" not in op_no_lp
+    assert not _tool_refs(op_no_lp, "long_press")
+
+    flash_full = _render_flash(FLASH_FULL | {"long_press"})
+    assert "**Single-Touch Only (No Pinch / Multi-Touch)**" in flash_full
+    assert "`swipe` NEVER performs a pinch gesture" in flash_full
+    assert "volume keys via `press_key`" not in flash_full
+    assert "**Long Press Releases at the End (`long_press`)**" in flash_full
+
+    flash_no_swipe = _render_flash((FLASH_FULL | {"long_press"}) - {"swipe"})
+    assert "**Single-Touch Only (No Pinch / Multi-Touch)**" in flash_no_swipe
+    assert not _tool_refs(flash_no_swipe, "swipe")
+
+    flash_no_lp = _render_flash(FLASH_FULL - {"long_press"})
+    assert "**Long Press Releases at the End" not in flash_no_lp
+    assert not _tool_refs(flash_no_lp, "long_press")
+
+
+def test_gesture_disambiguation_and_cross_fallback_cleanly_gated():
+    """Gesture selection and bidirectional swipe/drag fallback render in both
+    Operator and Flash and leave zero dangling refs when any gesture tool is absent."""
+    op_template = load_operator_prompts()["main_template"]
+    op_full = apply_operator_prompt_contract(op_template)
+    assert "**Gesture Selection & Cross-Fallback**" in op_full
+    assert "`drag_and_drop`" in op_full
+    assert "`drag_and_hold`" in op_full
+    assert "`drop_after_hold`" in op_full
+    assert "`hold_ms=0`" in op_full
+
+    for missing in ("swipe", "drag_and_drop", "drag_and_hold", "drop_after_hold", "long_press"):
+        op_pruned = apply_operator_prompt_contract(
+            op_template, available_tools=OPERATOR_PROMPT_TOOLSET - {missing}
+        )
+        assert not _tool_refs(op_pruned, missing), f"leaked '{missing}' in operator prompt"
+
+    op_no_drag = apply_operator_prompt_contract(
+        op_template,
+        available_tools=OPERATOR_PROMPT_TOOLSET
+        - {"drag_and_drop", "drag_and_hold", "drop_after_hold"},
+    )
+    assert "**Gesture Selection & Cross-Fallback**" not in op_no_drag
+
+    flash_full = _render_flash(FLASH_FULL | {"long_press"})
+    assert "**Gesture Choice & Cross-Fallback**" in flash_full
+    assert "`drag_and_drop`" in flash_full
+    assert "`drag_and_hold`" in flash_full
+    assert "`drop_after_hold`" in flash_full
+    assert "`hold_ms=0`" in flash_full
+
+    for missing in ("swipe", "drag_and_drop", "drag_and_hold", "drop_after_hold"):
+        flash_pruned = _render_flash((FLASH_FULL | {"long_press"}) - {missing})
+        assert not _tool_refs(flash_pruned, missing), f"leaked '{missing}' in flash prompt"
+
+

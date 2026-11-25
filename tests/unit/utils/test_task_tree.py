@@ -829,7 +829,7 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
     assert (
         format_action_intent(
             {
-                "action": "drag",
+                "action": "drag_and_drop",
                 "coordinates": [200, 400, 800, 400],
                 "hold_ms": 1500,
                 "duration_ms": 500,
@@ -841,7 +841,7 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
     assert (
         format_action_clean(
             {
-                "action": "drag",
+                "action": "drag_and_drop",
                 "args": {"start": 1, "end": [800, 400], "hold_ms": 1500, "duration_ms": 500},
                 "normalized_start_coordinates": [500, 520],
                 "normalized_end_coordinates": [800, 400],
@@ -865,7 +865,7 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
     assert (
         format_action_intent(
             {
-                "action": "drop",
+                "action": "drop_after_hold",
                 "coordinates": [500, 90],
                 "target_description": "Remove zone",
                 "duration_ms": 350,
@@ -873,7 +873,10 @@ def test_action_intent_phrase_and_incident_line_use_intent_form():
         )
         == "drop onto 'Remove zone' (self-described) at [500, 90] over 350ms"
     )
-    assert format_action_intent({"action": "drop", "duration_ms": 400}) == "drop in place over 400ms"
+    assert (
+        format_action_intent({"action": "drop_after_hold", "duration_ms": 400})
+        == "drop in place over 400ms"
+    )
     assert (
         format_action_intent(
             {

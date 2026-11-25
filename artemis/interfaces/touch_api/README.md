@@ -263,7 +263,9 @@ Executa uma sequência ordenada de toques em diferentes coordenadas normalizadas
 
 ### 3.5. `POST /long-press` — Toque Longo (`LongPressRequest`)
 
-Pressiona e mantém o toque na coordenada `(nx, ny)` pelo tempo especificado em `duration_ms`.
+Pressiona e mantém o toque na coordenada `(nx, ny)` pelo tempo especificado em `duration_ms` e **solta o toque ao final** antes de responder (execução **síncrona**, para que o screenshot pós-ação do ARTEMIS capture o estado resultante *após* o término do pressionamento). O cliente `HttpTouchActuator` ajusta automaticamente o timeout da requisição (`max(ARTEMIS_TOUCH_API_TIMEOUT_S, duration_ms / 1000 + 10)`) para suportar pressionamentos longos sem timeout prematuro.
+
+> **Observação:** caso precise observar a tela *enquanto* o dedo permanece pressionado (antes de soltar), utilize o par `POST /drag-hold` + `POST /drop` (tools `drag_and_hold` + `drop_after_hold`).
 
 - **Método:** `POST`
 - **Rota:** `/long-press`
@@ -335,9 +337,9 @@ Executa um gesto linear de arraste/deslize do ponto inicial `(start_nx, start_ny
 
 ---
 
-### 3.7. `POST /drag` — Pressionar, Segurar e Arrastar (`DragRequest`)
+### 3.7. `POST /drag` — Pressionar, Arrastar e Soltar (`DragRequest`, tool `drag_and_drop`)
 
-Pressiona e mantém o toque na coordenada inicial `(start_nx, start_ny)` durante `hold_ms` milissegundos e, **sem soltar o dedo**, arrasta continuamente até `(end_nx, end_ny)` em `duration_ms` milissegundos (comportamento real de *click-and-drag* / *drag-and-drop*, como mover ícones na tela inicial, arrastar widgets ou reordenar listas).
+Pressiona na coordenada inicial `(start_nx, start_ny)` durante o atraso inicial `hold_ms` milissegundos, arrasta continuamente até `(end_nx, end_ny)` em `duration_ms` milissegundos e **solta o toque (`UP`)** em um único gesto atômico (*drag-and-drop*, acionado pela tool `drag_and_drop` do agente, como mover ícones na tela inicial, arrastar widgets ou reordenar listas).
 
 - **Método:** `POST`
 - **Rota:** `/drag`
@@ -346,12 +348,12 @@ Pressiona e mantém o toque na coordenada inicial `(start_nx, start_ny)` durante
 
 | Campo | Tipo | Obrigatório | Padrão | Restrições | Descrição |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `start_nx` | `int` | Sim | — | `0 <= start_nx <= 1000` | Coordenada X inicial normalizada (onde segurar). |
-| `start_ny` | `int` | Sim | — | `0 <= start_ny <= 1000` | Coordenada Y inicial normalizada (onde segurar). |
+| `start_nx` | `int` | Sim | — | `0 <= start_nx <= 1000` | Coordenada X inicial normalizada (onde pressionar). |
+| `start_ny` | `int` | Sim | — | `0 <= start_ny <= 1000` | Coordenada Y inicial normalizada (onde pressionar). |
 | `end_nx` | `int` | Sim | — | `0 <= end_nx <= 1000` | Coordenada X final normalizada (onde soltar). |
 | `end_ny` | `int` | Sim | — | `0 <= end_ny <= 1000` | Coordenada Y final normalizada (onde soltar). |
-| `hold_ms` | `int` | Não | `1000` | `>= 0` | Tempo em milissegundos segurando no ponto inicial antes de iniciar o movimento. |
-| `duration_ms` | `int` | Não | `400` | `>= 1` | Duração do movimento de arraste em milissegundos após o tempo de espera inicial. |
+| `hold_ms` | `int` | Não | `1000` | `>= 0` | Atraso inicial de pressão em milissegundos no ponto inicial antes de iniciar o movimento. |
+| `duration_ms` | `int` | Não | `400` | `>= 1` | Duração do movimento de arraste em milissegundos após o atraso inicial. |
 
 **Exemplo de Request:**
 ```json
@@ -369,16 +371,16 @@ Pressiona e mantém o toque na coordenada inicial `(start_nx, start_ny)` durante
 ```json
 {
   "ok": true,
-  "message": "Dragged from [250, 400] to [750, 400] (normalized, held 1500ms).",
+  "message": "Dragged and dropped from [250, 400] to [750, 400] (normalized, initial press 1500ms).",
   "error": null
 }
 ```
 
 ---
 
-### 3.8. `POST /drag-hold` — Segurar e Arrastar Sem Soltar (`DragHoldRequest`)
+### 3.8. `POST /drag-hold` — Arrastar e Manter Pressionado Sem Soltar (`DragHoldRequest`, tool `drag_and_hold`)
 
-Pressiona e mantém o toque em `(start_nx, start_ny)` por `hold_ms`, arrasta continuamente até `(end_nx, end_ny)` em `duration_ms` e **mantém o dedo/toque pressionado** (não envia `UP`). Ideal para revelar opções temporárias da interface que só aparecem durante o arraste (como **"Remover"** ou **"Desinstalar"** na tela inicial) antes de decidir onde soltar com `POST /drop`. Se chamado novamente enquanto já houver um toque ativo segurado, continua movendo a partir da posição atual sem enviar um novo `DOWN`.
+Pressiona em `(start_nx, start_ny)` pelo atraso inicial `hold_ms`, arrasta continuamente até `(end_nx, end_ny)` em `duration_ms` e **mantém o dedo/toque pressionado** (não envia `UP`). Ideal para revelar opções temporárias ou controles contínuos que só existem durante o toque ativo (como **"Remover"** / **"Desinstalar"** ou slider contínuo de zoom na câmera) antes de finalizar com `POST /drop` (tool `drop_after_hold`). Se chamado novamente enquanto já houver um toque ativo segurado, continua movendo a partir da posição atual sem enviar um novo `DOWN`.
 
 - **Método:** `POST`
 - **Rota:** `/drag-hold`
@@ -387,11 +389,11 @@ Pressiona e mantém o toque em `(start_nx, start_ny)` por `hold_ms`, arrasta con
 
 | Campo | Tipo | Obrigatório | Padrão | Restrições | Descrição |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `start_nx` | `int` | Sim | — | `0 <= start_nx <= 1000` | Coordenada X inicial normalizada (onde segurar). |
-| `start_ny` | `int` | Sim | — | `0 <= start_ny <= 1000` | Coordenada Y inicial normalizada (onde segurar). |
+| `start_nx` | `int` | Sim | — | `0 <= start_nx <= 1000` | Coordenada X inicial normalizada (onde pressionar). |
+| `start_ny` | `int` | Sim | — | `0 <= start_ny <= 1000` | Coordenada Y inicial normalizada (onde pressionar). |
 | `end_nx` | `int` | Sim | — | `0 <= end_nx <= 1000` | Coordenada X intermediária normalizada onde o toque permanecerá pressionado. |
 | `end_ny` | `int` | Sim | — | `0 <= end_ny <= 1000` | Coordenada Y intermediária normalizada onde o toque permanecerá pressionado. |
-| `hold_ms` | `int` | Não | `1000` | `>= 0` | Tempo em milissegundos segurando antes do movimento. |
+| `hold_ms` | `int` | Não | `1000` | `>= 0` | Atraso inicial de pressão em milissegundos antes do movimento. |
 | `duration_ms` | `int` | Não | `400` | `>= 1` | Duração do movimento até `(end_nx, end_ny)` em milissegundos. |
 
 **Exemplo de Request:**
@@ -410,16 +412,16 @@ Pressiona e mantém o toque em `(start_nx, start_ny)` por `hold_ms`, arrasta con
 ```json
 {
   "ok": true,
-  "message": "Dragged from [250, 600] to [250, 500] and holding (normalized, held 1000ms, not released).",
+  "message": "Dragged from [250, 600] to [250, 500] and holding (normalized, initial press 1000ms, not released).",
   "error": null
 }
 ```
 
 ---
 
-### 3.9. `POST /drop` — Mover Toque Ativo e Soltar (`DropRequest`)
+### 3.9. `POST /drop` — Mover Toque Ativo e Soltar (`DropRequest`, tool `drop_after_hold`)
 
-Move um toque atualmente segurado (iniciado por `POST /drag-hold`) até a coordenada final opcional `(end_nx, end_ny)` durante `duration_ms` e **libera o toque (`UP`)**. Aceita corpo vazio `{}` (ou sem `end_nx`/`end_ny`) para soltar no ponto em que já está segurando.
+Move um toque atualmente segurado (iniciado por `POST /drag-hold`) até a coordenada final opcional `(end_nx, end_ny)` durante `duration_ms` e **libera o toque (`UP`)**. Aceita corpo vazio `{}` (ou sem `end_nx`/`end_ny`) para soltar no ponto em que já está segurando. Acionado pela tool `drop_after_hold` do agente.
 
 - **Método:** `POST`
 - **Rota:** `/drop`

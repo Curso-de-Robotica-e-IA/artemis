@@ -35,9 +35,11 @@ OPERATOR_ACTION_TO_CANONICAL: dict[str, str] = {
     "tap": "click",
     "long_press_on": "long_press",
     "swipe": "swipe",
-    "drag": "drag",
+    "drag_and_drop": "drag_and_drop",
+    "drag": "drag_and_drop",
     "drag_and_hold": "drag_and_hold",
-    "drop": "drop",
+    "drop_after_hold": "drop_after_hold",
+    "drop": "drop_after_hold",
     "focus_and_input_text": "input_text",
     "focus_and_clear_text": "focus_and_clear_text",
     "erase_one_char": "erase_one_char",
@@ -104,9 +106,12 @@ def to_canonical_call(
         pair = _norm_pair(action_item, dims)
         if pair is None:
             raise ValueError("Invalid coords")
+        raw_dur = action_item.get("duration_ms")
+        if raw_dur is None:
+            raw_dur = action_item.get("duration")
         return "long_press", {
             "target": [pair[0], pair[1]],
-            "duration_ms": action_item.get("duration", 1000),
+            "duration_ms": int(1000 if raw_dur is None else raw_dur),
         }
 
     if verb == "swipe":
@@ -129,7 +134,7 @@ def to_canonical_call(
             "duration_ms": action_item.get("duration", 400),
         }
 
-    if verb in ("drag", "drag_and_hold"):
+    if verb in ("drag_and_drop", "drag", "drag_and_hold"):
         coords = action_item.get("normalized_coordinates")
         if not (isinstance(coords, (list, tuple)) and len(coords) == 4):
             pixel = action_item.get("coordinates")
@@ -143,16 +148,16 @@ def to_canonical_call(
                 ]
             else:
                 raise ValueError("Invalid coords")
-        return verb, {
+        return canonical, {
             "start": [int(coords[0]), int(coords[1])],
             "end": [int(coords[2]), int(coords[3])],
             "hold_ms": action_item.get("hold_ms", action_item.get("hold_duration", 1000)),
             "duration_ms": action_item.get("duration_ms", action_item.get("duration", 400)),
         }
 
-    if verb == "drop":
+    if verb in ("drop_after_hold", "drop"):
         pair = _norm_pair(action_item, dims)
-        return "drop", {
+        return "drop_after_hold", {
             "target": [pair[0], pair[1]] if pair is not None else None,
             "duration_ms": action_item.get("duration_ms", action_item.get("duration", 400)),
         }

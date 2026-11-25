@@ -186,10 +186,12 @@ class HttpTouchActuator(AdbActuator):
     ) -> ActionResult:
         if err := await self._ensure_device_configured():
             return err
+        effective_timeout = max(self.timeout_s, max(0, duration_ms) / 1000.0 + 10.0)
         res = await self._post(
             "/long-press",
             {"nx": nx, "ny": ny, "duration_ms": duration_ms},
             action="long_press",
+            timeout_s=effective_timeout,
         )
         if res.ok:
             object.__setattr__(res, "normalized_coordinates", [int(nx), int(ny)])
@@ -224,7 +226,7 @@ class HttpTouchActuator(AdbActuator):
             object.__setattr__(res, "duration_ms", duration_ms)
         return res
 
-    async def drag(
+    async def drag_and_drop(
         self,
         start: tuple[int, int],
         end: tuple[int, int],
@@ -233,7 +235,9 @@ class HttpTouchActuator(AdbActuator):
     ) -> ActionResult:
         if err := await self._ensure_device_configured():
             return err
-        effective_timeout = max(self.timeout_s, (max(0, hold_ms) + max(0, duration_ms)) / 1000.0 + 10.0)
+        effective_timeout = max(
+            self.timeout_s, (max(0, hold_ms) + max(0, duration_ms)) / 1000.0 + 10.0
+        )
         res = await self._post(
             "/drag",
             {
@@ -244,7 +248,7 @@ class HttpTouchActuator(AdbActuator):
                 "hold_ms": hold_ms,
                 "duration_ms": duration_ms,
             },
-            action="drag",
+            action="drag_and_drop",
             timeout_s=effective_timeout,
         )
         if res.ok:
@@ -290,7 +294,7 @@ class HttpTouchActuator(AdbActuator):
             object.__setattr__(res, "duration_ms", duration_ms)
         return res
 
-    async def drop(
+    async def drop_after_hold(
         self,
         target: tuple[int, int] | None = None,
         duration_ms: int = 400,
@@ -305,7 +309,7 @@ class HttpTouchActuator(AdbActuator):
         res = await self._post(
             "/drop",
             payload,
-            action="drop",
+            action="drop_after_hold",
             timeout_s=effective_timeout,
         )
         if res.ok:

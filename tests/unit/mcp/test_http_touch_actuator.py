@@ -162,11 +162,13 @@ async def test_touch_routes_delegation(
             assert res_sw.ok
             assert "[500, 800] to [500, 200]" in res_sw.message
 
-            # 5. Drag (/drag)
-            res_drag = await actuator.drag((250, 400), (750, 400), hold_ms=1500, duration_ms=500)
+            # 5. Drag-and-drop (/drag)
+            res_drag = await actuator.drag_and_drop(
+                (250, 400), (750, 400), hold_ms=1500, duration_ms=500
+            )
             assert res_drag.ok
             assert "[250, 400] to [750, 400]" in res_drag.message
-            assert "held 1500ms" in res_drag.message
+            assert "1500ms" in res_drag.message
             assert res_drag.normalized_coordinates == [250, 400, 750, 400]
             assert res_drag.duration_ms == 500
             assert mock_underlying_actuator.action_history[-1] == {
@@ -186,7 +188,7 @@ async def test_touch_routes_delegation(
             assert res_dh.normalized_coordinates == [250, 600, 250, 500]
             assert mock_underlying_actuator.action_history[-1]["action"] == "drag_and_hold"
 
-            res_drop = await actuator.drop((500, 100), duration_ms=350)
+            res_drop = await actuator.drop_after_hold((500, 100), duration_ms=350)
             assert res_drop.ok
             assert "[500, 100]" in res_drop.message
             assert res_drop.normalized_coordinates == [500, 100]
@@ -202,7 +204,7 @@ async def test_touch_routes_delegation(
                 (250, 600), (250, 500), hold_ms=500, duration_ms=200
             )
             assert res_dh2.ok
-            res_drop_in_place = await actuator.drop()
+            res_drop_in_place = await actuator.drop_after_hold()
             assert res_drop_in_place.ok
             assert "in place" in res_drop_in_place.message
 
@@ -449,3 +451,40 @@ async def test_query_adb_screen_size_landscape_orientation():
         width, height = await _query_adb_screen_size("RXCX909ZELT")
         assert (width, height) == (2340, 1080)
         assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_long_press_forwards_duration_and_scales_http_timeout(
+    test_context: ArtemisContext,
+    touch_app,
+    mock_underlying_actuator: MockActuator,
+):
+    """POST /long-press must forward duration_ms and scale client timeout for long holds."""
+    async with _make_client(touch_app) as http_client:
+        with patch(
+            "artemis.interfaces.touch_api.server._query_adb_screen_size",
+            new=AsyncMock(return_value=(1080, 2400)),
+        ):
+            # Validation rejects non-positive duration_ms
+            bad_resp = await http_client.post(
+                "/long-press", json={"nx": 300, "ny": 400, "duration_ms": 0}
+            )
+            assert bad_resp.status_code == 422
+            assert bad_resp.json()["ok"] is False
+
+            actuator = HttpTouchActuator(test_context, client=http_client, timeout_s=30.0)
+            with patch.object(http_client, "post", wraps=http_client.post) as spy_post:
+                res = await actuator.long_press(300, 400, duration_ms=45000)
+                assert res.ok
+                assert res.duration_ms == 45000
+                assert mock_underlying_actuator.action_history[-1] == {
+                    "action": "long_press",
+                    "x": 324,
+                    "y": 960,
+                    "duration_ms": 45000,
+                }
+                lp_call = spy_post.await_args_list[-1]
+                assert lp_call.args[0].endswith("/long-press")
+                assert lp_call.kwargs["json"] == {"nx": 300, "ny": 400, "duration_ms": 45000}
+                assert lp_call.kwargs["timeout"] == 55.0
+
