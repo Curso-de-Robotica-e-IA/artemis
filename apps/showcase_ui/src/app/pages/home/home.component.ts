@@ -177,7 +177,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   public proTargets = computed<ProModelTargetState[]>(
     () => this.modelConfigEnv()?.pro_targets ?? []
   );
-  public showProModeConfig = signal<boolean>(true);
+  public showProModeConfig = signal<boolean>(false);
   public proTargetDrafts = signal<Record<ProModelTargetKey, TargetDraftState>>({
     object_detector: createEmptyTargetDraft(),
     hopper: createEmptyTargetDraft(),

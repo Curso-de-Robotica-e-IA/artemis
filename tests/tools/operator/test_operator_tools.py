@@ -24,7 +24,7 @@ async def test_operator_shell_tools():
     sample_args = {
         "click": {"target": 1, "times": 1, "delay_ms": 100},
         "input_text": {"text": "hello", "target": 1, "clear_exist": True},
-        "swipe": {"gesture": "up"},
+        "swipe": {"direction": "up"},
         "drag_and_drop": {"start": 1, "end": [500, 200], "hold_ms": 1000, "duration_ms": 400},
         "drag_and_hold": {"start": 1, "end": [500, 400], "hold_ms": 1000, "duration_ms": 400},
         "drop_after_hold": {

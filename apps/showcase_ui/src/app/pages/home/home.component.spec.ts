@@ -220,6 +220,14 @@ describe('HomeComponent Screenshot Resolution Card', () => {
     expect(fixture.nativeElement.querySelector('.model-choice-cards-row')).toBeNull();
     expect(fixture.nativeElement.querySelector('.custom-config-inspector')).toBeTruthy();
 
+    // Pro Mode Component Models section starts collapsed by default and expands on toggle
+    expect(component.showProModeConfig()).toBeFalse();
+    expect(fixture.nativeElement.querySelector('.pro-targets-list')).toBeNull();
+    component.toggleProModeConfig();
+    fixture.detectChanges();
+    expect(component.showProModeConfig()).toBeTrue();
+    expect(fixture.nativeElement.querySelector('.pro-targets-list')).toBeTruthy();
+
     // Auto-fetched default provider ('google') and Pro Mode target provider ('openai')
     const googleModelsReq = http.expectOne(
       r => r.url === '/api/system/custom-models' && r.params.get('provider') === 'google'

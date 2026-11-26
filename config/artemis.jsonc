@@ -8,11 +8,11 @@
   // ------------------------------------------------------------------------------
   "default": {
     "provider": "ollama",
-    "model": "gemma4:31b",
+    "model": "gemma4-max:31b",
     "thinking_level": "medium",
     "fallback": {
       "provider": "ollama",
-      "model": "gemma4:31b",
+      "model": "gemma4-max:31b",
       "thinking_level": "medium"
     }
   },
@@ -180,7 +180,7 @@
     // 🌐 4.3 Shared Capabilities & Global Overrides
     // ==========================================================================
     // 🖼️ Screenshot Resolution: Maximum pixel dimension (longest side) sent to vision models (0 = original/unscaled)
-    "image_max_dim": 1280,
+    "image_max_dim": 0,
     // Shared step memory and history compression
     // Transcript ledger + layered compression for the Pro operator.
     "memory": {

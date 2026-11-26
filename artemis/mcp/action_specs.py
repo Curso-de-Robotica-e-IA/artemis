@@ -406,22 +406,18 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="long_press",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press and hold in place for duration ms, then RELEASE the finger"
+                "[ACTION] Press in place for duration ms, then RELEASE the finger"
                 " (DOWN -> WAIT -> UP).\n"
                 "\n"
-                "• Use for: opening context menus, entering multi-select mode, showing"
-                " app-icon shortcuts, or opening the home-screen customization menu (on an"
-                " empty wallpaper area).\n"
+                "• Use for: context menus, multi-select mode, app-icon shortcuts, or"
+                " home-screen wallpaper menu.\n"
                 "• Do NOT use for:\n"
-                "  - Starting a drag, moving/resizing/removing icons or widgets, or holding"
-                " before drop_after_hold: long_press ALWAYS releases the finger at the end!"
-                " Call drag_and_drop or drag_and_hold + drop_after_hold directly instead"
-                " (they already include the initial press delay hold_ms).\n"
-                "  - Opening a transient control (such as a camera zoom dial) that"
-                " auto-dismisses before the next turn: use a continuous drag_and_hold +"
-                " drop_after_hold (or drag_and_drop) from the trigger instead.\n"
-                "  - Never repeat long_press on the same target just changing duration if"
-                " 1-2 attempts show no progress — switch to a different tool or target."
+                "  - Starting a drag or before drop_after_hold (long_press ALWAYS releases"
+                " at the end — call drag_and_drop or drag_and_hold directly instead).\n"
+                "  - Transient controls that close before the next turn (use continuous"
+                " drag_and_hold + drop_after_hold from the trigger).\n"
+                "  - Repeating on the same target just changing duration: stop after 1-2"
+                " attempts with no progress and switch tools."
             ),
             params=(
                 ParamSpec(
@@ -525,26 +521,22 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="swipe",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Perform an immediate single-finger swipe gesture"
-                " (DOWN -> MOVE -> UP, with NO initial press delay).\n"
+                "[ACTION] Immediate single-finger swipe (DOWN -> MOVE -> UP, NO initial"
+                " press delay).\n"
                 "\n"
-                "• Mode 1 — Directional Scroll (pass 'direction', optional 'target'):"
-                " Standard list/page scrolling ('up' reveals content below, 'down' reveals"
-                " content above, 'left'/'right' switch pages/tabs). Automatically computes"
-                " safe vectors with ~40% visual overlap.\n"
-                "• Mode 2 — Coordinate Swipe (pass 'start', 'end', and 'target_description'):"
-                " Immediate local motions with NO press delay — adjusting an already-active"
-                " slider/SeekBar (volume, brightness, progress bar), pull-to-refresh, or"
-                " scrolling a custom container. Swipe slightly PAST the desired slider"
-                " value (or to the extreme edge for 0%/100%). Do NOT mix Mode 1 and Mode 2.\n"
-                "• Do NOT use swipe for:\n"
-                "  - Pinch-to-zoom or two-finger rotation: strictly single-touch! For zoom,"
-                " use single-touch UI controls (zoom presets like '1x'/'2x', holding or"
-                " dragging a zoom control, '+'/'-' buttons, or double-tap).\n"
-                "  - Drag-and-drop, icon/list reordering, or controls requiring an initial"
-                " press delay: if swipe has no effect, switch to drag_and_drop (known"
-                " visible destination), drag_and_hold + drop_after_hold (control/drop zone"
-                " stays open only while pressed), or long_press."
+                "• Mode 1 (pass 'direction', optional 'target'): list/page scrolling"
+                " ('up' reveals below, 'down' reveals above, 'left'/'right' switch"
+                " pages/tabs).\n"
+                "• Mode 2 (pass 'start', 'end', 'target_description'): local immediate"
+                " motion with NO press delay (already-active sliders/SeekBars,"
+                " pull-to-refresh, custom scroll containers). Never mix Mode 1 and Mode 2.\n"
+                "• Do NOT use for:\n"
+                "  - Pinch-to-zoom or 2-finger rotation (single-touch only — use UI zoom"
+                " controls like '1x'/'2x', dragging a zoom control, '+'/'-', or"
+                " double-tap).\n"
+                "  - Drag-and-drop or controls needing an initial press delay (if swipe"
+                " fails, switch to drag_and_drop, drag_and_hold + drop_after_hold, or"
+                " long_press)."
             ),
             params=(
                 ParamSpec(
@@ -582,14 +574,6 @@ _SPECS: tuple[ActionSpec, ...] = (
                     default=None,
                 ),
                 ParamSpec(
-                    "gesture",
-                    Direction | list[int] | None,
-                    "Legacy alias (prefer 'direction' or 'start'+'end'): direction string"
-                    " OR 4-integer list [start_x, start_y, end_x, end_y].",
-                    required=False,
-                    default=None,
-                ),
-                ParamSpec(
                     "target_description",
                     str | None,
                     "What is being swiped, in a few words (e.g. 'brightness slider"
@@ -619,32 +603,30 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
         differences=(
             "target_description: recorded, never sent to the wire; required for"
-            " coordinate gestures only. gesture: the legacy combined"
-            " direction-or-coordinates parameter (executors also accept the older"
-            " `action` spelling). Smart directional swipes exist only in the agent"
-            " dialect; the wire takes a resolved start/end pair, and direction"
-            " resolution happens client-side against the live UI tree."
+            " coordinate gestures only. Legacy `gesture` / `action` keys remain"
+            " accepted by parsers for backward compatibility but are omitted from"
+            " agent schemas to avoid parameter confusion. Smart directional swipes"
+            " exist only in the agent dialect; the wire takes a resolved start/end"
+            " pair, and direction resolution happens client-side against the live UI"
+            " tree."
         ),
     ),
     ActionSpec(
         name="drag_and_drop",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press (initial press delay hold_ms), move an item from start to"
-                " end, and RELEASE in one continuous turn (DOWN -> DELAY -> MOVE -> UP).\n"
+                "[ACTION] Press (delay hold_ms), drag from start to end, and RELEASE in"
+                " 1 turn (DOWN -> DELAY -> MOVE -> UP).\n"
                 "\n"
-                "• Use for: moving icons/widgets, drag-and-drop between containers, or"
-                " reordering list items when the final drop destination is ALREADY visible."
-                " Do NOT call long_press before this tool — hold_ms is already built in.\n"
+                "• Use for: moving icons/widgets, drag-and-drop, or list reordering when"
+                " the final destination is ALREADY visible. Never call long_press first"
+                " (hold_ms is built in).\n"
                 "• Do NOT use for:\n"
-                "  - Drop zones or continuous controls ('Remove'/'Uninstall' bar, folder"
-                " creation, edge page switching, continuous camera zoom slider) that ONLY"
-                " appear or need live visual adjustment while pressed: use drag_and_hold +"
-                " drop_after_hold instead (drag_and_drop releases at the end and dismisses"
-                " transient controls).\n"
-                "  - Immediate scrolling or sliders without press delay: if hold_ms opens"
-                " a context/selection menu instead of moving, switch to swipe (or retry"
-                " with hold_ms=0)."
+                "  - Drop zones or continuous controls ('Remove'/'Uninstall', folder"
+                " creation, camera zoom slider) that vanish on release — use"
+                " drag_and_hold + drop_after_hold instead.\n"
+                "  - Immediate scrolling/sliders (if hold_ms opens a context menu instead"
+                " of moving, switch to swipe or hold_ms=0)."
             ),
             params=(
                 ParamSpec(
@@ -710,21 +692,18 @@ _SPECS: tuple[ActionSpec, ...] = (
         name="drag_and_hold",
         operator=OperatorDialect(
             description=(
-                "[ACTION] Press (initial press delay hold_ms) and drag from start to end"
-                " WITHOUT releasing the finger (DOWN -> DELAY -> MOVE; finger stays"
-                " pressed across turns until drop_after_hold is called).\n"
+                "[ACTION] Press (delay hold_ms) and drag from start to end WITHOUT"
+                " releasing (DOWN -> DELAY -> MOVE; finger stays pressed across turns).\n"
                 "\n"
-                "• Use for: targets or continuous controls that ONLY appear or need live"
-                " visual feedback while the finger stays pressed — 'Remove'/'Uninstall'"
-                " bars, edge page switching, folder creation, or pressing and sliding a"
-                " camera '1x'/'2x' zoom control to adjust a continuous zoom slider. Do NOT"
-                " call long_press first — hold_ms is already built in.\n"
-                "• Multi-turn rule: the next screenshot is captured while pressed; call"
-                " drag_and_hold again to keep adjusting without lifting, and ALWAYS finish"
-                " with drop_after_hold.\n"
-                "• Do NOT use for: destinations already visible that can finish in 1 turn"
-                " (use drag_and_drop), or immediate slides/scrolls (if hold_ms opens a"
-                " context menu instead of moving, switch to swipe or retry with hold_ms=0)."
+                "• REQUIRED: ALWAYS finish by calling drop_after_hold (omit target to"
+                " lock/release in place) — NEVER call click while holding. Calling"
+                " drag_and_hold again continues moving from the currently held point to"
+                " the new end.\n"
+                "• Use for: 'Remove'/'Uninstall' zones, edge page switching, or"
+                " continuous controls (camera '1x'/'2x' zoom slider) that need live"
+                " visual feedback while pressed. Never call long_press first.\n"
+                "• Do NOT use for: 1-turn known destinations (drag_and_drop) or immediate"
+                " scrolls (swipe / hold_ms=0)."
             ),
             params=(
                 ParamSpec(
