@@ -42,6 +42,7 @@ from artemis.tools.tool_wrapper import (
     tool_result_messages,
 )
 from artemis.memory.context_policy import build_history_for
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.notes import read_note_content
 from artemis.utils.task_tree import get_active_subgoal_hashes
 from third_party.mobile_use.utils.logger import get_logger
@@ -271,10 +272,11 @@ def _initial_messages(
     raw_data = graph_output.operator_raw_data
     screenshot_b64 = raw_data.get("screenshot_b64") if raw_data else None
     if screenshot_b64:
+        encoded_screenshot = encode_image_for_llm(screenshot_b64, caller="outputter")
         content.append(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot}"},
             }
         )
 

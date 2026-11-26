@@ -52,6 +52,7 @@ from artemis.utils.plan_grammar import (
 )
 from artemis.memory.context_policy import build_history_for
 from artemis.utils.cython_compat import CyFunctionDetector
+from artemis.utils.image_scaling import encode_image_for_llm
 from third_party.mobile_use.utils.decorators import agent_lifecycle_logging
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -276,10 +277,11 @@ class PlannerNode:
 
         human_message_content = [{"type": "text", "text": human_message}]
         if screenshot_b64:
+            encoded_screenshot = encode_image_for_llm(screenshot_b64, caller="planner")
             human_message_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot}"},
                 }
             )
         messages = [

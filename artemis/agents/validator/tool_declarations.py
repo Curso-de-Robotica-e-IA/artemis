@@ -19,7 +19,6 @@ Execution itself lives in :class:`artemis.mcp.action_executor.McpActionExecutor`
 result envelope, the observation helpers both use, and the tool declarations.
 """
 
-import base64
 import json
 from typing import Any, Literal
 
@@ -39,6 +38,7 @@ from artemis.core.tool_declaration import ToolDeclaration
 from artemis.mcp.action_specs import tool_declaration
 from artemis.mcp.observation import observe
 from artemis.graph.state import State
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.notes import (
     LIST_NOTES_DOCSTRING,
     READ_NOTE_ARG_KEY_DESC,
@@ -77,7 +77,7 @@ class ToolExecutionResult(BaseModel):
                 }
             )
         if self.screenshot_bytes:
-            b64_img = base64.b64encode(self.screenshot_bytes).decode("utf-8")
+            b64_img = encode_image_for_llm(self.screenshot_bytes, caller="tool_result")
             content_blocks.append(
                 {
                     "type": "image_url",

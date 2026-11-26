@@ -33,6 +33,7 @@ from artemis.agents.video_analyzer.reliability import classify_video_failure
 from artemis.constants import SAFETY_SETTINGS_BLOCK_NONE
 from artemis.data_engine.trace import CURRENT_TRACE_ID, TraceSpan
 from artemis.llm.google import normalize_usage
+from artemis.utils.image_scaling import prepare_image_bytes_for_llm
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -173,7 +174,10 @@ def _append_ledger_diff(analyzer, contents: list, last_ledger_index: int) -> int
                 )
                 image_parts.append(
                     types.Part.from_bytes(
-                        data=Path(screenshot_file).read_bytes(),
+                        data=prepare_image_bytes_for_llm(
+                            Path(screenshot_file).read_bytes(),
+                            caller="video_analyzer_proof",
+                        ),
                         mime_type="image/jpeg",
                     )
                 )

@@ -57,6 +57,7 @@ from artemis.tools.tool_wrapper import (
     split_multimodal_result,
     tool_result_messages,
 )
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.task_tree import format_actions_clean
 from artemis.utils.ocr_api import is_ocr_configured, perform_ocr
 from artemis.utils.ocr_xml_fusion import (
@@ -838,11 +839,12 @@ async def run_final_check(
 
     content: list = [{"type": "text", "text": human_text}]
     if screenshot_b64:
+        encoded_screenshot = encode_image_for_llm(screenshot_b64, caller="checker")
         content.append({"type": "text", "text": "--- Final Screenshot ---"})
         content.append(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot}"},
             }
         )
 

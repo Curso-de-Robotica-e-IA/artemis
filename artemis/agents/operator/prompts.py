@@ -399,7 +399,12 @@ class ObservationPromptComponent(PromptComponent):
         builder.add_human_content(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{encode_image_for_llm(latest_screenshot_b64)}"},
+                "image_url": {
+                    "url": (
+                        "data:image/jpeg;base64,"
+                        f"{encode_image_for_llm(latest_screenshot_b64, caller='operator')}"
+                    )
+                },
             }
         )
         builder.add_human_content(f"--- Visible UI Elements ---\n{minimal_list}")

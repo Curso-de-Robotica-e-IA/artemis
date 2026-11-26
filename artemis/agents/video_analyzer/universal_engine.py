@@ -22,7 +22,6 @@ keep working.
 """
 
 import asyncio
-import base64
 import glob
 from pathlib import Path
 import re
@@ -41,6 +40,7 @@ from artemis.agents.video_analyzer.reliability import (
     classify_video_failure,
 )
 from artemis.data_engine.trace import CURRENT_TRACE_ID, TraceSpan
+from artemis.utils.image_scaling import encode_image_for_llm, resolve_image_max_dim
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -115,11 +115,12 @@ def _gather_universal_frames(
     """Extracts uniform keyframes plus dense action-window frames, merged by timestamp."""
     # Universal providers consume stills rather than the uploaded clip. Use
     # the raw extracted segment so slowdown/transcode PTS never skew labels.
+    max_dim = resolve_image_max_dim()
     keyframes = _va.extract_keyframes_from_video(
         raw_path,
         fps=1.0,
         max_frames=30,
-        max_dimension=1080,
+        max_dimension=max_dim,
     )
     dense_offsets = analyzer._dense_action_offsets(
         start_time,
@@ -130,7 +131,7 @@ def _gather_universal_frames(
         raw_path,
         dense_offsets,
         max_frames=analyzer.max_dense_action_frames,
-        max_dimension=1080,
+        max_dimension=max_dim,
     )
     merged_frames = {round(timestamp, 3): data for timestamp, data in keyframes}
     merged_frames.update({round(timestamp, 3): data for timestamp, data in targeted_frames})
@@ -147,8 +148,12 @@ async def _build_universal_user_blocks(
     """Builds the multimodal user content blocks (text, frames, optional audio)."""
     user_blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt_with_context}]
 
-    for ts_sec, frame_bytes in keyframes:
-        b64_str = base64.b64encode(frame_bytes).decode("utf-8")
+    for idx, (ts_sec, frame_bytes) in enumerate(keyframes):
+        b64_str = encode_image_for_llm(
+            frame_bytes,
+            caller="video_analyzer",
+            log_resolution=(idx == 0),
+        )
         abs_time = actual_start + ts_sec
         user_blocks.append(
             {

@@ -49,6 +49,7 @@ from artemis.tools.tool_wrapper import (
 from artemis.tools.video_tool import get_video_analyzer_tool
 from artemis.tools.wait_tool import get_wait_tool
 from artemis.memory.context_policy import build_history_for
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.task_tree import (
     get_active_subgoal_hashes,
     get_recent_subgoal_hashes,
@@ -223,11 +224,12 @@ class Diagnoser:
 
         latest_screenshot_b64 = self._read_screenshot_b64(state)
         if latest_screenshot_b64:
+            encoded_screenshot = encode_image_for_llm(latest_screenshot_b64, caller="diagnoser")
             content.append({"type": "text", "text": "--- Current Screenshot ---"})
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{latest_screenshot_b64}"},
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot}"},
                 }
             )
 

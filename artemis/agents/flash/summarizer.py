@@ -482,7 +482,7 @@ class VisualStepSummarizer(StepMemoryService):
                     action_name=action_name,
                     action_args=action_args,
                 )
-                b64_pre = encode_image_for_llm(annotated_pre_bytes)
+                b64_pre = encode_image_for_llm(annotated_pre_bytes, caller="summarizer_pre")
                 content_blocks.append(
                     {
                         "type": "text",
@@ -499,7 +499,7 @@ class VisualStepSummarizer(StepMemoryService):
                 )
 
             if post_bytes:
-                b64_post = encode_image_for_llm(post_bytes)
+                b64_post = encode_image_for_llm(post_bytes, caller="summarizer_post")
                 content_blocks.append(
                     {
                         "type": "text",

@@ -35,6 +35,7 @@ from artemis.context import ArtemisContext
 from artemis.graph.state import State
 from artemis.services.llm import acomplete_structured
 from artemis.utils import visualization
+from artemis.utils.image_scaling import encode_image_for_llm
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -111,8 +112,8 @@ def _build_messages(
     state: State | None,
 ) -> list:
     """Formulates the multi-modal verification message pair."""
-    orig_b64 = base64.b64encode(orig_crop_bytes).decode("utf-8")
-    live_b64 = base64.b64encode(live_crop_bytes).decode("utf-8")
+    orig_b64 = encode_image_for_llm(orig_crop_bytes, caller="validator_pixel_ref")
+    live_b64 = encode_image_for_llm(live_crop_bytes, caller="validator_pixel_live")
     action_name = action_item.get("action")
 
     user_content = [

@@ -23,13 +23,13 @@ step's *raw* stored action (physical pixels), never from the normalized twin.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 from typing import Any
 
 from artemis.core.tool_failure import ToolFailure
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.visualization import overlay_action_on_screenshot
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -62,7 +62,7 @@ class ScreenshotResult:
             return ToolFailure(self.description)
         if not self.image_bytes:
             return self.description
-        encoded = base64.b64encode(self.image_bytes).decode("utf-8")
+        encoded = encode_image_for_llm(self.image_bytes, caller="get_step_screenshot")
         return [
             {"type": "text", "text": self.description},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},

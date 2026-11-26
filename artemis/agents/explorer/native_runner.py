@@ -44,6 +44,7 @@ from artemis.llm.reliability import (
     retry_policy_for,
 )
 from artemis.services.llm import _record_llm_event, _record_llm_retry
+from artemis.utils.image_scaling import prepare_image_bytes_for_llm
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -192,7 +193,7 @@ class NativeRunnerMixin:
                     )
                 )
             with open(file_path, "rb") as f:
-                img_bytes = f.read()
+                img_bytes = prepare_image_bytes_for_llm(f.read(), caller="explorer_native")
             return types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
 
         return get_image_part

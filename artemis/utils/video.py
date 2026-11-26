@@ -621,10 +621,12 @@ def extract_keyframes_from_video(
         if frame_idx % step == 0:
             timestamp_sec = frame_idx / video_fps
             h, w = frame.shape[:2]
-            if max(h, w) > max_dimension:
+            if max_dimension and max_dimension > 0 and max(h, w) > max_dimension:
                 scale = max_dimension / max(h, w)
                 frame = cv2.resize(
-                    frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
+                    frame,
+                    (max(1, int(w * scale)), max(1, int(h * scale))),
+                    interpolation=cv2.INTER_AREA,
                 )
 
             _, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
@@ -670,7 +672,7 @@ def extract_frames_at_timestamps(
             if not ret:
                 continue
             h, w = frame.shape[:2]
-            if max(h, w) > max_dimension:
+            if max_dimension and max_dimension > 0 and max(h, w) > max_dimension:
                 scale = max_dimension / max(h, w)
                 frame = cv2.resize(
                     frame,

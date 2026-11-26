@@ -383,7 +383,7 @@ class FlashRunner:
             {"type": "text", "text": f"# CURRENT OBSERVATION [{ledger.elapsed_label()}]"}
         ]
         if img_bytes:
-            img_b64 = encode_image_for_llm(img_bytes)
+            img_b64 = encode_image_for_llm(img_bytes, caller="flash")
             blocks.append({"type": "text", "text": "--- Current Screenshot ---"})
             blocks.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}

@@ -47,6 +47,7 @@ from artemis.tools.tool_wrapper import (
     tool_result_messages,
 )
 from artemis.utils.cython_compat import CyFunctionDetector
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.tools.video_tool import get_video_analyzer_tool
 from artemis.utils.notes import get_note_file_path, get_notes_dir
 from artemis.memory.context_policy import build_history_for
@@ -269,6 +270,9 @@ async def _execute_committee(
         # 6. Debate Loop (configured rounds)
         exec_setup = getattr(ctx, "execution_setup", None)
         rounds = getattr(exec_setup, "committee_debate_rounds", 2) if exec_setup else 2
+        encoded_screenshot_b64 = (
+            encode_image_for_llm(screenshot_b64, caller="committee") if screenshot_b64 else None
+        )
 
         async def run_agent_turn(llm, system_prompt, tools, agent_name):
             current_blackboard = blackboard_path.read_text(encoding="utf-8")
@@ -279,11 +283,11 @@ async def _execute_committee(
                     "text": f"Current Blackboard:\n{current_blackboard}",
                 }
             ]
-            if screenshot_b64:
+            if encoded_screenshot_b64:
                 human_content.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                        "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot_b64}"},
                     }
                 )
 
@@ -373,11 +377,11 @@ async def _execute_committee(
                 "text": f"Current Blackboard:\n{current_blackboard}",
             }
         ]
-        if screenshot_b64:
+        if encoded_screenshot_b64:
             final_human_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded_screenshot_b64}"},
                 }
             )
 

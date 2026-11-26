@@ -28,7 +28,6 @@ The Explorer tier (flash / pro / ultra) is a user setting resolved from
 configuration; it is never part of the tool contract shown to agents.
 """
 
-import base64
 from dataclasses import dataclass, field
 import glob
 import json
@@ -58,6 +57,7 @@ from artemis.drivers.base import BaseDeviceDriver
 from artemis.graph.state import State
 from artemis.tools.base import ArtemisTool, ToolCategory
 from artemis.tools.tool_wrapper import ToolWrapper
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.cython_compat import CyFunctionDetector
 from artemis.utils.element_hit_test import find_element_at_point
 from artemis.utils.visualization import draw_dots
@@ -474,7 +474,7 @@ def render_operator_blocks(
     if not image_path:
         return text
     try:
-        img_b64 = base64.b64encode(Path(image_path).read_bytes()).decode("utf-8")
+        img_b64 = encode_image_for_llm(Path(image_path).read_bytes(), caller="explorer_tool")
     except OSError as e:
         logger.error(f"Failed to read annotated explorer image: {e}")
         return text

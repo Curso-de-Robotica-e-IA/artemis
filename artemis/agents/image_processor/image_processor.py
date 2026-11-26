@@ -14,7 +14,6 @@
 
 """Universal Multi-Model Image Processor for Artemis."""
 
-import base64
 import json
 from pathlib import Path
 import shutil
@@ -33,6 +32,7 @@ from artemis.context import ArtemisContext
 from artemis.core.tool_declaration import ToolDeclaration
 from artemis.data_engine.trace import TraceSpan, trace
 from artemis.services.llm import get_llm
+from artemis.utils.image_scaling import encode_image_for_llm
 from artemis.utils.python_executor import PythonExecutor
 from third_party.mobile_use.utils.logger import get_logger
 
@@ -114,7 +114,7 @@ class ImageProcessor:
 
         with open(target_image_path, "rb") as f:
             img_bytes = f.read()
-        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        img_b64 = encode_image_for_llm(img_bytes, caller="image_processor")
 
         messages: list[BaseMessage] = [
             SystemMessage(content=prompt_template),
@@ -181,7 +181,9 @@ class ImageProcessor:
                             try:
                                 path = Path(entry["path"])
                                 if path.exists():
-                                    b64_data = base64.b64encode(path.read_bytes()).decode("utf-8")
+                                    b64_data = encode_image_for_llm(
+                                        path.read_bytes(), caller="image_processor_intermediate"
+                                    )
                                     is_output = entry.get("is_output", False)
                                     label = (
                                         f"img_id: {img_id} (Output)"

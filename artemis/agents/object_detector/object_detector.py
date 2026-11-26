@@ -15,7 +15,6 @@
 """Universal Multi-Model Object Detector for Artemis."""
 
 import asyncio
-import base64
 import json
 import os
 from pathlib import Path
@@ -25,6 +24,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from artemis.llm.structured import ParseFailure, parse_structured
 from artemis.services.llm import get_llm
+from artemis.utils.image_scaling import encode_image_for_llm
 from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,7 +44,7 @@ async def _detect_single_label(
     if timeout_val is None:
         timeout_val = float(os.environ.get("OBJECT_DETECTOR_TIMEOUT", "10.0"))
 
-    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    img_b64 = encode_image_for_llm(image_bytes, caller="object_detector")
 
     for i, template in enumerate(templates):
         prompt = template.replace("{labels_str}", label)
@@ -53,7 +53,7 @@ async def _detect_single_label(
                 content=[
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{img_b64}"},
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
                     },
                     {"type": "text", "text": prompt},
                 ]
